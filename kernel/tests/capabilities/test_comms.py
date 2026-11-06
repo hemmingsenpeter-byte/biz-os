@@ -104,7 +104,9 @@ def test_register_takes_gate_config_and_tools_declared() -> None:
             "comms.draft",
             "comms.opt_out",
             "comms.queue",
+            "comms.read_thread",
             "comms.reconcile",
+            "comms.resolve_reply",
             "comms.send",
         ]
     finally:
@@ -169,3 +171,96 @@ def test_send_refuses_content_other_than_the_row(session) -> None:  # type: igno
         assert out["status"] == "sent" and len(mail.sent) == 1
     finally:
         config.configure(None)
+
+
+# ---- replies: token, offered slots, slot validation, thread matching
+
+
+def _tools(ports=None):  # type: ignore[no-untyped-def]
+    from biz_port_fakes import FakeCalendar
+
+    reg = ToolRegistry()
+    register(
+        reg, ports or {"mail": FakeMail(), "telephony": FakeTelephony(), "calendar": FakeCalendar()}
+    )
+    return reg
+
+
+def _sent_with_slots(session, reg, n=2):  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime, timedelta
+
+    from biz_cap_comms.models import Outbox
+
+    day = datetime.now(UTC) + timedelta(days=3)
+    day = day.replace(hour=10, minute=0, second=0, microsecond=0)
+    slots = [
+        {
+            "start": (day + timedelta(hours=i)).isoformat(),
+            "end": (day + timedelta(hours=i, minutes=30)).isoformat(),
+        }
+        for i in range(n)
+    ]
+    out = reg.get("comms.draft").fn(
+        session=session,
+        channel="mail",
+        to="a@x.org",
+        body="hi",
+        subject="Times",
+        meta={"offered_slots": slots},
+    )
+    row = session.get(Outbox, __import__("uuid").UUID(out["message_id"]))
+    row.status = "sent"
+    session.flush()
+    return out["message_id"], row
+
+
+@pytest.mark.parametrize(
+    ("intent", "idx", "conf", "action"),
+    [
+        ("choose_slot", 0, 0.9, "book"),
+        ("choose_slot", 2, 0.9, "escalate"),  # out of range
+        ("choose_slot", -1, 0.9, "escalate"),
+        ("choose_slot", None, 0.9, "escalate"),
+        ("choose_slot", True, 0.9, "escalate"),
+        ("choose_slot", 0, 0.69, "escalate"),
+        ("question", 0, 0.99, "escalate"),
+        ("bogus", 0, 0.99, "escalate"),
+    ],
+)
+def test_resolve_reply_validates_slot(session, intent, idx, conf, action) -> None:  # type: ignore[no-untyped-def]
+    reg = _tools()
+    msg_id, _ = _sent_with_slots(session, reg)
+    out = reg.get("comms.resolve_reply").fn(
+        session=session, message_id=msg_id, intent=intent, slot_index=idx, confidence=conf
+    )
+    assert out["action"] == action
+    assert (out["start"] != "") == (action == "book")
+
+
+def test_reply_token_is_added_only_on_the_wire(session) -> None:  # type: ignore[no-untyped-def]
+    mail = FakeMail()
+    reg = _tools({"mail": mail, "telephony": FakeTelephony()})
+    msg_id, row = _sent_with_slots(session, reg)
+    row.status = "draft"
+    reg.get("comms.queue").fn(session=session, message_id=msg_id)
+    reg.get("comms.send").fn(
+        session=session,
+        message_id=msg_id,
+        idempotency_key="k",
+        subject="Times",
+        to="a@x.org",
+        body="hi",
+    )
+    assert row.subject == "Times"
+    assert mail.sent[0].subject == f"Times [ref:{row.reply_token}]"
+
+
+def test_match_reply_needs_token_and_same_sender(session) -> None:  # type: ignore[no-untyped-def]
+    from biz_cap_intake.web import match_reply
+
+    _msg_id, row = _sent_with_slots(session, _tools())
+    subj = f"Re: Times [ref:{row.reply_token}]"
+    assert match_reply(session, " A@X.org ", subj)["message_id"] == str(row.id)
+    assert match_reply(session, "evil@x.org", subj) is None
+    assert match_reply(session, "a@x.org", "Re: Times") is None
+    assert match_reply(session, "a@x.org", "Re: [ref:deadbeef00]") is None

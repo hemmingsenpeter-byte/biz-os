@@ -31,6 +31,9 @@ steps:
       body: "{{steps.draft.output.body}}"
       party_id: "{{steps.read.output.party_id}}"
       expected_to: "{{steps.read.output.from}}"
+      meta:   # the reply handler reads these back: it may only book a slot that was offered
+        offered_slots: "{{steps.slots.output.slots}}"
+        enquiry_id: "{{packet.payload.enquiry_id}}"
   - id: gate
     kind: tool
     tool: comms.queue
@@ -47,10 +50,7 @@ steps:
       to: "{{steps.outbox.output.to}}"
       subject: "{{steps.outbox.output.subject}}"
       body: "{{steps.outbox.output.body}}"
-  # TODO(comms milestone): booking.book needs the customer's reply choosing a slot, and nothing
-  # reads replies yet. Until then this SOP stops after offering times; it never books slot 0
-  # for someone who was not asked. When replies are read, add an owner `approve` step that
-  # names the chosen slot, then booking.book and the meeting.booked publish.
+  # Booking waits for the customer's reply: see sops/handle_reply.yaml.
   - id: done
     kind: publish
     when: "{{steps.send.output.status}} == sent"   # never claim a send that was blocked

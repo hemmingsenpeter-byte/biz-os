@@ -1,0 +1,129 @@
+name: handle_reply
+trigger: reply.received
+when: "{{packet.payload.channel}} == mail"
+goal_key: enquiry_response_minutes
+task: { kind: handle_reply, title: "Handle reply: {{packet.summary}}" }
+steps:
+  - id: thread
+    kind: tool
+    tool: comms.read_thread
+    args: { message_id: "{{packet.payload.message_id}}" }
+  # Opt-outs and auto-replies are decided by rules, and recorded, before any model sees the text.
+  - id: rules
+    kind: tool
+    tool: comms.classify_reply
+    args:
+      channel: mail
+      sender: "{{packet.payload.sender}}"
+      subject: "{{packet.payload.subject}}"
+      body: "{{packet.payload.body}}"
+      party_id: "{{steps.thread.output.party_id}}"
+  - id: suppressed
+    kind: publish
+    when: "{{steps.rules.output.needs_model}} == false"
+    packet: reply.handled
+    evidence: reply.handled
+    summary: "Reply handled by rule ({{steps.rules.output.reason}})"
+    payload:
+      message_id: "{{packet.payload.message_id}}"
+      outcome: "{{steps.rules.output.reason}}"
+  - id: draft
+    kind: draft
+    when: "{{steps.rules.output.needs_model}} == true"
+    prompt: prompts/handle_reply.md
+    decision_type: reply_drafting
+    schema:
+      type: object
+      required: [intent, slot_index, confidence]
+      properties:
+        intent: { enum: [choose_slot, reschedule, question, decline, other] }
+        slot_index: { type: [integer, "null"] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+    inputs:
+      reply: { subject: "{{packet.payload.subject}}", body: "{{packet.payload.body}}" }
+      offered_slots: "{{steps.thread.output.offered_slots}}"
+  # The model's answer is only a proposal: the slot must be one that was offered, still free.
+  - id: plan
+    kind: tool
+    when: "{{steps.rules.output.needs_model}} == true"
+    tool: comms.resolve_reply
+    args:
+      message_id: "{{packet.payload.message_id}}"
+      intent: "{{steps.draft.output.intent}}"
+      slot_index: "{{steps.draft.output.slot_index}}"
+      confidence: "{{steps.draft.output.confidence}}"
+      reply_text: "{{packet.payload.body}}"
+  - id: escalate
+    kind: publish
+    when: "{{steps.plan.output.action}} == escalate"
+    packet: escalation.raised
+    evidence: reply.handled
+    summary: "Reply needs the owner: {{steps.plan.output.reason}}"
+    payload:
+      subject: "Reply from {{packet.payload.sender}}: {{packet.payload.subject}}"
+      reason: "{{steps.plan.output.reason}}"
+      raised_by: receptionist
+      packet_id: "{{packet.id}}"
+  - id: confirm
+    kind: approve
+    when: "{{steps.plan.output.action}} == book"
+    approver: owner
+    reason: "Book {{steps.plan.output.slot_label}} for {{packet.payload.sender}}? They wrote: {{steps.plan.output.customer_text}}"
+  - id: book
+    kind: tool
+    when: "{{steps.plan.output.action}} == book"
+    tool: booking.book
+    decision_type: meeting_booking
+    args:
+      start: "{{steps.plan.output.start}}"
+      end: "{{steps.plan.output.end}}"
+      title: "Meeting with {{packet.payload.sender}}"
+      attendees: ["{{steps.thread.output.to}}"]
+      party_id: "{{steps.thread.output.party_id}}"
+  - id: booked
+    kind: publish
+    when: "{{steps.plan.output.action}} == book"
+    packet: meeting.booked
+    evidence: reply.handled
+    summary: "Meeting booked with {{packet.payload.sender}}: {{steps.plan.output.slot_label}}"
+    payload:
+      meeting_id: "{{steps.book.output.meeting_id}}"
+      party_id: "{{steps.thread.output.party_id}}"
+      starts_at: "{{steps.book.output.starts_at}}"
+  # The confirmation is fixed text built from the booked slot: model output never reaches it.
+  - id: outbox
+    kind: tool
+    when: "{{steps.plan.output.action}} == book"
+    tool: comms.draft
+    args:
+      channel: mail
+      to: "{{steps.thread.output.to}}"
+      subject: "Meeting confirmed: {{steps.plan.output.slot_label}}"
+      body: "Hello, your meeting is booked for {{steps.plan.output.slot_label}}. We look forward to seeing you."
+      party_id: "{{steps.thread.output.party_id}}"
+      expected_to: "{{steps.thread.output.to}}"
+  - id: gate
+    kind: tool
+    when: "{{steps.plan.output.action}} == book"
+    tool: comms.queue
+    args: { message_id: "{{steps.outbox.output.message_id}}" }
+  - id: send
+    kind: tool
+    when: "{{steps.gate.output.status}} == queued"
+    tool: comms.send
+    decision_type: meeting_confirmation_sending
+    args:
+      message_id: "{{steps.outbox.output.message_id}}"
+      to: "{{steps.outbox.output.to}}"
+      subject: "{{steps.outbox.output.subject}}"
+      body: "{{steps.outbox.output.body}}"
+  - id: done
+    kind: publish
+    when: "{{steps.send.output.status}} == sent"
+    packet: message.sent
+    summary: "Meeting confirmation sent to {{steps.thread.output.to}}"
+    payload:
+      message_id: "{{steps.send.output.message_id}}"
+      channel: mail
+      to: "{{steps.thread.output.to}}"
+      body: "{{steps.send.output.body}}"

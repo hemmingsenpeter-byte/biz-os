@@ -8,11 +8,13 @@ import hashlib
 import ipaddress
 import logging
 import os
+import re
 import time
 from collections import deque
 from datetime import UTC, timedelta
 from typing import Any
 
+import sqlalchemy as sa
 from biz_kernel import db
 from biz_kernel.auth.deps import DbSession
 from fastapi import APIRouter, HTTPException, Request
@@ -181,6 +183,69 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
     return router
 
 
+_REF = re.compile(r"\[ref:([0-9a-f]{6,24})\]", re.I)
+
+
+def match_reply(session: Any, sender: str, subject: str) -> dict[str, Any] | None:
+    """Our sent message this mail replies to, found by the [ref:...] token in the subject.
+
+    The sender must be the address we wrote to (normalised); otherwise it is not a reply to
+    that thread, so someone else cannot hijack it. Reads the comms outbox by SQL: capabilities
+    never import each other.
+    """
+    ref = _REF.search(subject)
+    if ref is None:
+        return None
+    row = (
+        session.execute(
+            sa.text(
+                'select id, "to", expected_to, party_id, meta from cap_comms_outbox '
+                "where reply_token = :t and channel = 'mail' and status = 'sent'"
+            ),
+            {"t": ref.group(1).lower()},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return None
+    want = service.normalize_address(row["expected_to"] or row["to"])
+    if service.normalize_address(sender) != want:
+        return None
+    return {
+        "message_id": str(row["id"]),
+        "party_id": str(row["party_id"] or ""),
+        "enquiry_id": str((row["meta"] or {}).get("enquiry_id") or ""),
+    }
+
+
+def receive_reply(session: Any, rt: Any, m: Any, thread: dict[str, Any]) -> Any:
+    """Publish reply.received once per provider message id."""
+    sender = service.normalize_address(str(m.sender or ""))[: service.MAX_SENDER]
+    subject = str(m.subject or "")[: service.MAX_SUBJECT]
+    body = str(m.body or "")[: service.MAX_BODY]
+    payload: dict[str, Any] = {
+        "channel": "mail",
+        "sender": sender,
+        "from": sender,
+        "subject": subject,
+        "body": body,
+        "message_id": thread["message_id"],
+        "message_ref": thread["message_id"],
+        "enquiry_id": thread["enquiry_id"],
+    }
+    if thread["party_id"]:
+        payload["party_id"] = thread["party_id"]
+    return rt.bus.publish(
+        session,
+        type="reply.received",
+        from_part="intake",
+        summary=f"Reply from {sender}: {subject}"[:200],
+        payload=payload,
+        idempotency_key=f"reply.received:{str(m.provider_id)[: service.MAX_PROVIDER_ID]}",
+    )
+
+
 def poll_mail(rt: Any) -> int:
     """Pull new mail and publish enquiry.received for each message once (by provider id).
 
@@ -196,9 +261,24 @@ def poll_mail(rt: Any) -> int:
     new = 0
     with db.session_scope() as s:
         latest = since
+        has_outbox = sa.inspect(s.connection()).has_table("cap_comms_outbox")
         for m in sorted(messages, key=lambda m: m.received_at):
             try:
                 with s.begin_nested():
+                    thread = (
+                        match_reply(s, str(m.sender or ""), str(m.subject or ""))
+                        if has_outbox
+                        else None
+                    )
+                    if thread is not None:
+                        receive_reply(s, rt, m, thread)
+                        at = (
+                            m.received_at
+                            if m.received_at.tzinfo
+                            else m.received_at.replace(tzinfo=UTC)
+                        )
+                        latest = max(latest, at)
+                        continue
                     got = service.receive(
                         s,
                         rt.bus,

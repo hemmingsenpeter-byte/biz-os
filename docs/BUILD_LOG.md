@@ -36,6 +36,6 @@
 ### Not done yet
 
 - Mac mini deploy and backups. The compose stack has not been run: there is no Docker on the dev box.
-- **comms reads customer replies:** not yet, so the receptionist offers meeting slots but can't book the one chosen.
+- **Reply handling is subject-token only:** replies are matched by the `[ref:...]` token in the subject (the mail port exposes no In-Reply-To/References), so a customer who rewrites the subject starts a new enquiry.
 - **A gate-blocked reply ends the run with `EvidenceMissing`,** so the task stays open for the owner, rather than completing with a `message.blocked` packet.
 - **Web shell (`web/`)** isn't started.

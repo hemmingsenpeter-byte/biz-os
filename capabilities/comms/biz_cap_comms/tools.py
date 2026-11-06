@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from biz_kernel.audit.log import record
@@ -39,6 +41,24 @@ def _row(session: Session, message_id: str) -> Outbox:
     return row
 
 
+MIN_CONFIDENCE = 0.7
+INTENTS = ("choose_slot", "reschedule", "question", "decline", "other")
+
+
+def _aware(text: str) -> datetime:
+    dt = datetime.fromisoformat(text)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _label(start: str) -> str:
+    return _aware(start).astimezone(UTC).strftime("%a %d %b %Y %H:%M UTC")
+
+
+def _slots(row: Outbox) -> list[dict[str, str]]:
+    raw = (row.meta or {}).get("offered_slots") or []
+    return [s for s in raw if isinstance(s, dict) and s.get("start") and s.get("end")]
+
+
 def _view(row: Outbox) -> dict[str, Any]:
     return {
         "message_id": str(row.id),
@@ -60,6 +80,7 @@ def register(
     if gate_config is not None:
         config.configure(gate_config)
     mail: MailPort = ports["mail"]
+    calendar = ports.get("calendar")  # optional: only used to re-check an offered slot
     telephony: TelephonyPort = ports["telephony"]
 
     def _provider_call(row: Outbox, send: bool) -> SendResult | None:
@@ -67,7 +88,10 @@ def register(
         key = row.idempotency_key
         if row.channel == "mail":
             if send:
-                msg = OutboundMessage(to=[row.to], subject=row.subject, body=row.body)
+                subject = row.subject
+                if row.reply_token and f"[ref:{row.reply_token}]" not in subject:
+                    subject = f"{subject} [ref:{row.reply_token}]".strip()  # threads the reply
+                msg = OutboundMessage(to=[row.to], subject=subject, body=row.body)
                 return asyncio.run(mail.send(msg, key))
             fn = getattr(mail, "reconcile", None)
         else:
@@ -88,6 +112,7 @@ def register(
         idempotency_key: str | None = None,
         party_id: str | None = None,
         expected_to: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         key = idempotency_key or f"comms:{uuid.uuid4()}"
         existing = session.scalar(select(Outbox).where(Outbox.idempotency_key == key))
@@ -101,6 +126,8 @@ def register(
             idempotency_key=key,
             party_id=uuid.UUID(party_id) if party_id else None,
             expected_to=expected_to,
+            reply_token=secrets.token_hex(5) if channel == "mail" else None,
+            meta=meta,
         )
         session.add(row)
         session.flush()
@@ -200,6 +227,71 @@ def register(
             )
         return out
 
+    def read_thread(session: Session, message_id: str) -> dict[str, Any]:
+        """What was sent to the customer, and the slots offered (numbered from 0)."""
+        row = _row(session, message_id)
+        slots = [{"index": i, **s, "label": _label(s["start"])} for i, s in enumerate(_slots(row))]
+        return {
+            **_view(row),
+            "party_id": str(row.party_id or ""),
+            "enquiry_id": str((row.meta or {}).get("enquiry_id") or ""),
+            "offered_slots": slots,
+        }
+
+    def resolve_reply(
+        session: Session,
+        message_id: str,
+        intent: str,
+        confidence: float,
+        slot_index: int | None = None,
+        reply_text: str = "",
+    ) -> dict[str, Any]:
+        """Turn the model's reading of a reply into `book` or `escalate`. The slot must be one
+        that was offered, and still free; anything doubtful escalates to the owner."""
+        row = _row(session, message_id)
+        slots = _slots(row)
+        out: dict[str, Any] = {
+            "action": "escalate",
+            "reason": "",
+            "intent": intent,
+            "slot_index": -1,
+            "start": "",
+            "end": "",
+            "slot_label": "",
+            "customer_text": reply_text[:500],
+        }
+        if row.status != "sent" or intent not in INTENTS:
+            out["reason"] = "reply does not match a sent message or the intent is unknown"
+        elif intent != "choose_slot":
+            out["reason"] = f"customer reply needs a person: {intent}"
+        elif not isinstance(confidence, int | float) or confidence < MIN_CONFIDENCE:
+            out["reason"] = f"low confidence reading the reply ({confidence})"
+        elif (
+            isinstance(slot_index, bool)
+            or not isinstance(slot_index, int)
+            or not 0 <= slot_index < len(slots)
+        ):
+            out["reason"] = f"chosen slot {slot_index} is not one of the {len(slots)} offered"
+        else:
+            slot = slots[slot_index]
+            start, end = _aware(slot["start"]), _aware(slot["end"])
+            out.update(
+                slot_index=slot_index,
+                start=start.isoformat(),
+                end=end.isoformat(),
+                slot_label=_label(slot["start"]),
+            )
+            free = True
+            if calendar is not None:
+                minutes = int((end - start).total_seconds() // 60)
+                got = asyncio.run(calendar.free_slots(start, end, minutes))
+                free = start > datetime.now(UTC) and any(sl.start == start for sl in got)
+            if free:
+                out["action"] = "book"
+            else:
+                out["reason"] = f"{out['slot_label']} is no longer free"
+        return out
+
     def opt_out(
         session: Session, address: str, source: str = "manual", party_id: str | None = None
     ) -> dict[str, Any]:
@@ -223,6 +315,7 @@ def register(
                     "idempotency_key": _STR,
                     "party_id": _STR,
                     "expected_to": _STR,
+                    "meta": {"type": "object"},
                 },
                 ["channel", "to", "body"],
             ),
@@ -272,6 +365,31 @@ def register(
             ),
             classify_reply,
             "Opt-out and auto-reply rules before any model",
+        ),
+        Tool(
+            f"{CAP}.read_thread",
+            CAP,
+            SideEffect.READ,
+            _obj({"message_id": _STR}, ["message_id"]),
+            read_thread,
+            "Read a sent message and the meeting slots it offered",
+        ),
+        Tool(
+            f"{CAP}.resolve_reply",
+            CAP,
+            SideEffect.READ,
+            _obj(
+                {
+                    "message_id": _STR,
+                    "intent": _STR,
+                    "confidence": {"type": "number"},
+                    "slot_index": {"type": ["integer", "null"]},
+                    "reply_text": _STR,
+                },
+                ["message_id", "intent", "confidence"],
+            ),
+            resolve_reply,
+            "Validate the model's reading of a reply: book an offered, free slot, or escalate",
         ),
         Tool(
             f"{CAP}.opt_out",

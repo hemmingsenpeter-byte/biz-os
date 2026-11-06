@@ -3,7 +3,7 @@ version: 1.0.0
 requires: { kernel: ">=1.0,<2", capabilities: [intake, booking, comms] }
 mission: Answer every call, form and email quickly, route each enquiry to the right place, and offer meeting times.
 goals: [enquiry_response_minutes]
-heartbeat: { cadence: 5m, triggers: [enquiry.received, opportunity.qualified] }
+heartbeat: { cadence: 5m, triggers: [enquiry.received, opportunity.qualified, reply.received] }
 budget_usd_month: 10
 topics:
   - name: missed_call_text_back
@@ -15,14 +15,25 @@ topics:
   - name: book_meeting
     sop: sops/book_meeting.yaml
     tools: [intake.read_enquiry, booking.offer_slots, comms.draft, comms.queue, comms.send]
+  - name: handle_reply
+    sop: sops/handle_reply.yaml
+    tools:
+      - comms.read_thread
+      - comms.classify_reply
+      - comms.resolve_reply
+      - comms.draft
+      - comms.queue
+      - comms.send
+      - booking.book
 sources: [business, "role:receptionist"]
-consumes: [enquiry.received, opportunity.qualified]
-publishes: [message.sent, opportunity.qualified, service_request.received, enquiry.declined, meeting.booked]
+consumes: [enquiry.received, opportunity.qualified, reply.received]
+publishes: [message.sent, reply.handled, escalation.raised, opportunity.qualified, service_request.received, enquiry.declined, meeting.booked]
 evidence:
   text_back: ["packet:message.sent"]
   triage: ["triage.routed"]
   book_meeting: ["packet:message.sent"]
-autonomy_defaults: { missed_call_text_back: 2, meeting_offer_sending: 2, meeting_booking: 2 }
-model_tier: { triage: local, book_meeting: local }
+  handle_reply: ["reply.handled"]
+autonomy_defaults: { missed_call_text_back: 2, meeting_offer_sending: 2, meeting_booking: 2, meeting_confirmation_sending: 2 }
+model_tier: { triage: local, book_meeting: local, handle_reply: local }
 escalate_when: [confidence_below: 0.6]
 slots: [industry.text_back_template]

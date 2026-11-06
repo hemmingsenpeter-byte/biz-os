@@ -27,6 +27,10 @@ class Outbox(Base):
     party_id: Mapped[uuid.UUID | None]
     expected_to: Mapped[str | None] = mapped_column(String(320))
     gate_report: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # short token carried in the subject so a reply can be tied back to this message
+    reply_token: Mapped[str | None] = mapped_column(String(24), index=True)
+    # data for whoever handles the reply, e.g. {"offered_slots": [...], "enquiry_id": "..."}
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     sent_at: Mapped[datetime | None]
 

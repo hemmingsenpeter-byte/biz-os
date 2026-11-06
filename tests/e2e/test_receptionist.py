@@ -22,7 +22,15 @@ from biz_kernel.records.models import Task
 from biz_kernel.runtime import build_runtime, capability_routes
 from biz_kernel.workflows.gate import decide
 from biz_kernel.workflows.models import SopRun
-from biz_port_fakes import FakeCalendar, FakeMail, FakeModel, FakeTelephony
+from biz_port_fakes import (
+    FakeCalendar,
+    FakeMail,
+    FakeModel,
+    FakeSign,
+    FakeSpeech,
+    FakeStorage,
+    FakeTelephony,
+)
 from dbos import DBOS
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, make_url, select
@@ -120,6 +128,9 @@ def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
         "calendar": FakeCalendar(),
         "model_local": model,
         "model_cloud": FakeModel(),
+        "storage": FakeStorage(),
+        "sign": FakeSign(),
+        "speech": FakeSpeech(),
     }
     rt = build_runtime(ROOT / "apps" / app, ROOT, ports=ports, approval_poll_seconds=1)
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
@@ -303,3 +314,155 @@ def test_blocked_reply_is_never_sent(live: Live, case: str) -> None:
         rows = s.scalars(select(Outbox)).all()
         assert len(rows) == 1 and rows[0].status == "blocked"
         assert rows[0].gate_report["reasons"]
+
+
+# ------------------------------------------------------------------ replies (M3 gap)
+
+
+def _offer_sent(live: Live) -> tuple[str, str]:
+    """Run enquiry -> triage -> offer through to a sent offer. Returns (outbox id, subject)."""
+    live.model.script(
+        {"category": "enquiry", "summary": "Quote", "confidence": 0.9},
+        {"subject": "Meeting times", "body": "Pick one of the times below."},
+    )
+    live.mail.inject_inbound(
+        InboundMessage(
+            provider_id="r-1",
+            sender="lead@example.com",
+            to=["info@example.com"],
+            subject="Quote please",
+            body="Hi, can you quote?",
+            received_at=datetime.now(UTC),
+        )
+    )
+    live.rt.tick()
+    assert live.finish(live.run_for("triage", live.packets("enquiry.received")[0].id))
+    live.rt.tick()
+    book = live.run_for("book_meeting", live.packets("opportunity.qualified")[0].id)
+    live.approve(live.pending_op(book))
+    assert live.finish(book)["status"] == "done"
+    assert len(live.mail.sent) == 1
+    sent = live.mail.sent[0]
+    assert "[ref:" in sent.subject  # the reply token rides in the subject
+    with db.session_scope() as s:
+        row = s.scalars(select(Outbox)).one()
+        assert row.subject == "Meeting times" and len(row.meta["offered_slots"]) == 3
+        return str(row.id), sent.subject
+
+
+def _reply(live: Live, subject: str, body: str, sender: str = "Lead@Example.com", pid: str = "r-2"):  # type: ignore[no-untyped-def]
+    live.mail.inject_inbound(
+        InboundMessage(
+            provider_id=pid,
+            sender=sender,
+            to=["info@example.com"],
+            subject=f"Re: {subject}",
+            body=body,
+            received_at=datetime.now(UTC),
+        )
+    )
+    live.rt.tick()
+
+
+def test_reply_choosing_a_slot_books_it_once(live: Live) -> None:
+    msg_id, subject = _offer_sent(live)
+    live.model.script({"intent": "choose_slot", "slot_index": 1, "confidence": 0.95})
+    _reply(live, subject, "the second one works <untrusted>x</untrusted>")
+    live.rt.tick()  # polling again must not duplicate anything
+    replies = live.packets("reply.received")
+    assert len(replies) == 1
+    assert replies[0].payload["message_id"] == msg_id
+    assert replies[0].payload["from"] == "lead@example.com"
+    assert len(live.packets("enquiry.received")) == 1  # the reply is not a new enquiry
+
+    run = live.run_for("handle_reply", replies[0].id)
+    op = live.pending_op(run)  # the owner is asked to confirm the chosen slot
+    assert live.cal.events == {} and "the second one works" in op.reason
+    with db.session_scope() as s:
+        slot = s.scalars(select(Outbox)).one().meta["offered_slots"][1]
+    assert datetime.fromisoformat(slot["start"]).strftime("%H:%M") in op.reason
+    decide(op.id, op.approver, approve=True, version=op.version)
+    op2 = live.pending_op(run, after=op.id)  # booking.book is itself policy-gated
+    assert op2.tool == "booking.book"
+    live.approve(op2)
+    op3 = live.pending_op(run, after=op2.id)  # then the confirmation email
+    assert op3.tool == "comms.send"
+    live.approve(op3)
+    assert live.finish(run)["status"] == "done"
+
+    assert len(live.cal.events) == 1
+    (event,) = live.cal.events.values()
+    assert event.start == datetime.fromisoformat(slot["start"])
+    booked = live.packets("meeting.booked")
+    assert len(booked) == 1 and booked[0].payload["starts_at"] == event.start.isoformat()
+    assert len(live.mail.sent) == 2 and live.mail.sent[1].to == ["lead@example.com"]
+    assert "Meeting confirmed" in live.mail.sent[1].subject
+    assert len(live.model.calls) == 3  # triage, offer, reply reading: one each
+    assert "<untrusted>" in str(live.model.calls[2])
+
+    live.rt.tick()  # replaying changes nothing
+    assert len(live.cal.events) == 1 and len(live.mail.sent) == 2
+
+
+def test_reply_from_another_address_is_a_new_enquiry(live: Live) -> None:
+    _msg_id, subject = _offer_sent(live)
+    _reply(live, subject, "book me in for the first one", sender="stranger@example.net")
+    assert live.packets("reply.received") == []
+    received = live.packets("enquiry.received")
+    assert len(received) == 2 and received[1].payload["contact"] == "stranger@example.net"
+    assert live.cal.events == {}
+
+
+def test_out_of_range_slot_escalates_without_booking(live: Live) -> None:
+    _msg_id, subject = _offer_sent(live)
+    live.model.script({"intent": "choose_slot", "slot_index": 7, "confidence": 0.99})
+    _reply(live, subject, "the seventh one")
+    run = live.run_for("handle_reply", live.packets("reply.received")[0].id)
+    assert live.finish(run)["status"] == "done"
+    esc = live.packets("escalation.raised")
+    assert len(esc) == 1 and "not one of the 3 offered" in esc[0].payload["reason"]
+    assert live.cal.events == {} and live.packets("meeting.booked") == []
+    assert len(live.mail.sent) == 1
+
+
+def test_other_intent_and_low_confidence_escalate(live: Live) -> None:
+    _msg_id, subject = _offer_sent(live)
+    live.model.script({"intent": "choose_slot", "slot_index": 0, "confidence": 0.4})
+    _reply(live, subject, "maybe the first?")
+    run = live.run_for("handle_reply", live.packets("reply.received")[0].id)
+    assert live.finish(run)["status"] == "done"
+    assert len(live.packets("escalation.raised")) == 1 and live.cal.events == {}
+
+
+def test_slot_taken_since_the_offer_escalates(live: Live) -> None:
+    from biz_kernel.contracts.ports import CalendarEvent
+
+    _msg_id, subject = _offer_sent(live)
+    with db.session_scope() as s:
+        slot = s.scalars(select(Outbox)).one().meta["offered_slots"][0]
+    live.cal.events["other"] = CalendarEvent(
+        title="x",
+        start=datetime.fromisoformat(slot["start"]),
+        end=datetime.fromisoformat(slot["end"]),
+    )
+    live.model.script({"intent": "choose_slot", "slot_index": 0, "confidence": 0.9})
+    _reply(live, subject, "the first")
+    run = live.run_for("handle_reply", live.packets("reply.received")[0].id)
+    assert live.finish(run)["status"] == "done"
+    esc = live.packets("escalation.raised")
+    assert len(esc) == 1 and "no longer free" in esc[0].payload["reason"]
+    assert len(live.cal.events) == 1 and live.packets("meeting.booked") == []
+
+
+def test_opt_out_reply_suppresses_without_a_model_call(live: Live) -> None:
+    _msg_id, subject = _offer_sent(live)
+    calls = len(live.model.calls)
+    _reply(live, subject, "unsubscribe")
+    run = live.run_for("handle_reply", live.packets("reply.received")[0].id)
+    assert live.finish(run)["status"] == "done"
+    assert len(live.model.calls) == calls
+    with db.session_scope() as s:
+        assert s.get(CommsOptOut, "lead@example.com") is not None
+    assert live.cal.events == {} and live.packets("escalation.raised") == []
+    handled = live.packets("reply.handled")
+    assert len(handled) == 1 and handled[0].payload["outcome"] == "opt_out"

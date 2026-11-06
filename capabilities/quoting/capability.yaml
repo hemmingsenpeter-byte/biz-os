@@ -1,0 +1,16 @@
+name: quoting
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [] }
+tools:
+  - { name: quoting.brief_write, side_effect: draft, description: "Store a client brief: summary, requirements, constraints, budget hint" }
+  - { name: quoting.survey_record, side_effect: draft, description: "Store survey checklist answers and measurements for a job" }
+  - { name: quoting.scope_write, side_effect: draft, description: "Write a new scope version (areas, items, exclusions, assumptions); supersedes the previous version" }
+  - { name: quoting.price_book_read, side_effect: read, description: "Read price book items by category or text query" }
+  - { name: quoting.price_book_import, side_effect: draft, description: "Import price book rows, idempotent by code; changed prices keep a history row" }
+  - { name: quoting.estimate_write, side_effect: draft, description: "Price a scope into a new estimate version; applies the margin policy and flags unpriced lines" }
+  - { name: quoting.proposal_build, side_effect: draft, description: "Build a new proposal version from an estimate; returns data for documents.render" }
+  - { name: quoting.variation_price, side_effect: draft, description: "Price a variation against the margin policy" }
+  - { name: quoting.estimate_check, side_effect: read, description: "Re-check an estimate against the current margin policy" }
+publishes: [scope.approved, estimate.ready, proposal.ready, variation.priced]
+consumes: [brief.confirmed, survey.completed, variation.raised]
+screens: []

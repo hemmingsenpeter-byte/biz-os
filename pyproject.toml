@@ -3,7 +3,7 @@ name = "biz-os"
 version = "0.1.0"
 description = "Modular platform for AI-run small businesses"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk"]
+dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk", "biz-port-model-ollama", "biz-port-model-claude"]
 
 [dependency-groups]
 dev = [
@@ -30,6 +30,8 @@ members = ["kernel", "ports/*", "capabilities/*"]
 biz-kernel = { workspace = true }
 biz-port-fakes = { workspace = true }
 biz-cap-demo-desk = { workspace = true }
+biz-port-model-ollama = { workspace = true }
+biz-port-model-claude = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "kernel/tests"]

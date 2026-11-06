@@ -1,0 +1,16 @@
+[project]
+name = "biz-port-model-ollama"
+version = "1.0.0"
+description = "Ollama local model adapter (structured JSON output)"
+requires-python = ">=3.12,<3.13"
+dependencies = ["biz-kernel", "httpx>=0.27"]
+
+[tool.uv.sources]
+biz-kernel = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["biz_port_model_ollama"]

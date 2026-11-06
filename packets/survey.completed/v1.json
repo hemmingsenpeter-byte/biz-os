@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "survey.completed/v1",
+  "type": "object",
+  "required": [
+    "survey_id",
+    "site_id",
+    "findings"
+  ],
+  "properties": {
+    "survey_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "site_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "document_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

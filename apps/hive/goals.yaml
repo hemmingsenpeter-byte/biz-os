@@ -1,0 +1,4 @@
+# M0 placeholder; real parts arrive M2+.
+mission: Deliver commercial fit-out projects profitably and on time.
+goals:
+  - { key: reply_turnaround_hours, name: Reply turnaround, unit: hours, target: 4, direction: down }

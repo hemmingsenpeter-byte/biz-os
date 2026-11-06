@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payment_run.ready/v1",
+  "type": "object",
+  "required": [
+    "run_id",
+    "bill_ids",
+    "total_minor"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "bill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "total_minor": {
+      "type": "integer"
+    },
+    "currency": {
+      "type": "string"
+    }
+  }
+}

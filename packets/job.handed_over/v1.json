@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "job.handed_over/v1",
+  "type": "object",
+  "required": [
+    "job_id",
+    "handed_over_on"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "handed_over_on": {
+      "type": "string"
+    },
+    "document_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

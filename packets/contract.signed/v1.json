@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract.signed/v1",
+  "type": "object",
+  "required": [
+    "contract_id",
+    "party_id",
+    "signed_at"
+  ],
+  "properties": {
+    "contract_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "signed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "document_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

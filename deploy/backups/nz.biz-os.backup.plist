@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Install: cp to ~/Library/LaunchAgents/ (edit paths), then
+     launchctl load ~/Library/LaunchAgents/nz.biz-os.backup.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>nz.biz-os.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/CHANGE_ME/biz-os/deploy/backups/backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>2</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/CHANGE_ME/biz-backups/backup.log</string>
+  <key>StandardErrorPath</key><string>/Users/CHANGE_ME/biz-backups/backup.err</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

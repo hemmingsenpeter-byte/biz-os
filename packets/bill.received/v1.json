@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bill.received/v1",
+  "type": "object",
+  "required": [
+    "bill_id",
+    "supplier_party_id",
+    "total_minor",
+    "currency"
+  ],
+  "properties": {
+    "bill_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "supplier_party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "total_minor": {
+      "type": "integer"
+    },
+    "currency": {
+      "type": "string"
+    }
+  }
+}

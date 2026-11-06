@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payment.received/v1",
+  "type": "object",
+  "required": [
+    "payment_id",
+    "amount_minor",
+    "currency"
+  ],
+  "properties": {
+    "payment_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "amount_minor": {
+      "type": "integer"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "invoice_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

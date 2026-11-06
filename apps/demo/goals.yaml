@@ -1,0 +1,3 @@
+mission: Answer every request promptly and politely.
+goals:
+  - { key: reply_turnaround_hours, name: Reply turnaround, unit: hours, target: 4, direction: down }

@@ -1,0 +1,19 @@
+role: demo_clerk
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", capabilities: [demo_desk] }
+mission: Answer incoming service requests with a clear, polite reply, sent only after approval.
+goals: [reply_turnaround_hours]
+heartbeat: { cadence: 15m, triggers: [service_request.received] }
+budget_usd_month: 10
+topics:
+  - name: handle_request
+    sop: sops/handle_request.yaml
+    tools: [demo_desk.read_request, demo_desk.draft_reply, demo_desk.send_reply]
+sources: [business, "role:demo_clerk"]
+consumes: [service_request.received]
+publishes: [message.sent]
+evidence: { message.sent: [approval.granted, "packet:message.sent"], reply: [approval.granted, "packet:message.sent"] }
+autonomy_defaults: { handle_request: 2 }
+model_tier: { handle_request: local }
+escalate_when: [confidence_below: 0.6]
+slots: [industry.reply_template]

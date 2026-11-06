@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "task.created/v1",
+  "type": "object",
+  "required": [
+    "task_id",
+    "kind",
+    "goal_key"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "goal_key": {
+      "type": "string"
+    }
+  }
+}

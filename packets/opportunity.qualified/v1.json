@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "opportunity.qualified/v1",
+  "type": "object",
+  "required": [
+    "opportunity_id",
+    "party_id",
+    "summary"
+  ],
+  "properties": {
+    "opportunity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "value_estimate": {
+      "type": "number"
+    },
+    "source": {
+      "type": "string"
+    }
+  }
+}

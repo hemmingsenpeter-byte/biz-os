@@ -1,0 +1,16 @@
+name: basic_request
+input:
+  packet:
+    type: service_request.received
+    summary: Request about opening hours
+    payload:
+      request_id: 0190f0e0-0000-7000-8000-000000000001
+      channel: mail
+      subject: Opening hours
+      body: When are you open on public holidays?
+expect:
+  stops_at: approval
+  packets_after_approval:
+    - type: message.sent
+      payload_contains: { channel: mail }
+  evidence: [approval.granted, "packet:message.sent"]

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bill.matched/v1",
+  "type": "object",
+  "required": [
+    "bill_id",
+    "po_id"
+  ],
+  "properties": {
+    "bill_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "po_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

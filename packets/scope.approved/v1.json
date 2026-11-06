@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scope.approved/v1",
+  "type": "object",
+  "required": [
+    "scope_document_id",
+    "areas",
+    "exclusions"
+  ],
+  "properties": {
+    "scope_document_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "areas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

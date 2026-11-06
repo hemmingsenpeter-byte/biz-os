@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "practical_completion/v1",
+  "type": "object",
+  "required": [
+    "job_id",
+    "completed_on"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "completed_on": {
+      "type": "string"
+    },
+    "defects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+name: demo_desk
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [mail] }
+tools:
+  - { name: demo_desk.read_request, side_effect: read, description: Read a service request }
+  - { name: demo_desk.draft_reply, side_effect: draft, description: Save a draft reply }
+  - { name: demo_desk.send_reply, side_effect: external, description: Send a reply to the requester }
+publishes: [message.sent]
+consumes: [service_request.received]
+screens: []

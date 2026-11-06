@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "biz/role",
+  "type": "object",
+  "required": [
+    "role",
+    "version",
+    "requires",
+    "mission",
+    "goals",
+    "heartbeat",
+    "budget_usd_month",
+    "topics",
+    "consumes",
+    "publishes",
+    "evidence",
+    "slots"
+  ],
+  "properties": {
+    "role": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "requires": {
+      "type": "object",
+      "properties": {
+        "kernel": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mission": {
+      "type": "string"
+    },
+    "goals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "heartbeat": {
+      "type": "object",
+      "required": [
+        "cadence",
+        "triggers"
+      ],
+      "properties": {
+        "cadence": {
+          "type": "string",
+          "pattern": "^[0-9]+[smhd]$"
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "budget_usd_month": {
+      "type": "number",
+      "minimum": 0
+    },
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "sop",
+          "tools"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sop": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "consumes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "publishes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "autonomy_defaults": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 5
+      }
+    },
+    "model_tier": {
+      "type": "object",
+      "additionalProperties": {
+        "enum": [
+          "local",
+          "cloud"
+        ]
+      }
+    },
+    "escalate_when": {
+      "type": "array"
+    },
+    "slots": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

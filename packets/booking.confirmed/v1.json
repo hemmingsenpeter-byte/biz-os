@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "booking.confirmed/v1",
+  "type": "object",
+  "required": [
+    "booking_id",
+    "starts_at"
+  ],
+  "properties": {
+    "booking_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "starts_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ends_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resource": {
+      "type": "string"
+    }
+  }
+}

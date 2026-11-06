@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "note.captured/v1",
+  "type": "object",
+  "required": [
+    "note_id",
+    "text"
+  ],
+  "properties": {
+    "note_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "text": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "milestone.reached/v1",
+  "type": "object",
+  "required": [
+    "milestone_id",
+    "job_id",
+    "name"
+  ],
+  "properties": {
+    "milestone_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "name": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "goods.received/v1",
+  "type": "object",
+  "required": [
+    "po_id",
+    "received_at"
+  ],
+  "properties": {
+    "po_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

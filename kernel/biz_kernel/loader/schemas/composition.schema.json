@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "biz/composition",
+  "type": "object",
+  "required": [
+    "name",
+    "kernel",
+    "capabilities",
+    "ports",
+    "roles",
+    "industries",
+    "policy",
+    "goals"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "kernel": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ports": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "industries": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "policy": {
+      "type": "string"
+    },
+    "goals": {
+      "type": "string"
+    },
+    "memory_profile": {
+      "type": "string"
+    },
+    "seed": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

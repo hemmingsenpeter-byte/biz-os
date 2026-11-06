@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enquiry.received/v1",
+  "type": "object",
+  "required": [
+    "enquiry_id",
+    "channel",
+    "summary"
+  ],
+  "properties": {
+    "enquiry_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "contact": {
+      "type": "string"
+    }
+  }
+}

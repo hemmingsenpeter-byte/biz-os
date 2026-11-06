@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enquiry.declined/v1",
+  "type": "object",
+  "required": [
+    "enquiry_id",
+    "reason"
+  ],
+  "properties": {
+    "enquiry_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

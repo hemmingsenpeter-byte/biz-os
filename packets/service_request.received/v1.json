@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "service_request.received/v1",
+  "type": "object",
+  "required": [
+    "request_id",
+    "channel",
+    "subject",
+    "body"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "priority": {
+      "type": "string"
+    }
+  }
+}

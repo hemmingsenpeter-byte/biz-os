@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "invoice.issued/v1",
+  "type": "object",
+  "required": [
+    "invoice_id",
+    "party_id",
+    "total_minor",
+    "currency"
+  ],
+  "properties": {
+    "invoice_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "total_minor": {
+      "type": "integer"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "due_date": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "programme.baseline/v1",
+  "type": "object",
+  "required": [
+    "programme_id",
+    "start_date",
+    "end_date"
+  ],
+  "properties": {
+    "programme_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "start_date": {
+      "type": "string"
+    },
+    "end_date": {
+      "type": "string"
+    },
+    "milestones": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

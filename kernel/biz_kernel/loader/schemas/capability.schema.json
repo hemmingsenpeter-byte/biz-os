@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "biz/capability",
+  "type": "object",
+  "required": [
+    "name",
+    "version",
+    "requires",
+    "tools",
+    "publishes",
+    "consumes"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "requires": {
+      "type": "object",
+      "properties": {
+        "kernel": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "side_effect"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "side_effect": {
+            "enum": [
+              "read",
+              "draft",
+              "external",
+              "money"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "publishes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "consumes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "screens": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,9 @@
+name: demo
+kernel: "1.x"
+capabilities: [demo_desk]
+ports: { mail: fake_mail, model_local: fake_model }
+roles: [demo_clerk]
+industries: [demo_trade]
+policy: ./policy.yaml
+goals: ./goals.yaml
+seed: ./seed/

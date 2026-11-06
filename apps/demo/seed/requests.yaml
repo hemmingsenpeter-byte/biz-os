@@ -1,0 +1,2 @@
+requests:
+  - { id: 0190f0e0-0000-7000-8000-000000000001, from: customer@example.test, subject: Opening hours, body: When are you open on public holidays? }

@@ -1,0 +1,10 @@
+# M0 placeholder; real parts arrive M2+ (hive reuses the demo parts until then).
+name: hive
+kernel: "1.x"
+capabilities: [demo_desk]
+ports: { mail: fake_mail, model_local: fake_model }  # fakes until real ports land
+roles: [demo_clerk]
+industries: [demo_trade]
+policy: ./policy.yaml
+goals: ./goals.yaml
+seed: ./seed/

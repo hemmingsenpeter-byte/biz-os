@@ -1,0 +1,36 @@
+name: handle_request
+trigger: service_request.received
+goal_key: reply_turnaround_hours
+task: { kind: reply, title: "Handle {{packet.summary}}" }
+steps:
+  - id: read
+    kind: tool
+    tool: demo_desk.read_request
+    args: { request_id: "{{packet.payload.request_id}}" }
+  - id: draft
+    kind: draft
+    prompt: prompts/handle_request.md
+    decision_type: reply_drafting
+    schema:
+      type: object
+      required: [subject, body]
+      properties: { subject: { type: string }, body: { type: string } }
+    inputs: { request: "{{steps.read.output}}" }
+  - id: send
+    kind: tool
+    tool: demo_desk.send_reply
+    decision_type: reply_sending
+    args:
+      to: "{{steps.read.output.from}}"
+      subject: "{{steps.draft.output.subject}}"
+      body: "{{steps.draft.output.body}}"
+  - id: done
+    kind: publish
+    packet: message.sent
+    summary: "Reply sent to {{steps.read.output.from}}"
+    payload:
+      message_id: "{{steps.send.output.message_id}}"
+      channel: mail
+      to: "{{steps.read.output.from}}"
+      subject: "{{steps.draft.output.subject}}"
+      body: "{{steps.draft.output.body}}"

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "escalation.assigned/v1",
+  "type": "object",
+  "required": [
+    "escalation_id",
+    "assignee",
+    "reason"
+  ],
+  "properties": {
+    "escalation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "assignee": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

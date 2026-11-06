@@ -1,0 +1,16 @@
+# M0 placeholder; real parts arrive M2+.
+objective: >-
+  HIVE: a commercial fit-out business. Win and deliver office fit-out projects profitably,
+  with the owner approving anything that sends, pays or signs.
+authority:
+  owner: owner
+  approvers: [owner]
+limits:
+  max_send_per_day: 50
+  max_spend_usd_month: 200
+hard_rules:
+  - Nothing leaves the company without a named approver.
+budgets_usd_month:
+  demo_clerk: 20
+autonomy:
+  demo_clerk: { handle_request: 2 }

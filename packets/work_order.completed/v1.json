@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "work_order.completed/v1",
+  "type": "object",
+  "required": [
+    "work_order_id",
+    "summary"
+  ],
+  "properties": {
+    "work_order_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "completed_by": {
+      "type": "string"
+    }
+  }
+}

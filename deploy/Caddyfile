@@ -1,0 +1,32 @@
+# One front door. Public paths (webhooks, link pages) are the only ones the tunnel exposes;
+# see cloudflared.config.example.yml. Owner/admin reach everything over Tailscale.
+{$BIZ_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# REST API (OpenAPI at /v1/docs)
+	handle /v1/* {
+		reverse_proxy biz-api:8000
+	}
+
+	# Provider webhooks (Twilio, DocuSeal, M365, Xero) land on the API
+	handle /webhooks/* {
+		reverse_proxy biz-api:8000
+	}
+
+	# Everything else is the Next.js app (owner, client and subcontractor pages)
+	handle {
+		reverse_proxy biz-web:3000
+	}
+}
+
+# DocuSeal on its own host so its cookies and CSP stay separate
+sign.{$BIZ_DOMAIN:localhost} {
+	reverse_proxy docuseal:3000
+}

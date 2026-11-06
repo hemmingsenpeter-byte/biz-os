@@ -1,0 +1,14 @@
+# One word or phrase per line (case-insensitive, whole word). Lines starting with re: are regexes.
+hive
+fitout
+fit-out
+fit out
+partition
+partitions
+ceiling
+ceilings
+joinery
+plumbing
+plumber
+carpentry
+re:\$\s?\d

@@ -1,0 +1,8 @@
+industry: demo_trade
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", capabilities: [demo_desk] }
+ext_prefix: demo
+extensions: [migrations/ext_demo_job.py]
+fills:
+  industry.reply_template: templates/reply.md
+  industry.glossary: data/glossary.yaml

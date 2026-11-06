@@ -1,0 +1,17 @@
+# Example for a locally-managed tunnel (the compose file uses TUNNEL_TOKEN instead; with a
+# token, set these same ingress rules in the Cloudflare Zero Trust dashboard).
+# Only webhooks and link pages are public. /v1 (the owner API) is NOT routed through the tunnel.
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: app.example.com
+    path: ^/webhooks/.*
+    service: http://caddy:80
+  - hostname: app.example.com
+    path: ^/(l|link|portal-public)/.*
+    service: http://caddy:80
+  - hostname: sign.example.com
+    path: ^/(s|d)/.*          # DocuSeal signing and download links only
+    service: http://caddy:80
+  - service: http_status:404

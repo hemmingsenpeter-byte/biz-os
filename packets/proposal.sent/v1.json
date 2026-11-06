@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proposal.sent/v1",
+  "type": "object",
+  "required": [
+    "proposal_id",
+    "sent_to",
+    "message_id"
+  ],
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sent_to": {
+      "type": "string"
+    },
+    "message_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

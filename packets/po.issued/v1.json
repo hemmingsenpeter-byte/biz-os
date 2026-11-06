@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "po.issued/v1",
+  "type": "object",
+  "required": [
+    "po_id",
+    "supplier_party_id",
+    "total_minor",
+    "currency"
+  ],
+  "properties": {
+    "po_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "supplier_party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "total_minor": {
+      "type": "integer"
+    },
+    "currency": {
+      "type": "string"
+    }
+  }
+}

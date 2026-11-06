@@ -1,0 +1,12 @@
+authority:
+  owner: demo_owner
+  approvers: [demo_owner]
+limits:
+  max_send_per_day: 50
+  max_spend_usd_month: 25
+hard_rules:
+  - Nothing leaves the company without a named approver.
+budgets_usd_month:
+  demo_clerk: 10
+autonomy:
+  demo_clerk: { handle_request: 2 }

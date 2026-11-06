@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proposal.accepted/v1",
+  "type": "object",
+  "required": [
+    "proposal_id",
+    "accepted_by"
+  ],
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "accepted_by": {
+      "type": "string"
+    }
+  }
+}

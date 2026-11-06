@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "message.sent/v1",
+  "type": "object",
+  "required": [
+    "message_id",
+    "channel",
+    "to",
+    "body"
+  ],
+  "properties": {
+    "message_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    }
+  }
+}

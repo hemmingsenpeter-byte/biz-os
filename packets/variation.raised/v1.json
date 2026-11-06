@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "variation.raised/v1",
+  "type": "object",
+  "required": [
+    "variation_id",
+    "job_id",
+    "description"
+  ],
+  "properties": {
+    "variation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "description": {
+      "type": "string"
+    },
+    "requested_by": {
+      "type": "string"
+    }
+  }
+}

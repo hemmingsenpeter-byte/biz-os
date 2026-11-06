@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brief.confirmed/v1",
+  "type": "object",
+  "required": [
+    "brief_id",
+    "party_id",
+    "summary"
+  ],
+  "properties": {
+    "brief_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "document_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

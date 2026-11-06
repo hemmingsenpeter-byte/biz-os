@@ -102,7 +102,7 @@ None of these has been started.
 
 - **Run the Docker Compose stack in a cloud session.** The Docker client is installed there, but nobody has checked whether the Docker daemon is reachable. This would be the first real run of `deploy/docker-compose.yml`, with no code changes.
 - **Start M6 (money).** This needs a new `accounting_xero` port contract, a fake, and the invoicing, payables and cash capabilities, starting at migration `0014`. It touches money actions, so get the owner's go-ahead before building it.
-- **Tidy-up:** set `asyncio_default_fixture_loop_scope` in the pytest config to silence the pytest-asyncio deprecation warning.
+- **Tidy-up (done):** `asyncio_default_fixture_loop_scope = "function"` is now set in `pyproject.toml`, which silences the pytest-asyncio deprecation warning. It is a one-line change; if `pyproject.toml` conflicts with the Mac's commits, keep both sides.
 
 ### Not touched
 

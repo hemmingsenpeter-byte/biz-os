@@ -20,6 +20,9 @@ autonomy:
   missed_call_text_back: 2
   meeting_offer_sending: 2
   meeting_booking: 2
+comms:               # deterministic send gate (capabilities/comms)
+  banned_phrases: []    # case-insensitive phrases that block a message
+  link_domains: []      # add the business's own domain
 intake:
   mail_lookback_hours: 24
 budgets_usd_month:

@@ -4,13 +4,27 @@ when: "{{packet.payload.channel}} in mail,form,sms"
 goal_key: enquiry_response_minutes
 task: { kind: triage, title: "Triage {{packet.payload.summary}}" }
 steps:
+  - id: read
+    kind: tool
+    tool: intake.read_enquiry
+    args: { enquiry_id: "{{packet.payload.enquiry_id}}" }
+  # comms records opt-outs itself, before any model step can see the message.
+  - id: rules
+    kind: tool
+    tool: comms.classify_reply
+    args:
+      channel: "{{steps.read.output.channel}}"
+      sender: "{{steps.read.output.from}}"
+      subject: "{{steps.read.output.subject}}"
+      body: "{{steps.read.output.body}}"
+      party_id: "{{steps.read.output.party_id}}"
   - id: classify
     kind: tool
     tool: intake.classify
     args: { enquiry_id: "{{packet.payload.enquiry_id}}" }
   - id: model
     kind: draft
-    when: "{{steps.classify.output.needs_model}} == true"
+    when: "{{steps.classify.output.needs_model}}/{{steps.rules.output.needs_model}} == true/true"
     prompt: prompts/triage.md
     decision_type: enquiry_classification
     schema:

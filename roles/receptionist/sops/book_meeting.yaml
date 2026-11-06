@@ -21,21 +21,39 @@ steps:
       required: [subject, body]
       properties: { subject: { type: string }, body: { type: string } }
     inputs: { enquiry: "{{steps.read.output}}", slots: "{{steps.slots.output}}" }
-  - id: send
+  - id: outbox
     kind: tool
-    tool: intake.reply
-    decision_type: meeting_offer_sending
+    tool: comms.draft
     args:
+      channel: mail
       to: "{{steps.read.output.from}}"
       subject: "{{steps.draft.output.subject}}"
       body: "{{steps.draft.output.body}}"
-      contact_status: "{{steps.read.output.contact_status}}"
+      party_id: "{{steps.read.output.party_id}}"
+      expected_to: "{{steps.read.output.from}}"
+  - id: gate
+    kind: tool
+    tool: comms.queue
+    args: { message_id: "{{steps.outbox.output.message_id}}" }
+  # A blocked message (unrendered tag, opt-out, bad link...) stops here: nothing is sent and
+  # nothing is published as sent.
+  - id: send
+    kind: tool
+    when: "{{steps.gate.output.status}} == queued"
+    tool: comms.send
+    decision_type: meeting_offer_sending
+    args:   # the approver sees exactly what will be sent; comms refuses any mismatch
+      message_id: "{{steps.outbox.output.message_id}}"
+      to: "{{steps.outbox.output.to}}"
+      subject: "{{steps.outbox.output.subject}}"
+      body: "{{steps.outbox.output.body}}"
   # TODO(comms milestone): booking.book needs the customer's reply choosing a slot, and nothing
   # reads replies yet. Until then this SOP stops after offering times; it never books slot 0
   # for someone who was not asked. When replies are read, add an owner `approve` step that
   # names the chosen slot, then booking.book and the meeting.booked publish.
   - id: done
     kind: publish
+    when: "{{steps.send.output.status}} == sent"   # never claim a send that was blocked
     packet: message.sent
     summary: "Meeting times offered to {{steps.read.output.from}}"
     payload:

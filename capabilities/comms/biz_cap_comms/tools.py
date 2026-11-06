@@ -116,8 +116,23 @@ def register(
         session.flush()
         return _view(row)
 
-    def send(session: Session, message_id: str, idempotency_key: str) -> dict[str, Any]:
+    def send(
+        session: Session,
+        message_id: str,
+        idempotency_key: str,
+        to: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+    ) -> dict[str, Any]:
         row = _row(session, message_id)
+        # The approver approves what they see: the content in the call must be the row's.
+        for name, shown, actual in (
+            ("to", to, row.to),
+            ("subject", subject, row.subject),
+            ("body", body, row.body),
+        ):
+            if shown is not None and shown != (actual or ""):
+                raise PermissionError(f"{name} differs from the approved message")
         if row.status == "sent":
             return _view(row)  # replay: first result
         if row.status in ("uncertain", "sending"):
@@ -226,7 +241,10 @@ def register(
             f"{CAP}.send",
             CAP,
             SideEffect.EXTERNAL,
-            _obj({"message_id": _STR, **idem}, ["message_id", "idempotency_key"]),
+            _obj(
+                {"message_id": _STR, "to": _STR, "subject": _STR, "body": _STR, **idem},
+                ["message_id", "to", "body", "idempotency_key"],
+            ),
             send,
             "Send a queued message once; uncertain sends wait for reconcile",
         ),

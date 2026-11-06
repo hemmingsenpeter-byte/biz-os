@@ -1,6 +1,6 @@
 role: receptionist
 version: 1.0.0
-requires: { kernel: ">=1.0,<2", capabilities: [intake, booking] }
+requires: { kernel: ">=1.0,<2", capabilities: [intake, booking, comms] }
 mission: Answer every call, form and email quickly, route each enquiry to the right place, and offer meeting times.
 goals: [enquiry_response_minutes]
 heartbeat: { cadence: 5m, triggers: [enquiry.received, opportunity.qualified] }
@@ -11,10 +11,10 @@ topics:
     tools: [intake.create_enquiry, intake.text_back]
   - name: triage
     sop: sops/triage.yaml
-    tools: [intake.classify, intake.set_classification]
+    tools: [intake.read_enquiry, comms.classify_reply, intake.classify, intake.set_classification]
   - name: book_meeting
     sop: sops/book_meeting.yaml
-    tools: [intake.read_enquiry, booking.offer_slots, intake.reply]
+    tools: [intake.read_enquiry, booking.offer_slots, comms.draft, comms.queue, comms.send]
 sources: [business, "role:receptionist"]
 consumes: [enquiry.received, opportunity.qualified]
 publishes: [message.sent, opportunity.qualified, service_request.received, enquiry.declined, meeting.booked]

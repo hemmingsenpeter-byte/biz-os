@@ -20,6 +20,7 @@
 - **Inbound contacts are rung 0 (unverified).** Enquiries never link to an existing party by a claimed email or phone.
 - **Only a missed call gets the text-back,** at most once per number per 24 hours. Inbound SMS goes to triage.
 - **The receptionist offers meeting slots but doesn't book yet.** Booking needs the customer's reply, which comes once comms reads replies.
+- **The receptionist sends through comms.** Every reply passes the gate and opt-outs. The approver sees the exact to, subject and body, and `comms.send` refuses any mismatch.
 - **Send ledgers are durable** (`port_twilio_sends`, `port_m365_sends`). A send that was claimed but not finished is treated as uncertain and never resent blindly.
 
 ### Waiting on the owner
@@ -35,5 +36,6 @@
 ### Not done yet
 
 - Mac mini deploy and backups. The compose stack has not been run: there is no Docker on the dev box.
-- **comms isn't wired into SOPs yet.** The receptionist still replies through `intake.reply`, and reading the customer's slot choice comes later.
+- **comms reads customer replies:** not yet, so the receptionist offers meeting slots but can't book the one chosen.
+- **A gate-blocked reply ends the run with `EvidenceMissing`,** so the task stays open for the owner, rather than completing with a `message.blocked` packet.
 - **Web shell (`web/`)** isn't started.

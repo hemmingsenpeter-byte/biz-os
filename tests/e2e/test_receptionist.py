@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from biz_cap_comms.models import OptOut as CommsOptOut
+from biz_cap_comms.models import Outbox
 from biz_cap_intake.models import Enquiry, OptOut
 from biz_kernel import db
 from biz_kernel.api.app import create_app
@@ -200,10 +202,14 @@ def test_email_triaged_routed_and_meeting_offered(live: Live) -> None:
     live.rt.tick()
     book = live.run_for("book_meeting", opp[0].id)
     op = live.pending_op(book)
-    assert op.tool == "intake.reply" and live.mail.sent == []
+    assert op.tool == "comms.send" and live.mail.sent == []
     live.approve(op)
     assert live.finish(book)["status"] == "done"
     assert len(live.mail.sent) == 1 and live.mail.sent[0].to == ["lead@example.com"]
+    with db.session_scope() as s:
+        rows = s.scalars(select(Outbox)).all()
+        assert [r.status for r in rows] == ["sent"] and rows[0].to == "lead@example.com"
+    assert len(live.packets("message.sent")) == 1
     assert live.cal.events == {}  # no slot is booked for someone who was only offered times
     assert live.packets("meeting.booked") == []
 
@@ -254,3 +260,46 @@ def test_spam_and_opt_out_never_reach_the_model(live: Live) -> None:
     with db.session_scope() as s:
         runs = s.scalars(select(SopRun).where(SopRun.packet_id == calls[0].id)).all()
         assert runs == []
+
+
+def _qualify_and_offer(live: Live, body: str, opt_out: bool = False) -> SopRun:
+    """Triage a mail enquiry, then start book_meeting with the model drafting `body`."""
+    live.model.script(
+        {"category": "enquiry", "summary": "Quote", "confidence": 0.9},
+        {"subject": "Meeting times", "body": body},
+    )
+    live.mail.inject_inbound(
+        InboundMessage(
+            provider_id="b-1",
+            sender="lead@example.com",
+            to=["info@example.com"],
+            subject="Quote please",
+            body="Hi, can you quote?",
+            received_at=datetime.now(UTC),
+        )
+    )
+    live.rt.tick()
+    received = live.packets("enquiry.received")
+    assert live.finish(live.run_for("triage", received[0].id))["status"] == "done"
+    if opt_out:
+        with db.session_scope() as s:
+            s.add(CommsOptOut(address="lead@example.com", source="test"))
+    live.rt.tick()
+    return live.run_for("book_meeting", live.packets("opportunity.qualified")[0].id)
+
+
+@pytest.mark.parametrize("case", ["unrendered_tag", "opted_out"])
+def test_blocked_reply_is_never_sent(live: Live, case: str) -> None:
+    body = "Hello {{first_name}}, Tuesday 10:00 UTC?" if case == "unrendered_tag" else "Tuesday?"
+    book = _qualify_and_offer(live, body, opt_out=case == "opted_out")
+    # No send, so the "message.sent" evidence is missing and the task cannot complete.
+    with pytest.raises(Exception, match="missing evidence"):
+        live.finish(book)
+    assert live.mail.sent == []
+    assert live.packets("message.sent") == []
+    with db.session_scope() as s:
+        assert s.get(Task, book.task_id).status != "done"
+    with db.session_scope() as s:
+        rows = s.scalars(select(Outbox)).all()
+        assert len(rows) == 1 and rows[0].status == "blocked"
+        assert rows[0].gate_report["reasons"]

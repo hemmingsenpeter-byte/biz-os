@@ -169,7 +169,7 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     sop = ctx().roles[role].sops[sop_name]
     for step in sop["steps"]:
         kind = step["kind"]
-        if step.get("when") and not holds(step["when"], state):
+        if step.get("when") and not _step_applies(step["when"], state):
             state["steps"][step["id"]] = {"output": {"skipped": True}}
             continue
         if kind == "tool":
@@ -192,6 +192,30 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
         else:
             raise ValueError(f"unknown step kind {kind}")
     return _end(run_id, "done")
+
+
+def _picklable(fn: Any) -> Any:
+    """DBOS stores step errors by pickling them; schema errors don't pickle, so convert."""
+    import functools
+
+    import jsonschema
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except jsonschema.ValidationError as exc:
+            raise ValueError(f"tool arguments rejected: {exc.message}") from None
+
+    return wrapper
+
+
+def _step_applies(cond: str, state: dict[str, Any]) -> bool:
+    """A step `when` that reads a missing field (e.g. a skipped step's output) is false."""
+    try:
+        return holds(cond, state)
+    except TemplateError:
+        return False
 
 
 def _await_decision(run_id: str, op_id: str) -> str:
@@ -292,7 +316,7 @@ def _tool_step(
             return done.output
         args = render(step.get("args", {}), state)
         args = _with_idempotency(args, f"{run_id}:{step['id']}", step["tool"])
-        res = c.gate.call_or_stage(
+        res = _picklable(c.gate.call_or_stage)(
             s,
             actor=role,
             tool=step["tool"],

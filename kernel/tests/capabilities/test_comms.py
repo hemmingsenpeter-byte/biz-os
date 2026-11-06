@@ -128,3 +128,44 @@ def test_blocked_message_is_never_sent(session) -> None:  # type: ignore[no-unty
         assert mail.sent == []
     finally:
         config.configure(None)
+
+
+def test_send_refuses_content_other_than_the_row(session) -> None:  # type: ignore[no-untyped-def]
+    """The approver approves the to/subject/body shown; a mismatch is never sent."""
+    mail = FakeMail()
+    reg = ToolRegistry()
+    register(reg, {"mail": mail, "telephony": FakeTelephony()}, CFG)
+    try:
+        d = reg.get("comms.draft").fn(
+            session=session,
+            channel="mail",
+            to="a@x.org",
+            subject="Hi",
+            body="Hello there",
+            idempotency_key="k2",
+        )
+        assert (
+            reg.get("comms.queue").fn(session=session, message_id=d["message_id"])["status"]
+            == "queued"
+        )
+        with pytest.raises(PermissionError, match="body"):
+            reg.get("comms.send").fn(
+                session=session,
+                message_id=d["message_id"],
+                idempotency_key="k2",
+                to="a@x.org",
+                subject="Hi",
+                body="Something else",
+            )
+        assert mail.sent == []
+        out = reg.get("comms.send").fn(
+            session=session,
+            message_id=d["message_id"],
+            idempotency_key="k2",
+            to="a@x.org",
+            subject="Hi",
+            body="Hello there",
+        )
+        assert out["status"] == "sent" and len(mail.sent) == 1
+    finally:
+        config.configure(None)

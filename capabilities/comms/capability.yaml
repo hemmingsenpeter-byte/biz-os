@@ -8,6 +8,7 @@ tools:
   - { name: comms.reconcile, side_effect: read, description: "Resolve an uncertain send by asking the provider, when it can say" }
   - { name: comms.classify_reply, side_effect: draft, description: "Deterministic opt-out and auto-reply rules before any model; flags the rest for the model" }
   - { name: comms.read_thread, side_effect: read, description: "Read a sent message and the meeting slots it offered, numbered from 0" }
+  - { name: comms.match_reply, side_effect: read, description: "Find the sent mail a [ref:] reply token belongs to; matches only when the sender is the address it was sent to" }
   - { name: comms.resolve_reply, side_effect: read, description: "Validate a model's reading of a customer reply: the slot must be one offered (and free) with enough confidence, else escalate" }
   - { name: comms.opt_out, side_effect: draft, description: "Record a permanent, channel-agnostic suppression" }
 publishes: [message.queued, message.sent, reply.received, optout.recorded]

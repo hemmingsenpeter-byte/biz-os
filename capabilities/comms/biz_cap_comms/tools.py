@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from biz_cap_comms import config, service
-from biz_cap_comms.gate import GateConfig
+from biz_cap_comms.gate import GateConfig, normalize_address
 from biz_cap_comms.models import Outbox
 
 CAP = "comms"
@@ -238,6 +238,28 @@ def register(
             "offered_slots": slots,
         }
 
+    def match_reply(session: Session, reply_token: str, sender: str) -> dict[str, Any]:
+        """The sent mail a reply token belongs to, only if `sender` is the address written to.
+
+        A different sender is not a reply to that thread, so nobody else can hijack it."""
+        token = str(reply_token or "").strip().lower()
+        no = {"matched": False, "message_id": "", "party_id": "", "enquiry_id": ""}
+        if not token:
+            return no
+        row = session.scalar(
+            select(Outbox).where(
+                Outbox.reply_token == token, Outbox.channel == "mail", Outbox.status == "sent"
+            )
+        )
+        if row is None or normalize_address(sender) != normalize_address(row.expected_to or row.to):
+            return no
+        return {
+            "matched": True,
+            "message_id": str(row.id),
+            "party_id": str(row.party_id or ""),
+            "enquiry_id": str((row.meta or {}).get("enquiry_id") or ""),
+        }
+
     def resolve_reply(
         session: Session,
         message_id: str,
@@ -373,6 +395,14 @@ def register(
             _obj({"message_id": _STR}, ["message_id"]),
             read_thread,
             "Read a sent message and the meeting slots it offered",
+        ),
+        Tool(
+            f"{CAP}.match_reply",
+            CAP,
+            SideEffect.READ,
+            _obj({"reply_token": _STR, "sender": _STR}, ["reply_token", "sender"]),
+            match_reply,
+            "Find the sent mail a reply token belongs to, if the sender is who it was sent to",
         ),
         Tool(
             f"{CAP}.resolve_reply",

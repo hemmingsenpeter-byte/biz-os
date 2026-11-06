@@ -67,29 +67,51 @@ class PolicyEngine:
         return None
 
     def _level(self, session: Session, action: Action) -> int:
-        key = action.decision_type or action.tool
-        default = int(self.autonomy.get(key, self.autonomy.get("default", DEFAULT_LEVEL)))
-        return autonomy.level(session, action.actor, key, default)
+        """Strictest (lowest) level among the tool's own key and the SOP's decision type.
+
+        A decision type can never loosen a tool's own setting; with neither configured
+        nor stored, the default applies.
+        """
+        levels = []
+        for key in (action.tool, action.decision_type):
+            if not key:
+                continue
+            configured = self.autonomy.get(key)
+            stored = autonomy.level(session, action.actor, key, -1)
+            if stored != -1:
+                levels.append(stored)
+            elif configured is not None:
+                levels.append(int(configured))
+        if levels:
+            return min(levels)
+        return int(self.autonomy.get("default", DEFAULT_LEVEL))
 
     def _own(self, session: Session, action: Action) -> Decision:
+        # Order matters: hard rules, then money limits (a deny limit applies at every
+        # autonomy level, so an approval can never authorise it), then the ladder.
         if (deny := self._hard_deny(action)) is not None:
             return deny
         if action.side_effect not in GATED:
             return Allow("ungated")
         approver = self.approver_for(action)
+        over_limit: NeedsApproval | None = None
+        if action.side_effect == SideEffect.MONEY:
+            limit = self._limit(action)
+            if limit is None:
+                over_limit = NeedsApproval(approver, "no money limit configured")  # fail closed
+            elif action.amount is None:
+                over_limit = NeedsApproval(approver, "money action without an amount")
+            elif action.amount > limit:
+                if self.limits.get("over_limit", "approval") == "deny":
+                    return Deny(f"amount {action.amount} is over the limit {limit}")
+                over_limit = NeedsApproval(
+                    approver, f"amount {action.amount} is over the limit {limit}"
+                )
         lvl = self._level(session, action)
         if lvl <= 2:
             return NeedsApproval(approver, f"autonomy level {lvl} requires approval")
-        limit = self._limit(action) if action.side_effect == SideEffect.MONEY else None
-        if action.side_effect == SideEffect.MONEY and limit is None:
-            return NeedsApproval(approver, "no money limit configured")  # fail closed
-        if limit is not None:
-            if action.amount is None:
-                return NeedsApproval(approver, "money action without an amount")
-            if action.amount > limit:
-                if self.limits.get("over_limit", "approval") == "deny":
-                    return Deny(f"amount {action.amount} is over the limit {limit}")
-                return NeedsApproval(approver, f"amount {action.amount} is over the limit {limit}")
+        if over_limit is not None:
+            return over_limit
         return Allow(f"autonomy level {lvl}")
 
     def _inner_effect(self, name: str) -> tuple[SideEffect, tuple[str, ...]]:
@@ -109,7 +131,7 @@ class PolicyEngine:
                 tool=name,
                 side_effect=effect,
                 inputs=action.inputs,
-                decision_type=action.decision_type,
+                decision_type=None,  # inner tools are judged by their own setting
                 inner=deeper,
                 amount=action.amount,
             )

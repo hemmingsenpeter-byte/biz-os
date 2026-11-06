@@ -53,6 +53,7 @@ steps:
       slot_index: "{{steps.draft.output.slot_index}}"
       confidence: "{{steps.draft.output.confidence}}"
       reply_text: "{{packet.payload.body}}"
+      sender_verified: "{{packet.payload.sender_verified}}"
   - id: escalate
     kind: publish
     when: "{{steps.plan.output.action}} == escalate"
@@ -68,7 +69,7 @@ steps:
     kind: approve
     when: "{{steps.plan.output.action}} == book"
     approver: owner
-    reason: "Book {{steps.plan.output.slot_label}} for {{packet.payload.sender}}? They wrote: {{steps.plan.output.customer_text}}"
+    reason: "Book {{steps.plan.output.slot_label}} for {{packet.payload.sender}} ({{steps.plan.output.sender_note}})? {{steps.plan.output.customer_text}}"
   - id: book
     kind: tool
     when: "{{steps.plan.output.action}} == book"

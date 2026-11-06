@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from biz_kernel.audit.log import record
@@ -43,6 +44,12 @@ def _row(session: Session, message_id: str) -> Outbox:
 
 MIN_CONFIDENCE = 0.7
 INTENTS = ("choose_slot", "reschedule", "question", "decline", "other")
+
+
+def _fence(text: str) -> str:
+    """Customer text, quoted and clearly marked so it cannot pass as system text."""
+    flat = " ".join(str(text).split())[:200].replace("«", "<").replace("»", ">")
+    return f"Customer wrote (unverified): «{flat}»"
 
 
 def _aware(text: str) -> datetime:
@@ -127,6 +134,11 @@ def register(
             party_id=uuid.UUID(party_id) if party_id else None,
             expected_to=expected_to,
             reply_token=secrets.token_hex(5) if channel == "mail" else None,
+            reply_expires_at=(
+                datetime.now(UTC) + timedelta(days=config.reply_token_days())
+                if channel == "mail"
+                else None
+            ),
             meta=meta,
         )
         session.add(row)
@@ -245,6 +257,7 @@ def register(
         confidence: float,
         slot_index: int | None = None,
         reply_text: str = "",
+        sender_verified: bool = False,
     ) -> dict[str, Any]:
         """Turn the model's reading of a reply into `book` or `escalate`. The slot must be one
         that was offered, and still free; anything doubtful escalates to the owner."""
@@ -258,10 +271,23 @@ def register(
             "start": "",
             "end": "",
             "slot_label": "",
-            "customer_text": reply_text[:500],
+            "customer_text": _fence(reply_text),
+            "sender_verified": sender_verified is True,
         }
+        out["sender_note"] = "" if out["sender_verified"] else "unverified sender"
+        expires = row.reply_expires_at
+        proposed = (row.meta or {}).get("booking_proposed")
+        digest = hashlib.sha256(reply_text.encode()).hexdigest()[:16]
         if row.status != "sent" or intent not in INTENTS:
             out["reason"] = "reply does not match a sent message or the intent is unknown"
+        elif expires is not None and expires < datetime.now(UTC):
+            out["reason"] = "reply token expired"
+        elif (
+            intent == "choose_slot"
+            and isinstance(proposed, dict)
+            and proposed.get("reply") != digest
+        ):
+            out["reason"] = "a booking was already proposed for this thread"
         elif intent != "choose_slot":
             out["reason"] = f"customer reply needs a person: {intent}"
         elif not isinstance(confidence, int | float) or confidence < MIN_CONFIDENCE:
@@ -288,6 +314,16 @@ def register(
                 free = start > datetime.now(UTC) and any(sl.start == start for sl in got)
             if free:
                 out["action"] = "book"
+                # one booking per thread; the same reply re-read (a replay) stays allowed
+                row.meta = {
+                    **(row.meta or {}),
+                    "booking_proposed": {
+                        "slot_index": slot_index,
+                        "reply": digest,
+                        "at": datetime.now(UTC).isoformat(),
+                    },
+                }
+                session.flush()
             else:
                 out["reason"] = f"{out['slot_label']} is no longer free"
         return out
@@ -377,7 +413,7 @@ def register(
         Tool(
             f"{CAP}.resolve_reply",
             CAP,
-            SideEffect.READ,
+            SideEffect.DRAFT,
             _obj(
                 {
                     "message_id": _STR,
@@ -385,6 +421,7 @@ def register(
                     "confidence": {"type": "number"},
                     "slot_index": {"type": ["integer", "null"]},
                     "reply_text": _STR,
+                    "sender_verified": {"type": "boolean"},
                 },
                 ["message_id", "intent", "confidence"],
             ),

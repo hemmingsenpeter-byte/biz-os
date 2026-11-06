@@ -29,3 +29,16 @@ def gate_config() -> GateConfig:
         link_domains=tuple(own.get("link_domains", ())),
         max_length={**DEFAULT_MAX_LENGTH, **(own.get("max_length") or {})},
     )
+
+
+DEFAULT_REPLY_TOKEN_DAYS = 14
+
+
+def reply_token_days() -> float:
+    """How long a reply token stays valid (`comms.reply_token_days` policy, default 14)."""
+    own = ((getattr(_manifest, "policy", None) or {}).get("comms")) or {}
+    try:
+        days = float(own.get("reply_token_days", DEFAULT_REPLY_TOKEN_DAYS))
+    except (TypeError, ValueError):
+        return float(DEFAULT_REPLY_TOKEN_DAYS)
+    return days if days > 0 else float(DEFAULT_REPLY_TOKEN_DAYS)

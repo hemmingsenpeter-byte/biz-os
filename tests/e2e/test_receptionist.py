@@ -378,6 +378,7 @@ def test_reply_choosing_a_slot_books_it_once(live: Live) -> None:
     run = live.run_for("handle_reply", replies[0].id)
     op = live.pending_op(run)  # the owner is asked to confirm the chosen slot
     assert live.cal.events == {} and "the second one works" in op.reason
+    assert "Customer wrote (unverified): «" in op.reason and "unverified sender" in op.reason
     with db.session_scope() as s:
         slot = s.scalars(select(Outbox)).one().meta["offered_slots"][1]
     assert datetime.fromisoformat(slot["start"]).strftime("%H:%M") in op.reason
@@ -402,6 +403,21 @@ def test_reply_choosing_a_slot_books_it_once(live: Live) -> None:
 
     live.rt.tick()  # replaying changes nothing
     assert len(live.cal.events) == 1 and len(live.mail.sent) == 2
+
+
+def test_second_slot_reply_on_a_thread_escalates(live: Live) -> None:
+    _msg_id, subject = _offer_sent(live)
+    live.model.script({"intent": "choose_slot", "slot_index": 0, "confidence": 0.95})
+    _reply(live, subject, "the first", pid="r-2")
+    first = live.run_for("handle_reply", live.packets("reply.received")[0].id)
+    live.pending_op(first)  # a booking was proposed for this thread
+    live.model.script({"intent": "choose_slot", "slot_index": 1, "confidence": 0.95})
+    _reply(live, subject, "no, the second", pid="r-3")
+    second = live.run_for("handle_reply", live.packets("reply.received")[1].id)
+    assert live.finish(second)["status"] == "done"
+    esc = live.packets("escalation.raised")
+    assert len(esc) == 1 and "already proposed" in esc[0].payload["reason"]
+    assert live.cal.events == {}
 
 
 def test_reply_from_another_address_is_a_new_enquiry(live: Live) -> None:

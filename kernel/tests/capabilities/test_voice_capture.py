@@ -138,7 +138,9 @@ def test_owner_upload_route(env, session) -> None:  # type: ignore[no-untyped-de
     client = TestClient(app)
     files = {"file": ("note.m4a", b"audio-bytes", "audio/mp4")}
     assert client.post("/v1/voice_capture/upload", files=files).status_code == 401
-    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="o@x.org")
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="s@x.org", role="staff")
+    assert client.post("/v1/voice_capture/upload", files=files).status_code == 403
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="o@x.org", role="owner")
     r = client.post("/v1/voice_capture/upload", files=files)
     assert r.status_code == 201 and r.json()["duplicate"] is False
     assert Path(r.json()["audio_uri"].removeprefix("file://")).is_file()
@@ -147,3 +149,24 @@ def test_owner_upload_route(env, session) -> None:  # type: ignore[no-untyped-de
     assert again.json()["voice_note_id"] == r.json()["voice_note_id"]
     t = call(env, session, "voice.transcribe", audio_uri=r.json()["audio_uri"])
     assert t["voice_note_id"] == r.json()["voice_note_id"]
+
+
+def test_upload_size_limits(env, session, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from biz_cap_voice_capture import web
+
+    schemas = SchemaRegistry()
+    schemas.load_dir(ROOT / "packets")
+    app = create_app()
+    app.include_router(owner_routes(SimpleNamespace(bus=Bus(schemas))), prefix="/v1")
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="o@x.org", role="owner")
+    client = TestClient(app)
+    monkeypatch.setattr(web, "MAX_BYTES", 1000)
+    big = {"file": ("n.m4a", b"x" * 5000, "audio/mp4")}
+    assert client.post("/v1/voice_capture/upload", files=big).status_code == 413
+    # header says small but the body is not: the streaming count still aborts
+    monkeypatch.setattr(web, "MULTIPART_OVERHEAD", 10_000)
+    assert client.post("/v1/voice_capture/upload", files=big).status_code == 413
+    assert not list((env.root / "voice").glob("*")) if (env.root / "voice").exists() else True
+    empty = {"file": ("n.m4a", b"", "audio/mp4")}
+    assert client.post("/v1/voice_capture/upload", files=empty).status_code == 400

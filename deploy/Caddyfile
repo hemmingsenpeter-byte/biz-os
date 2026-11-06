@@ -11,7 +11,19 @@
 	}
 
 	# REST API (OpenAPI at /v1/docs)
+	# Bodies are capped before they reach the API: 1MB by default, 110MB only for voice uploads
+	# (the app enforces its own 100MB file limit).
+	handle /v1/voice_capture/upload {
+		request_body {
+			max_size 110MB
+		}
+		reverse_proxy biz-api:8000
+	}
+
 	handle /v1/* {
+		request_body {
+			max_size 1MB
+		}
 		reverse_proxy biz-api:8000
 	}
 

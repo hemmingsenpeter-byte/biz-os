@@ -31,6 +31,8 @@ class Outbox(Base):
     reply_token: Mapped[str | None] = mapped_column(String(24), index=True)
     # data for whoever handles the reply, e.g. {"offered_slots": [...], "enquiry_id": "..."}
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # the token stops matching replies after this; null means no expiry (legacy rows)
+    reply_expires_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     sent_at: Mapped[datetime | None]
 

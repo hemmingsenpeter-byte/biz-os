@@ -11,7 +11,7 @@ import os
 import re
 import time
 from collections import deque
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import sqlalchemy as sa
@@ -200,9 +200,10 @@ def match_reply(session: Any, sender: str, subject: str) -> dict[str, Any] | Non
         session.execute(
             sa.text(
                 'select id, "to", expected_to, party_id, meta from cap_comms_outbox '
-                "where reply_token = :t and channel = 'mail' and status = 'sent'"
+                "where reply_token = :t and channel = 'mail' and status = 'sent' "
+                "and (reply_expires_at is null or reply_expires_at > :now)"
             ),
-            {"t": ref.group(1).lower()},
+            {"t": ref.group(1).lower(), "now": datetime.now(UTC)},
         )
         .mappings()
         .first()
@@ -219,6 +220,19 @@ def match_reply(session: Any, sender: str, subject: str) -> dict[str, Any] | Non
     }
 
 
+def sender_verified(m: Any) -> bool:
+    """True only when the mail port reports a passing DMARC result for the message.
+
+    The From header alone is unverified. Ports do not expose Authentication-Results today
+    (the M365 adapter drops headers), so this is false until one does.
+    """
+    headers = getattr(m, "headers", None)
+    raw = getattr(m, "authentication_results", None)
+    if raw is None and isinstance(headers, dict):
+        raw = headers.get("Authentication-Results")
+    return "dmarc=pass" in str(raw or "").lower()
+
+
 def receive_reply(session: Any, rt: Any, m: Any, thread: dict[str, Any]) -> Any:
     """Publish reply.received once per provider message id."""
     sender = service.normalize_address(str(m.sender or ""))[: service.MAX_SENDER]
@@ -233,6 +247,7 @@ def receive_reply(session: Any, rt: Any, m: Any, thread: dict[str, Any]) -> Any:
         "message_id": thread["message_id"],
         "message_ref": thread["message_id"],
         "enquiry_id": thread["enquiry_id"],
+        "sender_verified": sender_verified(m),
     }
     if thread["party_id"]:
         payload["party_id"] = thread["party_id"]

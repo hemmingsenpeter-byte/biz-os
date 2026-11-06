@@ -159,13 +159,17 @@ class Runtime:
         self.follow.register("sop_waiting_on_decided_op", decided_but_waiting, resume)
 
 
-def capability_routes(rt: Runtime) -> list[tuple[str, Any]]:
-    """(name, APIRouter) for each loaded capability that defines `routes(rt)`."""
+def capability_routes(rt: Runtime, hook: str = "routes") -> list[tuple[str, Any]]:
+    """(name, APIRouter) per loaded capability defining `hook(rt)`.
+
+    `routes` are public webhooks (mounted under /webhooks); `owner_routes` are signed-in
+    owner/staff endpoints (mounted under /v1, private).
+    """
     out = []
     for cap in rt.manifest.capabilities:
         mod = importlib.import_module(f"biz_cap_{cap}")
-        if callable(getattr(mod, "routes", None)):
-            out.append((cap, mod.routes(rt)))
+        if callable(getattr(mod, hook, None)):
+            out.append((cap, getattr(mod, hook)(rt)))
     return out
 
 

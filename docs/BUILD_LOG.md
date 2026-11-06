@@ -35,6 +35,5 @@
 ### Not done yet
 
 - Mac mini deploy and backups. The compose stack has not been run: there is no Docker on the dev box.
-- **Paid tool calls aren't charged to role budgets.** Only model calls write cost events.
 - **comms isn't wired into SOPs yet.** The receptionist still replies through `intake.reply`, and reading the customer's slot choice comes later.
 - **Web shell (`web/`)** isn't started.

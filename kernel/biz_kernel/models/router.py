@@ -1,4 +1,4 @@
-"""The only place model calls happen. M0: tier choice + schema validation; M1 adds the full rules."""
+"""The only place model calls happen. M0: tier choice and schema checks; M1 adds full rules."""
 
 from __future__ import annotations
 

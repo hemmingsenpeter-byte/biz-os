@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from biz_cap_intake.models import Enquiry, OptOut
 from biz_kernel import db
-from biz_kernel.api.app import create_app, mount_capability
+from biz_kernel.api.app import create_app
 from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.contracts.ports import InboundMessage
 from biz_kernel.models_registry import import_all_models
@@ -50,12 +50,12 @@ class Live:
         )
         self.model: FakeModel = rt.ports["model_local"]
         api = create_app(rt.manifest)
-        for name, router in capability_routes(rt):
-            mount_capability(api, name, router)
+        for _name, router in capability_routes(rt):
+            api.include_router(router, prefix="/webhooks")
         self.client = TestClient(api)
 
     def webhook(self, **body):  # type: ignore[no-untyped-def]
-        return self.client.post("/v1/intake/telephony", json=body)
+        return self.client.post("/webhooks/telephony", json=body)
 
     def packets(self, type_: str) -> list[Packet]:
         with db.session_scope() as s:
@@ -195,20 +195,17 @@ def test_email_triaged_routed_and_meeting_offered(live: Live) -> None:
         assert s.get(Task, run.task_id).status == "done"
     assert live.packets("service_request.received") == []
 
-    # The qualified opportunity wakes the receptionist again: offer slots, then book.
+    # The qualified opportunity wakes the receptionist again: offer slots (booking waits for
+    # the customer's reply, a later milestone).
     live.rt.tick()
     book = live.run_for("book_meeting", opp[0].id)
     op = live.pending_op(book)
     assert op.tool == "intake.reply" and live.mail.sent == []
     live.approve(op)
-    op = live.pending_op(book, after=op.id)
-    assert op.tool == "booking.book" and live.cal.events == {}
-    live.approve(op)
     assert live.finish(book)["status"] == "done"
     assert len(live.mail.sent) == 1 and live.mail.sent[0].to == ["lead@example.com"]
-    assert len(live.cal.events) == 1
-    meeting = live.packets("meeting.booked")
-    assert len(meeting) == 1 and meeting[0].payload["party_id"] == opp[0].payload["party_id"]
+    assert live.cal.events == {}  # no slot is booked for someone who was only offered times
+    assert live.packets("meeting.booked") == []
 
 
 def test_spam_and_opt_out_never_reach_the_model(live: Live) -> None:

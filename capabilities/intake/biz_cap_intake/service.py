@@ -5,18 +5,26 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
+from biz_kernel import db
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Party, Person
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from biz_cap_intake.models import Enquiry, OptOut
+from biz_cap_intake import config
+from biz_cap_intake.models import Enquiry, OptOut, SentText
 
 CATEGORIES = ("enquiry", "service_request", "supplier", "spam", "other")
-PHONE_CHANNELS = ("phone", "sms")
+# Whole-message keywords (the entire message, ignoring case and punctuation).
 STOP_WORDS = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "optout", "opt out"}
+# A short message (at most MAX_OPT_OUT_WORDS words) that starts with one of these also opts out.
+STOP_STARTS = ("stop", "stopall", "unsubscribe", "optout", "opt out", "remove me", "take me off")
+MAX_OPT_OUT_WORDS = 4
+TEXT_BACK_WINDOW = timedelta(hours=24)
+MAX_SENDER, MAX_PROVIDER_ID, MAX_SUBJECT, MAX_BODY = 320, 200, 500, 20000
 _AUTO_SUBJECT = re.compile(
     r"^\s*(automatic reply|auto[- ]?reply|auto:|out of office|undeliverable|"
     r"delivery status notification|mail delivery failed|returned mail)",
@@ -39,28 +47,82 @@ class Received:
     duplicate: bool = False
 
 
+def _words(text: str) -> str:
+    cleaned = re.sub(r"[^\w\s]", " ", text.lower())
+    words = cleaned.split()
+    if words and words[0] == "please":
+        words = words[1:]
+    return " ".join(words)
+
+
 def is_opt_out_text(text: str) -> bool:
-    return text.strip().lower().strip(".!") in STOP_WORDS
+    """True only for a whole-message keyword, or a short message that starts with one.
+
+    A long message that merely mentions a phrase (a quote request that says "take me off the
+    other list") is not an opt-out.
+    """
+    norm = _words(text)
+    if not norm:
+        return False
+    if norm in STOP_WORDS:
+        return True
+    if len(norm.split()) > MAX_OPT_OUT_WORDS:
+        return False
+    return any(norm == p or norm.startswith(p + " ") for p in STOP_STARTS)
+
+
+def normalize_phone(raw: str, default_country_code: str | None = None) -> str:
+    """Digits only (with a leading + kept). A leading national 0 becomes the configured
+    default country code; without one the number is left as digits."""
+    text = raw.strip()
+    digits = re.sub(r"\D", "", text)
+    if not digits:
+        return text
+    if text.startswith("+"):
+        return "+" + digits
+    if digits.startswith("00"):
+        return "+" + digits[2:]
+    cc = re.sub(r"\D", "", default_country_code or "")
+    if cc and digits.startswith("0"):
+        return f"+{cc}{digits[1:]}"
+    return digits
+
+
+def normalize_address(raw: str) -> str:
+    """Lowercased, trimmed email, or a normalised phone number."""
+    text = raw.strip()
+    if "@" in text:
+        return text.lower()
+    cc = config.setting("default_country_code", None)
+    return normalize_phone(text, str(cc) if cc else None)
 
 
 def is_opted_out(session: Session, address: str) -> bool:
-    return session.get(OptOut, address.strip().lower()) is not None
+    return session.get(OptOut, normalize_address(address)) is not None
 
 
 def add_opt_out(session: Session, address: str, source: str) -> None:
-    key = address.strip().lower()
+    key = normalize_address(address)
     if session.get(OptOut, key) is None:
         session.add(OptOut(address=key, source=source))
         session.flush()
 
 
+def recently_texted(session: Session, number: str, exclude_key: str | None = None) -> bool:
+    """True when a text-back already went to this number within the throttle window."""
+    q = select(SentText.key).where(
+        SentText.to == normalize_address(number),
+        SentText.at >= db.utcnow() - TEXT_BACK_WINDOW,
+    )
+    if exclude_key:
+        q = q.where(SentText.key != exclude_key)
+    return session.scalar(q.limit(1)) is not None
+
+
 def classify_rules(channel: str, sender: str, subject: str, body: str) -> dict[str, Any]:
     """Rules before any model. `needs_model` is true only when no rule decided."""
     text = f"{subject}\n{body}"
-    if is_opt_out_text(body) or is_opt_out_text(subject):
-        return {"category": "other", "needs_model": False, "reason": "opt_out"}
-    short_stop = len(text) < 200 and re.search(r"\b(unsubscribe|opt[- ]?out)\b", text, re.I)
-    if short_stop or re.search(r"\b(remove me from|take me off)\b", text, re.IGNORECASE):
+    if is_opt_out_text(subject) or is_opt_out_text(body):
         return {"category": "other", "needs_model": False, "reason": "opt_out"}
     if _AUTO_SUBJECT.match(subject) or _AUTO_SENDER.match(sender.strip()):
         return {"category": "other", "needs_model": False, "reason": "auto_reply"}
@@ -70,37 +132,26 @@ def classify_rules(channel: str, sender: str, subject: str, body: str) -> dict[s
 
 
 def ensure_party(session: Session, enquiry: Enquiry) -> uuid.UUID:
-    """Find the party for this contact (by email or phone) or create a person party."""
+    """The party for this enquiry. A claimed email or phone is rung 0 (unverified): it never
+    links to an existing person. A new, contact-less party is made; the claim stays on the
+    enquiry (claimed_email / claimed_phone, verified=false) until a person is verified."""
     if enquiry.party_id is not None:
         return enquiry.party_id
-    key = enquiry.sender.strip()
-    col = Person.email if "@" in key else Person.phone
-    person = session.scalar(select(Person).where(col == key))
-    if person is not None and person.party_id is not None:
-        enquiry.party_id = person.party_id
-    else:
-        party = Party(kind="person", name=key)
-        session.add(party)
-        session.flush()
-        session.add(
-            Person(
-                party_id=party.id,
-                full_name=key,
-                email=key if "@" in key else None,
-                phone=None if "@" in key else key,
-            )
-        )
-        enquiry.party_id = party.id
+    party = Party(kind="person", name=f"Unverified contact {enquiry.sender}"[:200])
+    session.add(party)
     session.flush()
-    return enquiry.party_id
+    session.add(Person(party_id=party.id, full_name=f"Unverified contact {enquiry.sender}"[:200]))
+    enquiry.party_id = party.id
+    session.flush()
+    return party.id
 
 
 def _summary(channel: str, sender: str, subject: str, body: str) -> str:
     if channel == "phone":
-        return f"Missed call from {sender}"[:200]
+        return f"Missed call from {sender} (unverified contact)"[:200]
     if channel == "sms":
-        return f"SMS from {sender}: {body}"[:200]
-    return f"{channel}: {subject or body}"[:200]
+        return f"SMS from {sender} (unverified contact): {body}"[:200]
+    return f"{channel} (unverified contact {sender}): {subject or body}"[:200]
 
 
 def receive(
@@ -117,6 +168,9 @@ def receive(
 
     An SMS that is an opt-out keyword records the opt-out and publishes nothing.
     """
+    sender = normalize_address(sender)[:MAX_SENDER]
+    subject, body = subject[:MAX_SUBJECT], body[:MAX_BODY]
+    provider_id = provider_id[:MAX_PROVIDER_ID] if provider_id else None
     enquiry = None
     if provider_id:
         enquiry = session.scalar(
@@ -125,7 +179,14 @@ def receive(
     duplicate = enquiry is not None
     if enquiry is None:
         enquiry = Enquiry(
-            channel=channel, sender=sender, subject=subject, body=body, provider_id=provider_id
+            channel=channel,
+            sender=sender,
+            subject=subject,
+            body=body,
+            provider_id=provider_id,
+            claimed_email=sender if "@" in sender else None,
+            claimed_phone=None if "@" in sender else sender,
+            verified=False,
         )
         session.add(enquiry)
         session.flush()
@@ -134,7 +195,12 @@ def receive(
         enquiry.status, enquiry.classified_as, enquiry.reason = "opted_out", "other", "opt_out"
         session.flush()
         return Received(enquiry, None, duplicate)
-    can_text = channel in PHONE_CHANNELS and not is_opted_out(session, sender)
+    # Only a missed call earns the templated text-back, at most once per number per 24h.
+    can_text = (
+        channel == "phone"
+        and not is_opted_out(session, sender)
+        and not recently_texted(session, sender)
+    )
     key = f"enquiry.received:{channel}:{provider_id}" if provider_id else None
     packet = bus.publish(
         session,
@@ -146,6 +212,7 @@ def receive(
             "channel": channel,
             "summary": _summary(channel, sender, subject, body),
             "contact": sender,
+            "verified": False,
             "text_back": "yes" if can_text else "no",
         },
         idempotency_key=key or f"enquiry.received:{enquiry.id}",

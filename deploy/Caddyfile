@@ -15,8 +15,14 @@
 		reverse_proxy biz-api:8000
 	}
 
-	# Provider webhooks (Twilio, DocuSeal, M365, Xero) land on the API
+	# Provider webhooks and the public intake form (/webhooks/telephony, /webhooks/form,
+	# DocuSeal, M365, Xero) land on the API. These are the only API paths the tunnel exposes.
+	# Caddy appends the real peer to X-Forwarded-For; CF-Connecting-IP passes through from
+	# Cloudflare. The API trusts them only from this proxy's network (BIZ_TRUSTED_PROXIES).
 	handle /webhooks/* {
+		request_body {
+			max_size 1MB
+		}
 		reverse_proxy biz-api:8000
 	}
 

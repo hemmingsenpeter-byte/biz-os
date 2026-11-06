@@ -11,7 +11,7 @@ from biz_cap_booking.tools import register as register_booking
 from biz_cap_intake import config, service
 from biz_cap_intake.models import Enquiry
 from biz_cap_intake.web import RateLimiter, build_router
-from biz_kernel.api.app import create_app, mount_capability
+from biz_kernel.api.app import create_app
 from biz_kernel.auth.deps import get_session
 from biz_kernel.packets.bus import Bus, Packet, SchemaRegistry
 from biz_kernel.tools.registry import ToolRegistry
@@ -63,18 +63,18 @@ def rt(session):  # type: ignore[no-untyped-def]
 @pytest.fixture
 def client(rt, session):  # type: ignore[no-untyped-def]
     app = create_app()
-    mount_capability(app, "intake", build_router(rt, RateLimiter(limit=3)))
+    app.include_router(build_router(rt, RateLimiter(limit=3)), prefix="/webhooks")
     app.dependency_overrides[get_session] = lambda: session
     return TestClient(app)
 
 
 def test_webhook_dedupes_and_publishes_once(client, session) -> None:  # type: ignore[no-untyped-def]
     body = {"kind": "inbound_sms", "from": "+64210", "to": "+649", "body": "hi", "id": "SM1"}
-    assert client.post("/v1/intake/telephony", json=body).status_code == 200
-    assert client.post("/v1/intake/telephony", json=body).json()["status"] == "duplicate"
+    assert client.post("/webhooks/telephony", json=body).status_code == 200
+    assert client.post("/webhooks/telephony", json=body).json()["status"] == "duplicate"
     packets = session.scalars(select(Packet).where(Packet.type == "enquiry.received")).all()
-    assert len(packets) == 1 and packets[0].payload["text_back"] == "yes"
-    assert client.post("/v1/intake/telephony", json={"kind": "other"}).json() == {
+    assert len(packets) == 1 and packets[0].payload["text_back"] == "no"  # inbound SMS
+    assert client.post("/webhooks/telephony", json={"kind": "other"}).json() == {
         "status": "ignored"
     }
 
@@ -86,21 +86,21 @@ def test_bad_signature_is_403(rt, session) -> None:  # type: ignore[no-untyped-d
 
     rt.ports["telephony"] = Rejecting()
     app = create_app()
-    mount_capability(app, "intake", build_router(rt))
+    app.include_router(build_router(rt), prefix="/webhooks")
     app.dependency_overrides[get_session] = lambda: session
-    r = TestClient(app).post("/v1/intake/telephony", json={"kind": "missed_call"})
+    r = TestClient(app).post("/webhooks/telephony", json={"kind": "missed_call"})
     assert r.status_code == 403
     assert session.scalars(select(Enquiry)).all() == []
 
 
 def test_form_publishes_honeypot_and_rate_limit(client, session) -> None:  # type: ignore[no-untyped-def]
     form = {"name": "Ann", "email": "ann@example.com", "message": "Hello"}
-    assert client.post("/v1/intake/form", json=form).status_code == 202
-    assert client.post("/v1/intake/form", json=form).status_code == 202  # same message: deduped
+    assert client.post("/webhooks/form", json=form).status_code == 202
+    assert client.post("/webhooks/form", json=form).status_code == 202  # same message: deduped
     packets = session.scalars(select(Packet).where(Packet.type == "enquiry.received")).all()
     assert len(packets) == 1 and packets[0].payload["channel"] == "form"
-    assert client.post("/v1/intake/form", json={**form, "website": "spam.io"}).status_code == 202
-    assert client.post("/v1/intake/form", json=form).status_code == 429  # limit of 3 reached
+    assert client.post("/webhooks/form", json={**form, "website": "spam.io"}).status_code == 202
+    assert client.post("/webhooks/form", json=form).status_code == 429  # limit of 3 reached
     assert len(session.scalars(select(Packet).where(Packet.type == "enquiry.received")).all()) == 1
 
 
@@ -143,20 +143,20 @@ def test_real_twilio_adapter_through_intake_route(rt, session) -> None:  # type:
     from biz_port_telephony_twilio.testing import FakeTwilioClient
     from twilio.request_validator import RequestValidator
 
-    public = "https://hooks.example.com/v1/intake/telephony"
+    public = "https://hooks.example.com/webhooks/telephony"
     rt.ports["telephony"] = TwilioTelephony(
         "AC1", "secret-token", "+6490000000", client=FakeTwilioClient(), webhook_url=public
     )
     app = create_app()
-    mount_capability(app, "intake", build_router(rt))
+    app.include_router(build_router(rt), prefix="/webhooks")
     app.dependency_overrides[get_session] = lambda: session
     c = TestClient(app)
     form = {"CallSid": "CA1", "CallStatus": "no-answer", "From": "+64211", "To": "+6490000000"}
     good = RequestValidator("secret-token").compute_signature(public, form)
-    ok = c.post("/v1/intake/telephony", data=form, headers={"X-Twilio-Signature": good})
+    ok = c.post("/webhooks/telephony", data=form, headers={"X-Twilio-Signature": good})
     assert ok.status_code == 200, ok.text
     forged = c.post(
-        "/v1/intake/telephony",
+        "/webhooks/telephony",
         data={**form, "CallSid": "CA2"},
         headers={"X-Twilio-Signature": good},
     )

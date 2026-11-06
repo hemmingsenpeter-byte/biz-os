@@ -1,6 +1,7 @@
 # Example for a locally-managed tunnel (the compose file uses TUNNEL_TOKEN instead; with a
 # token, set these same ingress rules in the Cloudflare Zero Trust dashboard).
-# Only webhooks and link pages are public. /v1 (the owner API) is NOT routed through the tunnel.
+# Only webhooks (incl. /webhooks/telephony and /webhooks/form) and link pages are public.
+# /v1 (the owner API) is NOT routed through the tunnel.
 tunnel: <TUNNEL_UUID>
 credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
 

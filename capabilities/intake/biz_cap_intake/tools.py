@@ -82,6 +82,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             "enquiry_id": str(row.id),
             "party_id": str(party_id),
             "can_text": not service.is_opted_out(session, row.sender),
+            "verified": bool(row.verified),
         }
 
     def read_enquiry(session: Session, enquiry_id: str) -> dict[str, Any]:
@@ -94,6 +95,8 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             "body": row.body,
             "party_id": str(row.party_id or ""),
             "category": row.classified_as,
+            "verified": bool(row.verified),
+            "contact_status": "verified contact" if row.verified else "unverified contact",
         }
 
     def set_classification(
@@ -161,8 +164,12 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         return {"message_id": message_id, "provider_id": result.provider_id, "to": to, "body": body}
 
     def text_back(session: Session, to: str, idempotency_key: str) -> dict[str, Any]:
-        if service.is_opted_out(session, to):
-            raise Suppressed(f"{to} opted out")
+        to = service.normalize_address(to)
+        if session.get(SentText, idempotency_key) is None:
+            if service.is_opted_out(session, to):
+                raise Suppressed(f"{to} opted out")
+            if service.recently_texted(session, to):
+                raise Suppressed(f"{to} already got a text-back in the last 24h")
         body = config.text_back_template()  # fixed text; model output never reaches this path
         out = _send_once(
             session,
@@ -174,8 +181,15 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         return {**out, "channel": "sms"}
 
     def reply(
-        session: Session, to: str, subject: str, body: str, idempotency_key: str
+        session: Session,
+        to: str,
+        subject: str,
+        body: str,
+        idempotency_key: str,
+        contact_status: str = "unverified contact",
     ) -> dict[str, Any]:
+        """`contact_status` is shown to the approver: the address is a claim, not verified."""
+        to = service.normalize_address(to)
         if service.is_opted_out(session, to):
             raise Suppressed(f"{to} opted out")
         if "@" in to:
@@ -252,7 +266,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             CAP,
             SideEffect.EXTERNAL,
             _obj(
-                {"to": _STR, "subject": _STR, "body": _STR, **idem},
+                {"to": _STR, "subject": _STR, "body": _STR, "contact_status": _STR, **idem},
                 ["to", "subject", "body", "idempotency_key"],
             ),
             reply,

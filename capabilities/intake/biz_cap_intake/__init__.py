@@ -13,7 +13,7 @@ __all__ = ["Cursor", "Enquiry", "OptOut", "SentText", "pollers", "register", "ro
 
 
 def routes(rt: Any) -> Any:
-    """Hook: the router mounted at /v1/intake."""
+    """Hook: the router mounted at /webhooks (public; /v1 stays private)."""
     from biz_cap_intake.web import build_router
 
     config.bind(rt.manifest)

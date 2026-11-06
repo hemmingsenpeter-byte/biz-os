@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from biz_kernel.db import Base, utcnow, uuid7
-from sqlalchemy import Float, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -20,6 +20,9 @@ class Enquiry(Base):
     body: Mapped[str] = mapped_column(Text, default="")
     provider_id: Mapped[str | None] = mapped_column(String(200))
     party_id: Mapped[uuid.UUID | None]
+    claimed_email: Mapped[str | None] = mapped_column(String(320))  # rung 0: unverified
+    claimed_phone: Mapped[str | None] = mapped_column(String(320))
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     classified_as: Mapped[str | None] = mapped_column(String(30))
     reason: Mapped[str | None] = mapped_column(String(60))
     summary: Mapped[str | None] = mapped_column(Text)

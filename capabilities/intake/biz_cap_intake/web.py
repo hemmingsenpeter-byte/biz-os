@@ -1,12 +1,15 @@
-"""Public intake routes (mounted at /v1/intake) and the mail poller."""
+"""Public intake routes (mounted at /webhooks: /webhooks/telephony, /webhooks/form) and the
+mail poller."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
+import os
 import time
-from collections import defaultdict, deque
+from collections import deque
 from datetime import UTC, timedelta
 from typing import Any
 
@@ -31,21 +34,85 @@ class FormIn(BaseModel):
 
 
 class RateLimiter:
-    """Sliding window per client key, in process. A reverse proxy should also limit."""
+    """Sliding window per client key, in process, with bounded memory. A reverse proxy should
+    also limit."""
 
-    def __init__(self, limit: int = 10, window: float = 60.0) -> None:
-        self.limit, self.window = limit, window
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+    def __init__(self, limit: int = 10, window: float = 60.0, max_keys: int = 10_000) -> None:
+        self.limit, self.window, self.max_keys = limit, window, max_keys
+        self._hits: dict[str, deque[float]] = {}
+
+    def _evict(self, now: float) -> None:
+        for k in [k for k, h in self._hits.items() if not h or now - h[-1] > self.window]:
+            del self._hits[k]
+        while len(self._hits) >= self.max_keys:  # still full: drop the oldest-inserted key
+            del self._hits[next(iter(self._hits))]
 
     def allow(self, key: str, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
-        hits = self._hits[key]
+        hits = self._hits.pop(key, None)  # re-inserted below, so dict order is recency order
+        if hits is None:
+            if len(self._hits) >= self.max_keys:
+                self._evict(now)
+            hits = deque()
         while hits and now - hits[0] > self.window:
             hits.popleft()
-        if len(hits) >= self.limit:
-            return False
-        hits.append(now)
-        return True
+        allowed = len(hits) < self.limit
+        if allowed:
+            hits.append(now)
+        if hits:
+            self._hits[key] = hits
+        return allowed
+
+
+DEFAULT_TRUSTED_PROXIES = (
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+)
+
+
+def _trusted_networks() -> list[Any]:
+    raw = os.environ.get("BIZ_TRUSTED_PROXIES") or config.setting(
+        "trusted_proxies", DEFAULT_TRUSTED_PROXIES
+    )
+    items = raw.split(",") if isinstance(raw, str) else list(raw)
+    nets = []
+    for item in items:
+        try:
+            nets.append(ipaddress.ip_network(str(item).strip(), strict=False))
+        except ValueError:
+            log.warning("ignoring bad trusted proxy %r", item)
+    return nets
+
+
+def _valid_ip(text: str) -> str | None:
+    try:
+        return str(ipaddress.ip_address(text.strip()))
+    except ValueError:
+        return None
+
+
+def client_ip(request: Request, trusted: list[Any] | None = None) -> str:
+    """The caller's IP. Proxy headers (CF-Connecting-IP, then the last X-Forwarded-For hop
+    added by our own proxy) count only when the direct peer is a configured trusted proxy."""
+    peer = request.client.host if request.client else "unknown"
+    peer_ip = _valid_ip(peer)
+    if peer_ip is None:
+        return peer
+    nets = _trusted_networks() if trusted is None else trusted
+    if not any(ipaddress.ip_address(peer_ip) in n for n in nets):
+        return peer_ip
+    cf = request.headers.get("cf-connecting-ip")
+    if cf and _valid_ip(cf):
+        return _valid_ip(cf) or peer_ip
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        last = _valid_ip(xff.split(",")[-1])
+        if last:
+            return last
+    return peer_ip
 
 
 async def _payload(request: Request) -> dict[str, Any]:
@@ -91,7 +158,7 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
 
     @router.post("/form", status_code=202)
     def form(body: FormIn, request: Request, session: DbSession) -> dict[str, Any]:
-        client = request.client.host if request.client else "unknown"
+        client = client_ip(request)
         if not limiter.allow(client):
             raise HTTPException(429, "slow down", headers={"Retry-After": "60"})
         if body.website:  # honeypot filled: pretend success, store nothing
@@ -115,7 +182,11 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
 
 
 def poll_mail(rt: Any) -> int:
-    """Pull new mail and publish enquiry.received for each message once (by provider id)."""
+    """Pull new mail and publish enquiry.received for each message once (by provider id).
+
+    Each message runs in its own savepoint, so one bad row is logged and skipped instead of
+    blocking the batch. The cursor advances to the latest message that was processed.
+    """
     mail = rt.ports["mail"]
     lookback = timedelta(hours=float(config.setting("mail_lookback_hours", 24)))
     with db.session_scope() as s:
@@ -126,21 +197,26 @@ def poll_mail(rt: Any) -> int:
     with db.session_scope() as s:
         latest = since
         for m in sorted(messages, key=lambda m: m.received_at):
-            got = service.receive(
-                s,
-                rt.bus,
-                channel="mail",
-                sender=m.sender,
-                subject=m.subject,
-                body=m.body,
-                provider_id=m.provider_id,
-            )
+            try:
+                with s.begin_nested():
+                    got = service.receive(
+                        s,
+                        rt.bus,
+                        channel="mail",
+                        sender=str(m.sender or "")[: service.MAX_SENDER],
+                        subject=str(m.subject or "")[: service.MAX_SUBJECT],
+                        body=str(m.body or "")[: service.MAX_BODY],
+                        provider_id=str(m.provider_id)[: service.MAX_PROVIDER_ID],
+                    )
+            except Exception:
+                log.exception("mail message %r skipped", str(m.provider_id)[:80])
+                continue
             new += 0 if got.duplicate else 1
             at = m.received_at if m.received_at.tzinfo else m.received_at.replace(tzinfo=UTC)
             latest = max(latest, at)
         cur = s.get(Cursor, "mail")
         if cur is None:
             s.add(Cursor(name="mail", value=latest))
-        else:
+        elif latest > cur.value:
             cur.value = latest
     return new

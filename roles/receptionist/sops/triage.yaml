@@ -1,6 +1,6 @@
 name: triage
 trigger: enquiry.received
-when: "{{packet.payload.channel}} in mail,form"
+when: "{{packet.payload.channel}} in mail,form,sms"
 goal_key: enquiry_response_minutes
 task: { kind: triage, title: "Triage {{packet.payload.summary}}" }
 steps:

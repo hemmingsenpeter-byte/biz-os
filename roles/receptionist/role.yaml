@@ -14,14 +14,14 @@ topics:
     tools: [intake.classify, intake.set_classification]
   - name: book_meeting
     sop: sops/book_meeting.yaml
-    tools: [intake.read_enquiry, booking.offer_slots, intake.reply, booking.book]
+    tools: [intake.read_enquiry, booking.offer_slots, intake.reply]
 sources: [business, "role:receptionist"]
 consumes: [enquiry.received, opportunity.qualified]
 publishes: [message.sent, opportunity.qualified, service_request.received, enquiry.declined, meeting.booked]
 evidence:
   text_back: ["packet:message.sent"]
   triage: ["triage.routed"]
-  book_meeting: ["packet:meeting.booked"]
+  book_meeting: ["packet:message.sent"]
 autonomy_defaults: { missed_call_text_back: 2, meeting_offer_sending: 2, meeting_booking: 2 }
 model_tier: { triage: local, book_meeting: local }
 escalate_when: [confidence_below: 0.6]

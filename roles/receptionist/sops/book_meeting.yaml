@@ -29,23 +29,17 @@ steps:
       to: "{{steps.read.output.from}}"
       subject: "{{steps.draft.output.subject}}"
       body: "{{steps.draft.output.body}}"
-  # booking.book is gated: the owner's approval here is the confirmation that a time was agreed.
-  - id: book
-    kind: tool
-    tool: booking.book
-    decision_type: meeting_booking
-    args:
-      start: "{{steps.slots.output.slots.0.start}}"
-      end: "{{steps.slots.output.slots.0.end}}"
-      title: "Meeting: {{packet.payload.summary}}"
-      attendees: ["{{steps.read.output.from}}"]
-      party_id: "{{packet.payload.party_id}}"
+      contact_status: "{{steps.read.output.contact_status}}"
+  # TODO(comms milestone): booking.book needs the customer's reply choosing a slot, and nothing
+  # reads replies yet. Until then this SOP stops after offering times; it never books slot 0
+  # for someone who was not asked. When replies are read, add an owner `approve` step that
+  # names the chosen slot, then booking.book and the meeting.booked publish.
   - id: done
     kind: publish
-    packet: meeting.booked
-    summary: "Meeting booked for {{steps.book.output.starts_at}}"
+    packet: message.sent
+    summary: "Meeting times offered to {{steps.read.output.from}}"
     payload:
-      meeting_id: "{{steps.book.output.meeting_id}}"
-      party_id: "{{packet.payload.party_id}}"
-      starts_at: "{{steps.book.output.starts_at}}"
-      notes: "{{packet.payload.summary}}"
+      message_id: "{{steps.send.output.message_id}}"
+      channel: "{{steps.send.output.channel}}"
+      to: "{{steps.read.output.from}}"
+      body: "{{steps.send.output.body}}"

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from biz_kernel import db
-from biz_kernel.api.app import create_app, mount_capability
+from biz_kernel.api.app import create_app
 from biz_kernel.cli.main import find_repo_root
 from biz_kernel.loader import load_composition
 from biz_kernel.runtime import build_runtime, capability_routes
@@ -36,7 +36,8 @@ def build_app():  # type: ignore[no-untyped-def]
         # Capability routes need the runtime (bus, ports). Building it launches no DBOS.
         rt = build_runtime(app_dir, root or find_repo_root(app_dir))
         for name, router in capability_routes(rt):
-            mount_capability(app, name, router)
+            # Public paths only: /webhooks/* is what the tunnel exposes; /v1 stays private.
+            app.include_router(router, prefix="/webhooks", tags=[name])
     return app
 
 

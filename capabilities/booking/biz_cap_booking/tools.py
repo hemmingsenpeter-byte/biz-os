@@ -12,12 +12,17 @@ from biz_kernel.contracts.ports import CalendarEvent, CalendarPort
 from biz_kernel.policy.types import SideEffect
 from biz_kernel.tools.registry import Tool, ToolRegistry
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from biz_cap_booking.models import Meeting
 
 CAP = "booking"
 _STR: dict[str, Any] = {"type": "string"}
+
+
+class SlotUnavailable(RuntimeError):
+    """The requested window is in the past or no longer free."""
 
 
 def _aware(text: str) -> datetime:
@@ -89,16 +94,30 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             location=location,
             body=notes,
         )
-        ref = asyncio.run(calendar.book(event, idempotency_key))
+        if event.end <= event.start:
+            raise SlotUnavailable("end must be after start")
+        if event.start <= datetime.now(UTC):
+            raise SlotUnavailable(f"{event.start.isoformat()} is in the past")
+        minutes = int((event.end - event.start).total_seconds() // 60)
+        # Re-check at book time: the offer may be stale, or another booking took the slot.
+        free = asyncio.run(calendar.free_slots(event.start, event.end, minutes))
+        if not any(sl.start == event.start for sl in free):
+            raise SlotUnavailable(f"{event.start.isoformat()} is no longer free")
         meeting = Meeting(
             key=idempotency_key,
             party_id=uuid.UUID(party_id) if party_id else None,
             title=title,
             starts_at=event.start,
             ends_at=event.end,
-            external_id=ref.id,
         )
-        session.add(meeting)
+        try:
+            with session.begin_nested():  # the unique index on active starts settles races
+                session.add(meeting)
+                session.flush()
+        except IntegrityError as exc:
+            raise SlotUnavailable(f"{event.start.isoformat()} is already booked") from exc
+        ref = asyncio.run(calendar.book(event, idempotency_key))
+        meeting.external_id = ref.id
         session.flush()
         return {
             "meeting_id": str(meeting.id),

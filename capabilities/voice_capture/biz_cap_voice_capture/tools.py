@@ -154,10 +154,10 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                         "matched": hit,
                     }
                 )
-        scored.sort(key=lambda c: (-int(c["score"]), c["job_id"]))
+        scored.sort(key=lambda c: (-int(str(c["score"])), str(c["job_id"])))
         top = scored[: min(max(limit, 1), 3)]
         ambiguous = len(top) != 1 and not (
-            len(top) > 1 and int(top[0]["score"]) > int(top[1]["score"])
+            len(top) > 1 and int(str(top[0]["score"])) > int(str(top[1]["score"]))
         )
         return {"candidates": top, "ambiguous": ambiguous, "confirm_required": True}
 

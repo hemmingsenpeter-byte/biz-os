@@ -30,8 +30,8 @@ steps:
         unpriced: { type: array, items: { type: string } }
         confidence: { type: number, minimum: 0, maximum: 1 }
     inputs:
-      scope_id: "{{packet.payload.scope_document_id}}"
-      areas: "{{packet.payload.areas}}"
+      scope_id: "{{packet.payload.scope_id}}"
+      areas: "{{packet.payload.area_details}}"
       exclusions: "{{packet.payload.exclusions}}"
       assumptions: "{{packet.payload.assumptions}}"
       price_book: "{{steps.book.output}}"
@@ -40,7 +40,7 @@ steps:
     tool: quoting.estimate_write
     args:
       job_id: "{{packet.job_id}}"
-      scope_id: "{{packet.payload.scope_document_id}}"
+      scope_id: "{{packet.payload.scope_id}}"
       lines: "{{steps.draft.output.lines}}"
   - id: check
     kind: tool
@@ -90,3 +90,7 @@ steps:
       reason: "Margin is {{steps.estimate.output.margin_pct}} percent; the owner must adjust scope or price"
       raised_by: estimator
       packet_id: "{{packet.id}}"
+  - id: hand_to_owner   # below policy: the task stays open; nothing claims it was priced
+    kind: stop
+    when: "{{steps.check.output.margin_ok}} == false"
+    status: escalated

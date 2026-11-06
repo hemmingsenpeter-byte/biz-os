@@ -67,7 +67,9 @@ steps:
     packet: scope.approved
     summary: "Scope approved: {{packet.summary}}"
     payload:
-      scope_document_id: "{{steps.scope.output.scope_id}}"
+      scope_document_id: "{{steps.render.output.document_id}}"
+      scope_id: "{{steps.scope.output.scope_id}}"
       areas: "{{steps.draft.output.area_names}}"
+      area_details: "{{steps.draft.output.areas}}"
       exclusions: "{{steps.draft.output.exclusions}}"
       assumptions: "{{steps.draft.output.assumptions}}"

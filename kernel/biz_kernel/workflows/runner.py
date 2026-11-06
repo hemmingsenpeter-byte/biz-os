@@ -187,6 +187,9 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
             state["steps"][step["id"]] = {"output": {"approved": True}}
         elif kind == "draft":
             state["steps"][step["id"]] = {"output": _draft_step(run_id, role, step, state)}
+        elif kind == "stop":
+            # End the run without completing the task: it stays open for the owner.
+            return _end(run_id, step.get("status", "escalated"))
         elif kind == "publish":
             state["steps"][step["id"]] = {"output": _publish_step(run_id, role, step, state)}
         else:

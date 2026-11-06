@@ -11,4 +11,4 @@ input:
 expect:
   packets_after_approval:
     - type: estimate.ready
-  evidence: ["packet:estimate.ready", "approval.granted"]
+  evidence: ["approval.granted", "packet:estimate.ready"]

@@ -58,7 +58,8 @@
               "tool",
               "draft",
               "approve",
-              "publish"
+              "publish",
+              "stop"
             ]
           },
           "tool": {
@@ -96,6 +97,10 @@
           },
           "when": {
             "type": "string"
+          },
+          "status": {
+            "description": "stop steps: how the run ends (task stays open for the owner)",
+            "enum": ["escalated", "stopped"]
           },
           "evidence": {
             "type": "string"

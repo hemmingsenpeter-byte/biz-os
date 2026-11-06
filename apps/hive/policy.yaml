@@ -23,8 +23,15 @@ autonomy:
 comms:               # deterministic send gate (capabilities/comms)
   banned_phrases: []    # case-insensitive phrases that block a message
   link_domains: []      # add the business's own domain
+quoting:
+  # owner to set: placeholder margins and currency
+  min_margin_pct: 15
+  target_margin_pct: 25
+  max_discount_pct: 5
+  currency: NZD
 intake:
   mail_lookback_hours: 24
 budgets_usd_month:
   receptionist: 10
+  estimator: 40
 high_stakes: [scope_writing, pricing, large_proposals, lease_reading, weekly_planner]

@@ -20,8 +20,8 @@ consumes: [brief.confirmed, survey.completed, scope.approved, variation.raised]
 publishes: [scope.approved, estimate.ready, variation.priced, escalation.raised]
 evidence:
   scope_writing: ["packet:scope.approved", "approval.granted"]
-  pricing: ["packet:estimate.ready", "approval.granted"]
-  variation_pricing: ["packet:variation.priced", "approval.granted"]
+  pricing: ["approval.granted", "packet:estimate.ready"]
+  variation_pricing: ["approval.granted", "packet:variation.priced"]
 autonomy_defaults: { scope_writing: 2, pricing: 2, variation_pricing: 2 }
 model_tier: { scope_writing: cloud, pricing: cloud, variation_pricing: local }
 escalate_when:

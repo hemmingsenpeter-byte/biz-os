@@ -1,9 +1,12 @@
 industry: demo_trade
 version: 1.0.0
-requires: { kernel: ">=1.0,<2", capabilities: [] }
+requires: { kernel: ">=1.0,<2", capabilities: [quoting] }
 ext_prefix: demo
 extensions: [migrations/ext_demo_job.py]
 fills:
+  industry.scope_template: templates/scope.md
+  industry.proposal_template: templates/proposal.md
+  industry.price_book_categories: data/price_book_categories.yaml
   industry.reply_template: templates/reply.md
   industry.text_back_template: templates/text_back.txt
   industry.glossary: data/glossary.yaml

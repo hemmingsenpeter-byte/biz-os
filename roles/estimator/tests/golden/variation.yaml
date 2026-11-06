@@ -10,4 +10,4 @@ input:
 expect:
   packets_after_approval:
     - type: variation.priced
-  evidence: ["packet:variation.priced", "approval.granted"]
+  evidence: ["approval.granted", "packet:variation.priced"]

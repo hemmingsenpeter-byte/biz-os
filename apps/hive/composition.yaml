@@ -1,15 +1,18 @@
-# M2: HIVE runs the receptionist. demo_clerk/demo_desk (the M0 placeholder) are only in apps/demo.
+# M2-M5: HIVE runs the receptionist and estimator. demo_clerk/demo_desk (the M0 placeholder) are only in apps/demo.
 name: hive
 kernel: "1.x"
-capabilities: [intake, booking, comms]
+capabilities: [intake, booking, comms, quoting, documents, voice_capture]
 ports:
   mail: mail_m365
   telephony: telephony_twilio
   calendar: mail_m365            # one Microsoft 365 adapter serves mail and calendar
   model_local: model_ollama      # model chosen by M1 evals on the Mac mini
   model_cloud: model_claude
-roles: [receptionist]
-industries: [demo_trade]         # TODO: industries/commercial_fitout replaces demo_trade
+  storage: storage_local
+  sign: sign_docuseal
+  speech: stt_whisper
+roles: [receptionist, estimator]
+industries: [commercial_fitout]
 policy: ./policy.yaml
 goals: ./goals.yaml
 seed: ./seed/

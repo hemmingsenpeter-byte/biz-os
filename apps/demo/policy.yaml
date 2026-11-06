@@ -21,9 +21,15 @@ autonomy:            # ladder level per decision type: 1 draft, 2 recommend, 3 a
 comms:               # deterministic send gate (capabilities/comms)
   banned_phrases: []    # case-insensitive phrases that block a message
   link_domains: []      # allowed link hosts in replies; empty = no links allowed
+quoting:
+  min_margin_pct: 15
+  target_margin_pct: 25
+  max_discount_pct: 5
+  currency: NZD
 intake:
   mail_lookback_hours: 24
 budgets_usd_month:
   demo_clerk: 10
   receptionist: 5
+  estimator: 40
 high_stakes: []

@@ -66,3 +66,7 @@ steps:
       reason: "Margin is {{steps.price.output.margin_pct}} percent; the owner must adjust the price"
       raised_by: estimator
       packet_id: "{{packet.id}}"
+  - id: hand_to_owner   # below policy: the task stays open; nothing claims it was priced
+    kind: stop
+    when: "{{steps.price.output.margin_ok}} == false"
+    status: escalated

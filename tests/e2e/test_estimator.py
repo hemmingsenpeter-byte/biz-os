@@ -1,11 +1,10 @@
 """M5: survey -> scope -> estimate -> approval, and the margin-below-policy escalation.
 
-Runs against the composition named by BIZ_ESTIMATOR_APP (default apps/hive) once the quoting and
-documents capabilities and the estimator role are wired into it."""
+Runs against both apps/demo and apps/hive with every port faked."""
 
 from __future__ import annotations
 
-import os
+import json
 import time
 import uuid
 from pathlib import Path
@@ -15,52 +14,41 @@ import yaml
 from biz_kernel import db
 from biz_kernel.models_registry import import_all_models
 from biz_kernel.packets.bus import Packet
-from biz_kernel.records.models import Job
+from biz_kernel.records.models import Job, Task
 from biz_kernel.runtime import build_runtime
 from biz_kernel.workflows.gate import decide
 from biz_kernel.workflows.models import SopRun
-from biz_port_fakes import FakeModel, FakeSign, FakeStorage
+from biz_port_fakes import FakeModel, FakeSign, FakeSpeech, FakeStorage
 from dbos import DBOS
 from sqlalchemy import create_engine, make_url, select
 
 ROOT = Path(__file__).parents[2]
-APP = Path(os.environ.get("BIZ_ESTIMATOR_APP", ROOT / "apps" / "hive"))
 
 
-def _wired() -> bool:
-    try:
-        import biz_cap_documents  # noqa: F401
-        import biz_cap_quoting  # noqa: F401
-
-        comp = yaml.safe_load((APP / "composition.yaml").read_text())
-    except Exception:
-        return False
-    return "estimator" in comp.get("roles", []) and {"quoting", "documents"} <= set(
-        comp.get("capabilities", [])
-    )
+# Obviously fake test prices. Demo uses generic codes; hive uses the fit-out categories.
+CATEGORY = {"demo": "labour", "hive": "partitions"}
 
 
-pytestmark = pytest.mark.skipif(
-    not _wired(), reason="needs quoting + documents capabilities wired into compositions"
-)
+def _rows(app: str) -> list[dict]:  # type: ignore[type-arg]
+    return [
+        {
+            "code": "PT-01",
+            "category": CATEGORY[app],
+            "description": "Stud partition",
+            "unit": "m2",
+            "unit_cost": "60",
+            "unit_price": "90",
+        }
+    ]
 
-PRICE_ROWS = [
-    {
-        "code": "PT-01",
-        "category": "partitions",
-        "description": "Stud partition",
-        "unit": "m2",
-        "unit_cost": "60",
-        "unit_price": "90",
-    }
-]
+
 SCOPE = {
     "areas": [
         {
             "name": "Open plan",
             "items": [
                 {
-                    "category": "partitions",
+                    "category": "CAT",
                     "description": "Stud partition",
                     "quantity": 20,
                     "unit": "m2",
@@ -85,10 +73,22 @@ def _wait(pred, timeout: float = 30.0):  # type: ignore[no-untyped-def]
     raise AssertionError("timed out waiting")
 
 
+@pytest.fixture(params=["demo", "hive"])
+def app_name(request) -> str:  # type: ignore[no-untyped-def]
+    return str(request.param)
+
+
 @pytest.fixture
-def rt(fresh_db: str, monkeypatch):  # type: ignore[no-untyped-def]
+def rt(fresh_db: str, monkeypatch, app_name: str):  # type: ignore[no-untyped-def]
+    APP = ROOT / "apps" / app_name
     eng = create_engine(fresh_db)
     import_all_models()
+    import biz_cap_booking.models  # noqa: F401
+    import biz_cap_comms.models  # noqa: F401
+    import biz_cap_documents.models  # noqa: F401
+    import biz_cap_intake.models  # noqa: F401
+    import biz_cap_quoting.models  # noqa: F401
+
     db.Base.metadata.create_all(eng)
     db.configure(fresh_db)
     url = make_url(fresh_db)
@@ -98,10 +98,15 @@ def rt(fresh_db: str, monkeypatch):  # type: ignore[no-untyped-def]
         raise AssertionError(f"port {name} was not overridden with a fake")
 
     monkeypatch.setattr("biz_kernel.runtime.resolve_port", no_real_ports)
+    # PDF bytes are not under test here (WeasyPrint needs Pango); the stored document is.
+    monkeypatch.setattr(
+        "biz_cap_documents.render.html_to_pdf", lambda source: b"%PDF-1.4 fake " + source.encode()
+    )
     manifest_ports = yaml.safe_load((APP / "composition.yaml").read_text())["ports"]
     fakes = {
         "sign": FakeSign(),
         "storage": FakeStorage(),
+        "speech": FakeSpeech(),
         "model_local": FakeModel(),
         "model_cloud": FakeModel(),
     }
@@ -161,40 +166,42 @@ def _packets(type_: str) -> list[Packet]:
         return rows
 
 
-def _seed(rt) -> uuid.UUID:  # type: ignore[no-untyped-def]
+def _seed(rt, app: str) -> uuid.UUID:  # type: ignore[no-untyped-def]
     with db.session_scope() as s:
         job = Job(kind="fitout", stage="open")
         s.add(job)
         s.flush()
         job_id = job.id
-    from biz_cap_quoting.models import PriceItem
-
+    tool = rt.registry.get("quoting.price_book_import")
     with db.session_scope() as s:
-        for r in PRICE_ROWS:
-            s.add(PriceItem(source="test", **r))
+        tool.fn(session=s, rows=_rows(app), source="test")
     return job_id
 
 
-def test_survey_to_scope_to_estimate(rt) -> None:  # type: ignore[no-untyped-def]
-    job_id = _seed(rt)
-    cloud: FakeModel = rt.ports["model_cloud"]
-    cloud.script(
-        SCOPE,
-        {
-            "lines": [
-                {
-                    "code": "PT-01",
-                    "description": "Stud partition",
-                    "quantity": 20,
-                    "unit": "m2",
-                    "unit_cost": 60,
-                    "unit_price": 90,
-                }
-            ],
-            "unpriced": [],
-            "confidence": 0.9,
-        },
-    )
+def _scope(app: str) -> dict:  # type: ignore[type-arg]
+    out = json.loads(json.dumps(SCOPE))
+    out["areas"][0]["items"][0]["category"] = CATEGORY[app]
+    return out
+
+
+def _lines(unit_price: int) -> dict:  # type: ignore[type-arg]
+    return {
+        "lines": [
+            {
+                "code": "PT-01",
+                "description": "Stud partition",
+                "quantity": 20,
+                "unit": "m2",
+                "unit_cost": 60,
+                "unit_price": unit_price,
+            }
+        ],
+        "unpriced": [],
+        "confidence": 0.9,
+    }
+
+
+def _to_scope_approved(rt, job_id: uuid.UUID, app: str) -> Packet:  # type: ignore[no-untyped-def]
     survey = _publish(
         rt,
         "survey.completed",
@@ -208,12 +215,39 @@ def test_survey_to_scope_to_estimate(rt) -> None:  # type: ignore[no-untyped-def
     DBOS.retrieve_workflow(scope_run.id).get_result()
     approved = _packets("scope.approved")
     assert len(approved) == 1 and approved[0].payload["areas"] == ["Open plan"]
+    assert approved[0].payload["scope_document_id"] != approved[0].payload["scope_id"]
+    return approved[0]
+
+
+def test_survey_to_scope_to_estimate(rt, app_name: str) -> None:  # type: ignore[no-untyped-def]
+    job_id = _seed(rt, app_name)
+    cloud: FakeModel = rt.ports["model_cloud"]
+    cloud.script(_scope(app_name), _lines(90))
+    approved = _to_scope_approved(rt, job_id, app_name)
 
     assert "estimator" in rt.tick()
-    price_run = _run("pricing", approved[0].id)
+    price_run = _run("pricing", approved.id)
     _approve_next(price_run)
     assert DBOS.retrieve_workflow(price_run.id).get_result()["status"] == "done"
     ready = _packets("estimate.ready")
     assert len(ready) == 1 and ready[0].payload["currency"]
+    assert ready[0].payload["document_id"]
+    assert ready[0].payload["total_minor"] == 20 * 90 * 100
     assert _packets("escalation.raised") == []
     assert all(c["tier"] == "cloud" for c in cloud.calls)
+
+
+def test_below_margin_escalates(rt, app_name: str) -> None:  # type: ignore[no-untyped-def]
+    job_id = _seed(rt, app_name)
+    cloud: FakeModel = rt.ports["model_cloud"]
+    cloud.script(_scope(app_name), _lines(62))
+    approved = _to_scope_approved(rt, job_id, app_name)
+
+    assert "estimator" in rt.tick()
+    price_run = _run("pricing", approved.id)
+    assert DBOS.retrieve_workflow(price_run.id).get_result()["status"] == "escalated"
+    assert _packets("estimate.ready") == []
+    esc = _packets("escalation.raised")
+    assert len(esc) == 1 and esc[0].payload["raised_by"] == "estimator"
+    with db.session_scope() as s:  # nothing claims the pricing was done
+        assert s.get(Task, price_run.task_id).status == "open"

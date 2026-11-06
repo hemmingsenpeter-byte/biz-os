@@ -1,0 +1,10 @@
+categories:
+- code: labour
+  name: Labour
+  description: Hourly labour by skill
+- code: materials
+  name: Materials
+  description: Supplied materials and consumables
+- code: callout
+  name: Call-out
+  description: Call-out and travel charges

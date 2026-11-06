@@ -97,3 +97,43 @@ def test_create_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(k, v)
     port = create()
     assert port.webhook_url == URL and port.from_number == "+15550000"
+
+
+def test_default_ledger_safe_across_asyncio_run_and_threads() -> None:
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    port, client = make()
+
+    def go(_: int) -> str:
+        return asyncio.run(port.send_sms("+1", "hi", "same-key")).status
+
+    with ThreadPoolExecutor(8) as ex:
+        statuses = list(ex.map(go, range(16)))
+    assert len(client.sent) == 1
+    assert statuses.count("sent") >= 1
+
+
+def test_sql_ledger_durable_and_crash_not_resent(engine) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+    import uuid
+
+    from biz_kernel.contracts.ports import SendResult
+    from biz_port_telephony_twilio import SqlLedger
+
+    key = f"k-{uuid.uuid4().hex}"
+    SqlLedger(engine).claim(key)  # crash after claim, before the provider answered
+    c = FakeTwilioClient()
+    port = TwilioTelephony("AC1", TOKEN, "+15550000", client=c, ledger=SqlLedger(engine))
+    assert asyncio.run(port.send_sms("+1", "hi", key)).status == "uncertain"
+    assert c.sent == []
+
+    key2 = f"k-{uuid.uuid4().hex}"
+    assert asyncio.run(port.send_sms("+1", "hi", key2)).status == "sent"
+    port2 = TwilioTelephony("AC1", TOKEN, "+15550000", client=c, ledger=SqlLedger(engine))
+    assert asyncio.run(port2.send_sms("+1", "hi", key2)).status == "sent"  # after "restart"
+    assert len(c.sent) == 1
+    assert SqlLedger(engine).get(key2) == SendResult(
+        status="sent",
+        provider_id=SqlLedger(engine).get(key2).provider_id,  # type: ignore[union-attr]
+    )

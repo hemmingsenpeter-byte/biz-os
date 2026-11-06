@@ -6,9 +6,9 @@ request-adapter stack is hard to mock and adds nothing for these five calls.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -25,8 +25,14 @@ from biz_kernel.contracts.ports import (
     SendResult,
     Slot,
 )
+from biz_kernel.db import engine as _db_engine
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-__all__ = ["IDEMPOTENCY_HEADER", "M365Mail", "MemoryLedger", "SendLedger", "create"]
+from .models import M365Send  # noqa: E402
+
+__all__ = ["IDEMPOTENCY_HEADER", "M365Mail", "MemoryLedger", "SendLedger", "SqlLedger", "create"]
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 LOGIN = "https://login.microsoftonline.com"
@@ -39,6 +45,10 @@ class SendLedger(Protocol):
     """Idempotency ledger. Production needs a durable implementation (shared DB or file)."""
 
     def get(self, key: str) -> SendResult | None: ...
+    def claim(self, key: str) -> bool:
+        """Atomically record "sending" before the provider call; False if the key exists."""
+        ...
+
     def put(self, key: str, result: SendResult) -> None: ...
 
 
@@ -47,12 +57,81 @@ class MemoryLedger:
 
     def __init__(self) -> None:
         self._data: dict[str, SendResult] = {}
+        self._sending: set[str] = set()
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> SendResult | None:
+        if key in self._sending:
+            return SendResult(status="uncertain", error="in flight")
         return self._data.get(key)
 
+    def claim(self, key: str) -> bool:
+        with self._lock:
+            if key in self._data or key in self._sending:
+                return False
+            self._sending.add(key)
+            return True
+
     def put(self, key: str, result: SendResult) -> None:
-        self._data[key] = result
+        with self._lock:
+            self._data[key] = result
+            self._sending.discard(key)
+
+
+class SqlLedger:
+    """Durable ledger on port_m365_sends. `claim` records "sending" BEFORE the provider is called;
+    a key left in "sending" (crash mid-send) reads back as "uncertain", never resent."""
+
+    def __init__(self, engine_or_factory: Any) -> None:
+        self._factory: Any = (
+            sessionmaker(engine_or_factory, expire_on_commit=False)
+            if isinstance(engine_or_factory, Engine)
+            else engine_or_factory
+        )
+
+    def get(self, key: str) -> SendResult | None:
+        with self._factory() as s:
+            row = s.get(M365Send, key)
+        if row is None:
+            return None
+        if row.status == "sending":
+            return SendResult(status="uncertain", error="crashed or in flight before result")
+        return SendResult(
+            status=row.status, provider_id=row.provider_id, error=(row.result or {}).get("error")
+        )
+
+    def claim(self, key: str) -> bool:
+        with self._factory() as s:
+            stmt = (
+                pg_insert(M365Send)
+                .values(key=key, status="sending", at=datetime.now(UTC))
+                .on_conflict_do_nothing(index_elements=["key"])
+                .returning(M365Send.key)
+            )
+            won = s.execute(stmt).scalar() is not None
+            s.commit()
+        return won
+
+    def put(self, key: str, result: SendResult) -> None:
+        with self._factory() as s:
+            stmt = pg_insert(M365Send).values(
+                key=key,
+                status=result.status,
+                provider_id=result.provider_id,
+                result={"error": result.error},
+                at=datetime.now(UTC),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["key"],
+                set_={
+                    "status": stmt.excluded.status,
+                    "provider_id": stmt.excluded.provider_id,
+                    "result": stmt.excluded.result,
+                    "at": stmt.excluded.at,
+                },
+            )
+            s.execute(stmt)
+            s.commit()
 
 
 def _parse_graph_dt(value: str) -> datetime:
@@ -88,58 +167,66 @@ class M365Mail:
     ) -> None:
         self.tenant_id, self.client_id, self.client_secret = tenant_id, client_id, client_secret
         self.mailbox = mailbox
-        self.http = http or httpx.AsyncClient(timeout=30)
+        # An injected client (tests) is used as-is. Otherwise a client is made per call: an
+        # AsyncClient is bound to the event loop it first ran on, and callers use asyncio.run.
+        self._injected_http = http
         self.ledger: SendLedger = ledger if ledger is not None else MemoryLedger()
         self.tz = ZoneInfo(timezone)
         self.work_start, self.work_end, self.workdays = work_start, work_end, workdays
         self._clock = clock
         self._token: str | None = None
         self._token_expiry = 0.0
-        self._token_lock = asyncio.Lock()
-        self._send_lock = asyncio.Lock()
 
     # -- auth / transport -------------------------------------------------
+    async def _http_request(self, method: str, url: str, **kw: Any) -> httpx.Response:
+        if self._injected_http is not None:
+            return await self._injected_http.request(method, url, **kw)
+        async with httpx.AsyncClient(timeout=30) as client:
+            return await client.request(method, url, **kw)
+
     async def _get_token(self) -> str:
-        async with self._token_lock:
-            if self._token and self._clock() < self._token_expiry:
-                return self._token
-            resp = await self.http.post(
-                f"{LOGIN}/{self.tenant_id}/oauth2/v2.0/token",
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                    "scope": "https://graph.microsoft.com/.default",
-                },
-            )
-            resp.raise_for_status()
-            body = resp.json()
-            self._token = body["access_token"]
-            self._token_expiry = self._clock() + int(body.get("expires_in", 3600)) - TOKEN_SKEW_S
+        # No lock: a racing refresh just fetches a second token (locks are loop-bound).
+        if self._token and self._clock() < self._token_expiry:
             return self._token
+        resp = await self._http_request(
+            "POST",
+            f"{LOGIN}/{self.tenant_id}/oauth2/v2.0/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+            },
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        self._token = body["access_token"]
+        self._token_expiry = self._clock() + int(body.get("expires_in", 3600)) - TOKEN_SKEW_S
+        return self._token
 
     async def _request(self, method: str, url: str, **kw: Any) -> httpx.Response:
         if not url.startswith("http"):
             url = f"{GRAPH}/users/{self.mailbox}{url}"
         headers = {"Authorization": f"Bearer {await self._get_token()}", **kw.pop("headers", {})}
-        return await self.http.request(method, url, headers=headers, **kw)
+        return await self._http_request(method, url, headers=headers, **kw)
 
     # -- MailPort -----------------------------------------------------------
     async def send(self, msg: OutboundMessage, idempotency_key: str) -> SendResult:
         """Send once per key. An unconfirmed send is "uncertain" and reconciled, never resent."""
-        async with self._send_lock:
-            prior = self.ledger.get(idempotency_key)
-            if prior is not None:
-                if prior.status != "uncertain":
-                    return prior
-                found = await self._safe_reconcile(idempotency_key)
-                if found is None:
-                    return prior
-                self.ledger.put(idempotency_key, found)
-                return found
-            result = await self._send(msg, idempotency_key)
-            self.ledger.put(idempotency_key, result)
-            return result
+        prior = self.ledger.get(idempotency_key)
+        if prior is None:
+            if self.ledger.claim(idempotency_key):  # "sending" is recorded before Graph is called
+                result = await self._send(msg, idempotency_key)
+                self.ledger.put(idempotency_key, result)
+                return result
+            prior = self.ledger.get(idempotency_key) or SendResult(status="uncertain")
+        if prior.status != "uncertain":
+            return prior
+        found = await self._safe_reconcile(idempotency_key)
+        if found is None:
+            return prior
+        self.ledger.put(idempotency_key, found)
+        return found
 
     async def _safe_reconcile(self, key: str) -> SendResult | None:
         try:
@@ -199,9 +286,10 @@ class M365Mail:
         return None
 
     async def fetch_new(self, since: datetime) -> list[InboundMessage]:
-        stamp = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # `ge` and full precision: same-instant mail must not be skipped; callers dedupe on id.
+        stamp = since.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
         url: str | None = (
-            f"/mailFolders/inbox/messages?$filter=receivedDateTime gt {stamp}"
+            f"/mailFolders/inbox/messages?$filter=receivedDateTime ge {stamp}"
             "&$orderby=receivedDateTime asc&$top=50"
             "&$select=id,subject,body,from,toRecipients,receivedDateTime,conversationId"
         )
@@ -303,7 +391,8 @@ def create() -> M365Mail:
         env["BIZ_M365_CLIENT_ID"],
         env["BIZ_M365_SECRET"],
         env["BIZ_M365_MAILBOX"],
-        timezone=env.get("BIZ_M365_TZ", "UTC"),
+        ledger=SqlLedger(_db_engine()),
+        timezone=env.get("BIZ_M365_TZ") or "UTC",
         work_start=dtime.fromisoformat(env.get("BIZ_M365_WORK_START", "09:00")),
         work_end=dtime.fromisoformat(env.get("BIZ_M365_WORK_END", "17:00")),
     )

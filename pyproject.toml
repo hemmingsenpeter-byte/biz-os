@@ -3,7 +3,7 @@ name = "biz-os"
 version = "0.1.0"
 description = "Modular platform for AI-run small businesses"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk", "biz-port-model-ollama", "biz-port-model-claude", "biz-port-telephony-twilio", "biz-port-mail-m365", "biz-cap-intake", "biz-cap-booking", "biz-cap-comms"]
+dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk", "biz-port-model-ollama", "biz-port-model-claude", "biz-port-telephony-twilio", "biz-port-mail-m365", "biz-cap-intake", "biz-cap-booking", "biz-cap-comms", "biz-cap-voice-capture", "biz-cap-documents", "biz-cap-quoting", "biz-port-stt-whisper", "biz-port-sign-docuseal", "biz-port-storage-local"]
 
 [dependency-groups]
 dev = [
@@ -27,6 +27,12 @@ no-build-package = ["cryptography", "cbor2", "pydantic-core", "psycopg-binary", 
 members = ["kernel", "ports/*", "capabilities/*"]
 
 [tool.uv.sources]
+biz-cap-voice-capture = { workspace = true }
+biz-cap-documents = { workspace = true }
+biz-cap-quoting = { workspace = true }
+biz-port-stt-whisper = { workspace = true }
+biz-port-sign-docuseal = { workspace = true }
+biz-port-storage-local = { workspace = true }
 biz-kernel = { workspace = true }
 biz-port-fakes = { workspace = true }
 biz-cap-demo-desk = { workspace = true }

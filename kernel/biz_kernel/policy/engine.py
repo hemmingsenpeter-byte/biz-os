@@ -81,6 +81,8 @@ class PolicyEngine:
         if lvl <= 2:
             return NeedsApproval(approver, f"autonomy level {lvl} requires approval")
         limit = self._limit(action) if action.side_effect == SideEffect.MONEY else None
+        if action.side_effect == SideEffect.MONEY and limit is None:
+            return NeedsApproval(approver, "no money limit configured")  # fail closed
         if limit is not None:
             if action.amount is None:
                 return NeedsApproval(approver, "money action without an amount")

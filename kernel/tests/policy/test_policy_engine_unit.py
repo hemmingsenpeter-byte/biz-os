@@ -44,3 +44,12 @@ def test_from_yaml(session, tmp_path):
     pol = PolicyEngine.from_yaml(p)
     assert isinstance(pol.check(session, act()), Allow)
     assert isinstance(pol.check(session, act("t.no")), Deny)
+
+
+def test_money_without_configured_limit_needs_approval(session):
+    from biz_kernel.policy.engine import PolicyEngine
+    from biz_kernel.policy.types import Action, NeedsApproval, SideEffect
+
+    engine = PolicyEngine({"autonomy": {"default": 4}})
+    action = Action(actor="r", tool="x.pay", side_effect=SideEffect.MONEY, amount=1.0)
+    assert isinstance(engine.check(session, action), NeedsApproval)

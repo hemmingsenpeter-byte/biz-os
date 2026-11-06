@@ -22,6 +22,7 @@ class Tool:
     fn: Callable[..., Any]
     description: str = ""
     inner: tuple[str, ...] = ()  # tools a composite tool calls (strictest-gate rule)
+    wants_actor: bool = False  # fn also receives the verified caller as `actor=`
 
 
 class PolicyChecker(Protocol):
@@ -98,6 +99,9 @@ class ToolRegistry:
             )
         if not isinstance(decision, Allow):
             return CallResult(decision)
-        output = tool.fn(session=session, **args)
+        if "actor" in args:
+            raise ValueError("`actor` is set by the kernel, never by the caller")
+        extra = {"actor": actor} if tool.wants_actor else {}
+        output = tool.fn(session=session, **extra, **args)
         record(session, actor, "tool_call", name, args=args)
         return CallResult(decision, output)

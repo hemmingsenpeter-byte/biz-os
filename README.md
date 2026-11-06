@@ -22,7 +22,9 @@ Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. 
 | M0 Kernel and demo app | Built. Acceptance passes in `apps/demo` and `apps/hive`. Mac mini deploy not yet run (see `deploy/README.md`) |
 | M1 Models, memory, evaluation | Built and tested against fakes and mocked HTTP. Needs Ollama on the Mac mini for real local evals, and real HIVE material for `apps/hive/memory/` (currently placeholders) |
 | M2 Intake and Receptionist | Built: intake, booking, receptionist; Twilio and M365 ports. Second-review fixes in progress. Not yet run against live Twilio or M365 |
-| M3 Comms | Built: outbox, deterministic gate, idempotent sends with reconcile, permanent opt-outs. The receptionist sends through it; reading replies comes next |
+| M3 Comms | Built: outbox, deterministic gate, idempotent sends with reconcile, permanent opt-outs. The receptionist sends through it. Customer replies (matched by a subject token) drive owner-approved bookings |
+| M4 Voice capture and documents | Built: voice notes become transcripts, notes and tasks; Jinja templates render to versioned PDFs; DocuSeal signature webhooks. PDF rendering needs Pango (Linux/CI) |
+| M5 Quoting, Estimator, fit-out pack | Built: quoting capability, estimator role, commercial_fitout pack. Composition wiring and the end-to-end test are in progress |
 
 ## How a role runs
 

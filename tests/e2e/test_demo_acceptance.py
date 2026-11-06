@@ -122,3 +122,48 @@ def test_demo_clerk_end_to_end(live) -> None:  # type: ignore[no-untyped-def]
         out = s.scalars(select(Packet).where(Packet.type == "message.sent")).all()
         assert len(out) == 1 and out[0].payload["to"] == "asker@example.com"
         assert s.get(StagedOperation, op.id).status == "executed"
+
+
+def test_stale_approval_is_never_acted_on(live) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 5: approve, then edit before the worker wakes -> nothing is sent until
+    the edited version is approved, and then exactly the edited inputs go out, once."""
+    from biz_kernel.approvals import staged
+    from biz_kernel.workflows.runner import notify_decision
+
+    rt, mail, model, approver = live
+    with db.session_scope() as s:
+        req = DemoRequest(sender="b@example.com", subject="Parking", body="Is there parking?")
+        s.add(req)
+        s.flush()
+        packet_id = rt.bus.publish(
+            s,
+            type="service_request.received",
+            from_part="test",
+            summary="Parking",
+            payload={
+                "request_id": str(req.id),
+                "channel": "desk",
+                "subject": req.subject,
+                "body": req.body,
+            },
+        ).id
+    rt.tick()
+
+    def waiting() -> SopRun | None:
+        with db.session_scope() as s:
+            run = s.scalar(select(SopRun).where(SopRun.packet_id == packet_id))
+            return run if run is not None and run.status == "waiting" else None
+
+    run = _wait(waiting)
+    op_id = uuid.UUID(run.waiting_op_id)
+    with db.session_scope() as s:  # approve v1, then edit (which clears the approval)
+        staged.approve(s, op_id, approver, 1)
+        op = s.get(StagedOperation, op_id)
+        staged.edit(s, op_id, {**op.inputs, "body": "Yes, two visitor spaces."}, by=approver)
+    assert notify_decision(str(op_id), "approved")  # the stale wake-up arrives
+    time.sleep(2.5)  # > approval_poll_seconds: the run re-checked and kept waiting
+    assert mail.sent == [] and waiting() is not None
+
+    decide(op_id, approver, approve=True, version=2)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    assert len(mail.sent) == 1 and mail.sent[0].body == "Yes, two visitor spaces."

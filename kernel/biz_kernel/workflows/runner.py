@@ -141,12 +141,16 @@ def notify_decision(op_id: str, decision: str, client: Any | None = None) -> boo
     launched DBOS, as in the API process.
     """
     client = client or globals().get("_CLIENT")
+    from biz_kernel.approvals.models import StagedOperation
+
     with db.session_scope() as s:
         run = s.query(SopRun).filter_by(waiting_op_id=op_id).one_or_none()
         if run is None:
             return False
         run_id = run.id
-    key = f"{op_id}:{decision}"
+        op = s.get(StagedOperation, uuid.UUID(op_id))
+        version = op.version if op is not None else 0
+    key = f"{op_id}:{decision}:v{version}"
     if client is not None:
         client.send(run_id, decision, topic=f"op:{op_id}", idempotency_key=key)
     else:
@@ -170,10 +174,10 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
             continue
         if kind == "tool":
             res = _tool_step(run_id, role, step, state)
-            if res["status"] == "staged":
+            while res["status"] == "staged":
                 if _await_decision(run_id, res["op_id"]) != "approved":
                     return _end(run_id, "rejected")
-                res = {"output": _execute_staged(run_id, step["id"], res["op_id"])}
+                res = _execute_staged(run_id, role, step["id"], res["op_id"])
             state["steps"][step["id"]] = {"output": res["output"]}
         elif kind == "approve":
             op_id = _approval_step(run_id, role, step, state)
@@ -191,12 +195,31 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
 
 
 def _await_decision(run_id: str, op_id: str) -> str:
+    """Wait until the operation is approved (at its current version) or rejected.
+
+    Messages are only wake-up hints; the staged operation's row is the truth, so an
+    approval that was edited or revoked before we woke is never acted on.
+    """
     _set_waiting(run_id, op_id)
     while True:
-        msg = DBOS.recv(topic=f"op:{op_id}", timeout_seconds=ctx().approval_poll_seconds)
-        if msg is not None:
+        DBOS.recv(topic=f"op:{op_id}", timeout_seconds=ctx().approval_poll_seconds)
+        state = _op_state(op_id)
+        if state in ("approved", "rejected"):
             _set_waiting(run_id, None)
-            return str(msg)
+            return state
+
+
+@DBOS.step(name="biz.sop.op_state")
+def _op_state(op_id: str) -> str:
+    from biz_kernel.approvals.models import StagedOperation
+
+    with db.session_scope() as s:
+        op = s.get(StagedOperation, uuid.UUID(op_id))
+        if op is None or op.status == "rejected":
+            return "rejected"
+        if op.status in ("approved", "executed") and op.approved_version == op.version:
+            return "approved"
+        return "pending"
 
 
 # ---------------------------------------------------------------- steps
@@ -264,7 +287,7 @@ def _tool_step(
 ) -> dict[str, Any]:
     c = ctx()
     with db.session_scope() as s:
-        done = _ledger(s, run_id, step["id"])
+        done = _ledger(s, run_id, step["id"]) or _ledger(s, run_id, f"{step['id']}:staged")
         if done is not None:
             return done.output
         args = render(step.get("args", {}), state)
@@ -278,21 +301,32 @@ def _tool_step(
             decision_type=step.get("decision_type"),
         )
         if res["status"] == "staged":
-            return res  # not ledgered: the execute step owns the outcome
+            return _save(s, run_id, f"{step['id']}:staged", res)  # execute step owns the outcome
         return _save(s, run_id, step["id"], {"status": "ran", "output": res["output"]})
 
 
 @DBOS.step(name="biz.sop.execute")
-def _execute_staged(run_id: str, step_id: str, op_id: str) -> Any:
+def _execute_staged(run_id: str, role: str, step_id: str, op_id: str) -> dict[str, Any]:
+    """Run the approved operation once. Returns {"status": "ran", ...} or, if the approval
+    went stale between the check and the lock, {"status": "staged", ...} to wait again."""
+    from biz_kernel.approvals.models import StagedOperation
+    from biz_kernel.approvals.staged import NotApproved
+
     c = ctx()
     with db.session_scope() as s:
         done = _ledger(s, run_id, step_id)
         if done is not None:
-            return done.output["output"]
-        output = c.gate.execute(s, op_id)
+            return dict(done.output)
+        op = s.get(StagedOperation, uuid.UUID(op_id))
+        if op is None or op.tool not in c.roles[role].allow_list:
+            raise PermissionError(f"{role} may no longer call {op.tool if op else op_id}")
+        try:
+            with s.begin_nested():
+                output = c.gate.execute(s, op_id)
+        except NotApproved:
+            return {"status": "staged", "op_id": op_id}
         _note_approval(s, run_id, op_id)
-        _save(s, run_id, step_id, {"status": "ran", "output": output})
-        return output
+        return dict(_save(s, run_id, step_id, {"status": "ran", "output": output}))
 
 
 @DBOS.step(name="biz.sop.approval")

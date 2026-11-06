@@ -217,6 +217,8 @@ def build_runtime(
     for cap in manifest.capabilities:
         mod = importlib.import_module(f"biz_cap_{cap}")
         mod.register(registry, resolved)
+    if unsafe := registry.not_idempotent():
+        raise CompositionError(f"gated tools must take an idempotency_key: {unsafe}")
     missing = set(manifest.tools) - set(registry.tools) - {"memory.recall"}
     if missing:
         raise CompositionError(f"capabilities declared tools they did not register: {missing}")

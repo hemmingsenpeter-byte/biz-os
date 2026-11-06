@@ -1,0 +1,51 @@
+name: book_meeting
+trigger: opportunity.qualified
+when: "{{packet.payload.source}} in mail,form"
+goal_key: enquiry_response_minutes
+task: { kind: book_meeting, title: "Offer a meeting: {{packet.summary}}" }
+steps:
+  - id: read
+    kind: tool
+    tool: intake.read_enquiry
+    args: { enquiry_id: "{{packet.payload.enquiry_id}}" }
+  - id: slots
+    kind: tool
+    tool: booking.offer_slots
+    args: { days_ahead: 7, duration_minutes: 30, limit: 3 }
+  - id: draft
+    kind: draft
+    prompt: prompts/book_meeting.md
+    decision_type: meeting_offer_drafting
+    schema:
+      type: object
+      required: [subject, body]
+      properties: { subject: { type: string }, body: { type: string } }
+    inputs: { enquiry: "{{steps.read.output}}", slots: "{{steps.slots.output}}" }
+  - id: send
+    kind: tool
+    tool: intake.reply
+    decision_type: meeting_offer_sending
+    args:
+      to: "{{steps.read.output.from}}"
+      subject: "{{steps.draft.output.subject}}"
+      body: "{{steps.draft.output.body}}"
+  # booking.book is gated: the owner's approval here is the confirmation that a time was agreed.
+  - id: book
+    kind: tool
+    tool: booking.book
+    decision_type: meeting_booking
+    args:
+      start: "{{steps.slots.output.slots.0.start}}"
+      end: "{{steps.slots.output.slots.0.end}}"
+      title: "Meeting: {{packet.payload.summary}}"
+      attendees: ["{{steps.read.output.from}}"]
+      party_id: "{{packet.payload.party_id}}"
+  - id: done
+    kind: publish
+    packet: meeting.booked
+    summary: "Meeting booked for {{steps.book.output.starts_at}}"
+    payload:
+      meeting_id: "{{steps.book.output.meeting_id}}"
+      party_id: "{{packet.payload.party_id}}"
+      starts_at: "{{steps.book.output.starts_at}}"
+      notes: "{{packet.payload.summary}}"

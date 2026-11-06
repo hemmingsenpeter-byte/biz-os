@@ -1,0 +1,13 @@
+name: intake
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [telephony, mail] }
+tools:
+  - { name: intake.classify, side_effect: draft, description: "Deterministic first-pass triage: opt-outs, auto-replies, spam; flags the rest for the model" }
+  - { name: intake.create_enquiry, side_effect: draft, description: "Write (or find) the enquiry row and its party; returns ids" }
+  - { name: intake.read_enquiry, side_effect: read, description: Read an enquiry row }
+  - { name: intake.set_classification, side_effect: draft, description: "Store the final category (rules or model) and prepare routing data" }
+  - { name: intake.text_back, side_effect: external, description: "Send the fixed templated text-back SMS; never model text" }
+  - { name: intake.reply, side_effect: external, description: "Send a reply to an enquirer by mail, or SMS when the contact is a phone number" }
+publishes: [enquiry.received, service_request.received]
+consumes: []
+screens: []

@@ -16,6 +16,12 @@ autonomy:
   default: 2
   reply_drafting: 2
   reply_sending: 2
+  # owner to decide: raise to 3 for instant text-back (sends need the owner's decision)
+  missed_call_text_back: 2
+  meeting_offer_sending: 2
+  meeting_booking: 2
+intake:
+  mail_lookback_hours: 24
 budgets_usd_month:
-  demo_clerk: 20
+  receptionist: 10
 high_stakes: [scope_writing, pricing, large_proposals, lease_reading, weekly_planner]

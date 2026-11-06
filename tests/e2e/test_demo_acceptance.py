@@ -35,7 +35,7 @@ def _wait(pred, timeout: float = 30.0):  # type: ignore[no-untyped-def]
     raise AssertionError("timed out waiting")
 
 
-@pytest.fixture(params=[("demo", "demo_owner"), ("hive", "owner")], ids=["demo", "hive"])
+@pytest.fixture(params=[("demo", "demo_owner")], ids=["demo"])  # hive: see test_receptionist
 def live(fresh_db: str, request):  # type: ignore[no-untyped-def]
     import biz_cap_demo_desk  # noqa: F401  (registers capability tables)
 
@@ -78,7 +78,7 @@ def test_demo_clerk_end_to_end(live) -> None:  # type: ignore[no-untyped-def]
             summary="Opening hours",
             payload={
                 "request_id": str(req.id),
-                "channel": "mail",
+                "channel": "desk",
                 "subject": req.subject,
                 "body": req.body,
             },

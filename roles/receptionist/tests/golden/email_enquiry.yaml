@@ -1,0 +1,15 @@
+name: email_enquiry
+input:
+  packet:
+    type: enquiry.received
+    summary: "mail: Quote request"
+    payload:
+      enquiry_id: 0190f0e0-0000-7000-8000-0000000000a2
+      channel: mail
+      summary: "mail: Quote request"
+      contact: lead@example.com
+      text_back: "no"
+expect:
+  packets_after_approval:
+    - type: opportunity.qualified
+  evidence: [triage.routed]

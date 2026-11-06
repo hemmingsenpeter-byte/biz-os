@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "biz/sop",
-  "description": "SOP format. trigger = packet type that starts it. task = task record created for the run (kind drives evidence rules). Steps run in order, ids unique. Kinds: tool (call allow-listed tool; gated tools are staged and wait for approval), draft (model drafts from a prompt file relative to the role pack, structured by `schema`, no tools), approve (explicit approval with approver and reason), publish (publish a packet; payload and summary are templates). Templates: '{{a.b.c}}' over packet.* and steps.<id>.output; a string that is exactly one template yields the raw value.",
+  "description": "SOP format. trigger = packet type that starts it. task = task record created for the run (kind drives evidence rules). Steps run in order, ids unique. Kinds: tool (call allow-listed tool; gated tools are staged and wait for approval), draft (model drafts from a prompt file relative to the role pack, structured by `schema`, no tools), approve (explicit approval with approver and reason), publish (publish a packet; payload and summary are templates). Optional `when` (SOP level: checked against the trigger packet; step level: skips the step, whose output becomes {skipped: true}) is '<template> ==|!=|in <value>[,<value>]'. A publish step may set `evidence` to also note that evidence kind. Templates: '{{a.b.c}}' over packet.* and steps.<id>.output; a string that is exactly one template yields the raw value.",
   "type": "object",
   "required": [
     "name",
@@ -18,6 +18,9 @@
       "type": "string"
     },
     "goal_key": {
+      "type": "string"
+    },
+    "when": {
       "type": "string"
     },
     "task": {
@@ -89,6 +92,12 @@
             "type": "object"
           },
           "summary": {
+            "type": "string"
+          },
+          "when": {
+            "type": "string"
+          },
+          "evidence": {
             "type": "string"
           }
         },

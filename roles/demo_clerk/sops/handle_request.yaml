@@ -1,5 +1,6 @@
 name: handle_request
 trigger: service_request.received
+when: "{{packet.payload.channel}} == desk"   # only requests raised at the demo desk
 goal_key: reply_turnaround_hours
 task: { kind: reply, title: "Handle {{packet.summary}}" }
 steps:

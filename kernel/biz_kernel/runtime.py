@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +34,7 @@ from biz_kernel.workflows.gate import KernelGate
 from biz_kernel.workflows.models import SopRun
 
 PACKET_REASON = "packet:"
+log = logging.getLogger(__name__)
 
 
 class CompositionError(RuntimeError):
@@ -79,6 +82,7 @@ class Runtime:
     gate: KernelGate
     embedder: Any = None
     follow: FollowThrough = field(default_factory=FollowThrough)
+    pollers: list[Callable[[], int]] = field(default_factory=list)
 
     # -------------------------------------------------------------- memory
 
@@ -112,8 +116,19 @@ class Runtime:
     def cadences(self) -> dict[str, Any]:
         return {name: parse_cadence(r.heartbeat_cadence) for name, r in self.manifest.roles.items()}
 
+    def poll(self) -> int:
+        """Run capability pollers (e.g. pull new mail). One failing poller never blocks the rest."""
+        total = 0
+        for poller in self.pollers:
+            try:
+                total += poller()
+            except Exception:
+                log.exception("poller %s failed", getattr(poller, "__name__", poller))
+        return total
+
     def tick(self, now: datetime | None = None) -> list[str]:
         """One heartbeat cycle; commits so started workflows can see the claimed work."""
+        self.poll()  # before reading the clock: wake-ups it enqueues must be due now
         now = now or db.utcnow()
         with db.session_scope() as s:
             for role, every in self.cadences().items():
@@ -142,6 +157,16 @@ class Runtime:
             runner.notify_decision(op_id, "approved" if status == "approved" else "rejected")
 
         self.follow.register("sop_waiting_on_decided_op", decided_but_waiting, resume)
+
+
+def capability_routes(rt: Runtime) -> list[tuple[str, Any]]:
+    """(name, APIRouter) for each loaded capability that defines `routes(rt)`."""
+    out = []
+    for cap in rt.manifest.capabilities:
+        mod = importlib.import_module(f"biz_cap_{cap}")
+        if callable(getattr(mod, "routes", None)):
+            out.append((cap, mod.routes(rt)))
+    return out
 
 
 def _as_uuid(col: Any) -> Any:
@@ -178,8 +203,11 @@ def build_runtime(
     approval_poll_seconds: float = 3600.0,
 ) -> Runtime:
     manifest = load_composition(app_dir, repo_root)
-    resolved = {slot: resolve_port(name) for slot, name in manifest.ports.items()}
-    resolved.update(ports or {})
+    overrides = ports or {}
+    resolved = {
+        slot: resolve_port(name) for slot, name in manifest.ports.items() if slot not in overrides
+    }
+    resolved.update(overrides)
 
     registry = ToolRegistry()
     embedder = _embedder(resolved.get("model_local"))
@@ -217,6 +245,10 @@ def build_runtime(
         for packet_type in set(role.consumes) | set(role.heartbeat_triggers):
             bus.subscribe(packet_type, name, rt.on_packet(name))
     rt._register_follow_through()
+    for cap in manifest.capabilities:
+        mod = importlib.import_module(f"biz_cap_{cap}")
+        if callable(getattr(mod, "pollers", None)):
+            rt.pollers.extend(mod.pollers(rt))
 
     runner.install(
         runner.RunnerContext(

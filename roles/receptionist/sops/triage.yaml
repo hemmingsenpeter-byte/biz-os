@@ -1,0 +1,63 @@
+name: triage
+trigger: enquiry.received
+when: "{{packet.payload.channel}} in mail,form"
+goal_key: enquiry_response_minutes
+task: { kind: triage, title: "Triage {{packet.payload.summary}}" }
+steps:
+  - id: classify
+    kind: tool
+    tool: intake.classify
+    args: { enquiry_id: "{{packet.payload.enquiry_id}}" }
+  - id: model
+    kind: draft
+    when: "{{steps.classify.output.needs_model}} == true"
+    prompt: prompts/triage.md
+    decision_type: enquiry_classification
+    schema:
+      type: object
+      required: [category, summary, confidence]
+      properties:
+        category: { enum: [enquiry, service_request, supplier, spam, other] }
+        summary: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+    inputs: { enquiry: "{{steps.classify.output.enquiry}}" }
+  - id: route
+    kind: tool
+    tool: intake.set_classification
+    args:
+      enquiry_id: "{{packet.payload.enquiry_id}}"
+      rule: "{{steps.classify.output}}"
+      model: "{{steps.model.output}}"
+  - id: opportunity
+    kind: publish
+    when: "{{steps.route.output.category}} == enquiry"
+    packet: opportunity.qualified
+    evidence: triage.routed
+    summary: "New enquiry: {{steps.route.output.summary}}"
+    payload:
+      opportunity_id: "{{steps.route.output.opportunity_id}}"
+      party_id: "{{steps.route.output.party_id}}"
+      summary: "{{steps.route.output.summary}}"
+      source: "{{steps.route.output.channel}}"
+      enquiry_id: "{{steps.route.output.enquiry_id}}"
+  - id: service_request
+    kind: publish
+    when: "{{steps.route.output.category}} == service_request"
+    packet: service_request.received
+    evidence: triage.routed
+    summary: "Service request: {{steps.route.output.summary}}"
+    payload:
+      request_id: "{{steps.route.output.enquiry_id}}"
+      channel: "{{steps.route.output.channel}}"
+      subject: "{{steps.route.output.subject}}"
+      body: "{{steps.route.output.body}}"
+      party_id: "{{steps.route.output.party_id}}"
+  - id: declined
+    kind: publish
+    when: "{{steps.route.output.category}} in spam,supplier,other"
+    packet: enquiry.declined
+    evidence: triage.routed
+    summary: "Not taken forward: {{steps.route.output.reason}}"
+    payload:
+      enquiry_id: "{{steps.route.output.enquiry_id}}"
+      reason: "{{steps.route.output.reason}}"

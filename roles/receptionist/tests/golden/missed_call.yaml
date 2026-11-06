@@ -1,0 +1,16 @@
+name: missed_call
+input:
+  packet:
+    type: enquiry.received
+    summary: Missed call from +64210000001
+    payload:
+      enquiry_id: 0190f0e0-0000-7000-8000-0000000000a1
+      channel: phone
+      summary: Missed call from +64210000001
+      contact: "+64210000001"
+      text_back: "yes"
+expect:
+  packets_after_approval:
+    - type: message.sent
+      payload_contains: { channel: sms }
+  evidence: ["packet:message.sent"]

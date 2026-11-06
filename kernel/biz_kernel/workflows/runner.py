@@ -22,7 +22,7 @@ from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
 from biz_kernel.workflows.models import SopRun, SopStep
-from biz_kernel.workflows.templating import render
+from biz_kernel.workflows.templating import TemplateError, holds, render
 
 
 class Gate(Protocol):
@@ -109,11 +109,29 @@ def start_for_packet(role: str, packet_id: uuid.UUID, packet_type: str) -> list[
     """Start every SOP of `role` triggered by this packet. Workflow ids dedupe repeats."""
     started = []
     for sop in sops_for_packet(role, packet_type):
+        if not _applies(role, sop, packet_id):
+            continue
         wf_id = run_id_for(role, sop, packet_id)
         with SetWorkflowID(wf_id):
             DBOS.start_workflow(sop_workflow, role, sop, str(packet_id))
         started.append(wf_id)
     return started
+
+
+def _applies(role: str, sop_name: str, packet_id: uuid.UUID) -> bool:
+    """A SOP's optional top-level `when` is checked against the triggering packet."""
+    cond = ctx().roles[role].sops[sop_name].get("when")
+    if not cond:
+        return True
+    with db.session_scope() as s:
+        packet = s.get(Packet, packet_id)
+        if packet is None:
+            return False
+        pkt = {"type": packet.type, "summary": packet.summary, "payload": packet.payload}
+    try:
+        return holds(cond, {"packet": pkt})
+    except TemplateError:  # the packet lacks the field the condition reads
+        return False
 
 
 def notify_decision(op_id: str, decision: str, client: Any | None = None) -> bool:
@@ -147,6 +165,9 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     sop = ctx().roles[role].sops[sop_name]
     for step in sop["steps"]:
         kind = step["kind"]
+        if step.get("when") and not holds(step["when"], state):
+            state["steps"][step["id"]] = {"output": {"skipped": True}}
+            continue
         if kind == "tool":
             res = _tool_step(run_id, role, step, state)
             if res["status"] == "staged":
@@ -347,6 +368,10 @@ def _publish_step(run_id: str, role: str, step: dict[str, Any], state: dict[str,
         c.evidence.note(
             s, f"packet:{packet.type}", str(packet.id), task_id=run.task_id, job_id=run.job_id
         )
+        if step.get("evidence"):
+            c.evidence.note(
+                s, step["evidence"], str(packet.id), task_id=run.task_id, job_id=run.job_id
+            )
         return _save(s, run_id, step["id"], {"packet_id": str(packet.id)})
 
 

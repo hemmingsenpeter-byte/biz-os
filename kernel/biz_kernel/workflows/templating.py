@@ -36,3 +36,24 @@ def render(value: Any, ctx: dict[str, Any]) -> Any:
     if isinstance(value, list):
         return [render(v, ctx) for v in value]
     return value
+
+
+_COND = re.compile(r"^(.*?)\s+(==|!=|in)\s+(.*)$")
+
+
+def _norm(value: Any) -> str:
+    return str(value).strip().lower()
+
+
+def holds(condition: str, ctx: dict[str, Any]) -> bool:
+    """Evaluate a `when:` condition: `<template> == x`, `!= x` or `in a,b,c`.
+
+    Templates are rendered first; comparison is on trimmed, case-folded text.
+    """
+    m = _COND.match(condition.strip())
+    if not m:
+        raise ValueError(f"bad condition {condition!r}: use '<value> ==|!=|in <value>'")
+    left, op, right = (_norm(render(m[1], ctx)), m[2], str(render(m[3], ctx)))
+    if op == "in":
+        return left in {_norm(r) for r in right.split(",")}
+    return (left == _norm(right)) == (op == "==")

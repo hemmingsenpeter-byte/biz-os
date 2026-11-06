@@ -1,8 +1,9 @@
 industry: demo_trade
 version: 1.0.0
-requires: { kernel: ">=1.0,<2", capabilities: [demo_desk] }
+requires: { kernel: ">=1.0,<2", capabilities: [] }
 ext_prefix: demo
 extensions: [migrations/ext_demo_job.py]
 fills:
   industry.reply_template: templates/reply.md
+  industry.text_back_template: templates/text_back.txt
   industry.glossary: data/glossary.yaml

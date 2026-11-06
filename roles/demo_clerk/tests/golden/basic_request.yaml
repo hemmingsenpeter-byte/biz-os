@@ -5,7 +5,7 @@ input:
     summary: Request about opening hours
     payload:
       request_id: 0190f0e0-0000-7000-8000-000000000001
-      channel: mail
+      channel: desk
       subject: Opening hours
       body: When are you open on public holidays?
 expect:

@@ -1,0 +1,9 @@
+name: booking
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [calendar] }
+tools:
+  - { name: booking.offer_slots, side_effect: read, description: Offer free calendar slots }
+  - { name: booking.book, side_effect: external, description: Book a calendar event once per idempotency key }
+publishes: [meeting.booked]
+consumes: []
+screens: []

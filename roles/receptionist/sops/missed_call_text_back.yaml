@@ -1,0 +1,24 @@
+name: missed_call_text_back
+trigger: enquiry.received
+when: "{{packet.payload.text_back}} == yes"
+goal_key: enquiry_response_minutes
+task: { kind: text_back, title: "Text back {{packet.payload.contact}}" }
+steps:
+  - id: enquiry
+    kind: tool
+    tool: intake.create_enquiry
+    args: { enquiry_id: "{{packet.payload.enquiry_id}}" }
+  - id: text_back
+    kind: tool
+    tool: intake.text_back
+    decision_type: missed_call_text_back
+    args: { to: "{{packet.payload.contact}}" }
+  - id: done
+    kind: publish
+    packet: message.sent
+    summary: "Text-back sent to {{packet.payload.contact}}"
+    payload:
+      message_id: "{{steps.text_back.output.message_id}}"
+      channel: sms
+      to: "{{packet.payload.contact}}"
+      body: "{{steps.text_back.output.body}}"

@@ -1,10 +1,15 @@
-# M0 placeholder; real parts arrive M2+ (hive reuses the demo parts until then).
+# M2: HIVE runs the receptionist. demo_clerk/demo_desk (the M0 placeholder) are only in apps/demo.
 name: hive
 kernel: "1.x"
-capabilities: [demo_desk]
-ports: { mail: fake_mail, model_local: fake_model }  # fakes until real ports land
-roles: [demo_clerk]
-industries: [demo_trade]
+capabilities: [intake, booking]
+ports:
+  mail: mail_m365
+  telephony: telephony_twilio
+  calendar: mail_m365            # one Microsoft 365 adapter serves mail and calendar
+  model_local: model_ollama      # model chosen by M1 evals on the Mac mini
+  model_cloud: model_claude
+roles: [receptionist]
+industries: [demo_trade]         # TODO: industries/commercial_fitout replaces demo_trade
 policy: ./policy.yaml
 goals: ./goals.yaml
 seed: ./seed/

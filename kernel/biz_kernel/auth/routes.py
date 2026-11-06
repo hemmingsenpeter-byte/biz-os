@@ -82,7 +82,7 @@ class MagicVerify(BaseModel):
 
 @router.post("/magic/verify", response_model=UserOut)
 def magic_verify(body: MagicVerify, response: Response, session: DbSession) -> UserOut:
-    user_id = tokens.read_magic(body.token)
+    user_id = tokens.consume_magic(session, body.token)
     user = session.get(User, user_id) if user_id else None
     if user is None or not user.active or user.role != "staff":
         raise HTTPException(401, "invalid or expired link")
@@ -103,7 +103,7 @@ def register_begin(
     """Signed-in users add a passkey; new users present an invite token."""
     user: User | None = None
     if body.invite:
-        uid = tokens.read_invite(body.invite)
+        uid = tokens.consume_invite(session, body.invite)
         user = session.get(User, uid) if uid else None
     else:
         cookie = request.cookies.get(config.SESSION_COOKIE)

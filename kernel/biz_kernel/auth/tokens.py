@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 import uuid
 
 from itsdangerous import BadData, URLSafeTimedSerializer
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from biz_kernel.auth import config
 
@@ -14,15 +18,33 @@ def _ser(purpose: str) -> URLSafeTimedSerializer:
 
 
 def issue(purpose: str, user_id: uuid.UUID) -> str:
-    return _ser(purpose).dumps(str(user_id))
+    # The nonce makes every token distinct, so single-use tokens can be burned one by one.
+    return _ser(purpose).dumps({"u": str(user_id), "n": secrets.token_hex(8)})
 
 
 def read(purpose: str, token: str, max_age: int) -> uuid.UUID | None:
     """User id from a valid, unexpired token of this purpose; otherwise None."""
     try:
-        return uuid.UUID(_ser(purpose).loads(token, max_age=max_age))
-    except (BadData, ValueError):
+        data = _ser(purpose).loads(token, max_age=max_age)
+        return uuid.UUID(data["u"] if isinstance(data, dict) else data)
+    except (BadData, ValueError, KeyError, TypeError):
         return None
+
+
+def consume(session: Session, purpose: str, token: str, max_age: int) -> uuid.UUID | None:
+    """Like read(), but a token works only once."""
+    from biz_kernel.auth.models import UsedToken
+
+    user_id = read(purpose, token, max_age)
+    if user_id is None:
+        return None
+    sha = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        with session.begin_nested():
+            session.add(UsedToken(token_sha256=sha, purpose=purpose))
+    except IntegrityError:
+        return None
+    return user_id
 
 
 def issue_session(user_id: uuid.UUID) -> str:
@@ -37,8 +59,8 @@ def issue_magic(user_id: uuid.UUID) -> str:
     return issue("magic", user_id)
 
 
-def read_magic(token: str) -> uuid.UUID | None:
-    return read("magic", token, config.MAGIC_LINK_MAX_AGE)
+def consume_magic(session: Session, token: str) -> uuid.UUID | None:
+    return consume(session, "magic", token, config.MAGIC_LINK_MAX_AGE)
 
 
 def issue_invite(user_id: uuid.UUID) -> str:
@@ -46,5 +68,5 @@ def issue_invite(user_id: uuid.UUID) -> str:
     return issue("invite", user_id)
 
 
-def read_invite(token: str) -> uuid.UUID | None:
-    return read("invite", token, config.INVITE_MAX_AGE)
+def consume_invite(session: Session, token: str) -> uuid.UUID | None:
+    return consume(session, "invite", token, config.INVITE_MAX_AGE)

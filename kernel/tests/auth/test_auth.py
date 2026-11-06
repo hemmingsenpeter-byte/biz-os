@@ -96,3 +96,28 @@ def test_login_begin_and_finish_rejects_bad_response(client, session):
     )
     assert r.status_code == 401
     assert client.get("/v1/auth/me").status_code == 401
+
+
+def test_magic_link_works_once(client, session, mail):
+    """Review finding 7: magic links can't be replayed."""
+    import re
+
+    from biz_kernel.auth.users import create_user
+
+    create_user(session, "once@example.com", "staff", "Once")
+    client.post("/v1/auth/magic/request", json={"email": "once@example.com"})
+    token = re.search(r"token=(\S+)", mail.sent[-1].body).group(1)
+    assert client.post("/v1/auth/magic/verify", json={"token": token}).status_code == 200
+    assert client.post("/v1/auth/magic/verify", json={"token": token}).status_code == 401
+
+
+def test_invite_works_once(client, session):
+    from biz_kernel.auth import tokens
+    from biz_kernel.auth.users import create_user
+
+    user = create_user(session, "new@example.com", "staff", "New")
+    invite = tokens.issue_invite(user.id)
+    first = client.post("/v1/auth/passkey/register/begin", json={"invite": invite})
+    assert first.status_code == 200
+    again = client.post("/v1/auth/passkey/register/begin", json={"invite": invite})
+    assert again.status_code == 401

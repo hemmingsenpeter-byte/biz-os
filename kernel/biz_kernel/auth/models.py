@@ -42,3 +42,12 @@ class AuthChallenge(Base):
     user_id: Mapped[uuid.UUID | None]
     challenge: Mapped[bytes] = mapped_column(LargeBinary)
     expires_at: Mapped[datetime]
+
+
+class UsedToken(Base):
+    """Single-use tokens (magic links, invites) are recorded here once redeemed."""
+
+    __tablename__ = "auth_used_tokens"
+    token_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    purpose: Mapped[str] = mapped_column(String(20))
+    used_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -291,37 +291,60 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         return est
 
     def _recheck(session: Session, est: Estimate) -> service.Totals:
-        """Re-evaluate stored totals against the policy as it is now."""
+        """Recompute an estimate from its stored lines against the policy as it is now.
+
+        Stored totals are not trusted: they must match what the stored lines give, every
+        priced line's cost must match its price-book basis, and the scope must be current."""
         pol = config.policy()
-        m = service.margin_pct(est.total_cost, est.total_price)
-        t = service.Totals(est.total_cost, est.total_price, m, True, [])
-        if est.total_price <= 0:
-            t.margin_ok = False
-            t.warnings.append("zero_total: nothing priced")
-        elif m < pol.min_margin_pct:
-            t.margin_ok = False
-            t.warnings.append(
-                f"margin_below_policy: {m}% is under the {pol.min_margin_pct}% minimum"
-            )
-        elif m < pol.target_margin_pct:
-            t.warnings.append(
-                f"margin_below_target: {m}% is under the {pol.target_margin_pct}% target"
-            )
-        if est.discount_pct > pol.max_discount_pct:
-            t.margin_ok = False
-            t.warnings.append(
-                f"discount_above_policy: {est.discount_pct}% exceeds the "
-                f"{pol.max_discount_pct}% maximum"
-            )
-        unpriced = session.scalars(
-            select(EstimateLine).where(
-                EstimateLine.estimate_id == est.id, EstimateLine.unpriced.is_(True)
-            )
+        rows = session.scalars(
+            select(EstimateLine)
+            .where(EstimateLine.estimate_id == est.id)
+            .order_by(EstimateLine.position)
         ).all()
-        for ln in unpriced:
-            t.warnings.append(f"unpriced_line: line {ln.position} ({ln.description})")
+        problems: list[str] = []
+        lines: list[service.PricedLine] = []
+        for ln in rows:
+            line_cost = service.money(ln.quantity * ln.unit_cost)
+            line_price = service.money(ln.quantity * ln.unit_price)
+            if (line_cost, line_price) != (ln.line_cost, ln.line_price):
+                problems.append(f"line_mismatch: line {ln.position} totals do not recompute")
+            if ln.quantity < 0 or ln.unit_cost < 0 or ln.unit_price < 0:
+                problems.append(f"negative_value: line {ln.position}")
+            book_cost = (ln.cost_basis or {}).get("book_unit_cost")
+            if not ln.unpriced and (book_cost is None or service.dec(book_cost) != ln.unit_cost):
+                problems.append(f"cost_basis_mismatch: line {ln.position} cost is not the book's")
+            lines.append(
+                service.PricedLine(
+                    position=ln.position,
+                    code=ln.code,
+                    description=ln.description,
+                    quantity=ln.quantity,
+                    unit=ln.unit,
+                    unit_cost=ln.unit_cost,
+                    unit_price=ln.unit_price,
+                    line_cost=line_cost,
+                    line_price=line_price,
+                    unpriced=ln.unpriced,
+                    cost_basis=ln.cost_basis,
+                )
+            )
+            if ln.unpriced:
+                problems.append(f"unpriced_line: line {ln.position} ({ln.description})")
+        try:
+            t = service.totals(lines, pol, est.contingency_pct, est.discount_pct)
+        except ValueError as e:
+            t = service.Totals(est.total_cost, est.total_price, est.margin_pct, False, [])
+            problems.append(f"negative_value: {e}")
+        if (t.total_cost, t.total_price) != (est.total_cost, est.total_price):
+            problems.append("totals_mismatch: stored totals differ from the stored lines")
+        t.warnings += problems
+        if any(not p.startswith("unpriced_line") for p in problems):
+            t.margin_ok = False
         if est.status != "current":
             t.warnings.append("estimate_superseded: a newer version exists")
+        scope = session.get(Scope, est.scope_id)
+        if scope is None or scope.status != "current":
+            t.warnings.append("scope_superseded: the estimate's scope is not current")
         return t
 
     def estimate_check(session: Session, estimate_id: str) -> dict[str, Any]:
@@ -342,8 +365,19 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         est = _estimate(session, estimate_id)
         if est.job_id != jid:
             raise LookupError(f"estimate {estimate_id} does not belong to job {job_id}")
+        if est.status != "current":
+            raise ValueError(f"estimate {estimate_id} is not current (estimate_not_current)")
         scope = session.get(Scope, est.scope_id)
-        assert scope is not None
+        if scope is None or scope.status != "current":
+            raise ValueError(
+                f"estimate {estimate_id} prices a superseded scope (scope_not_current)"
+            )
+        check = _recheck(session, est)
+        if not check.margin_ok:
+            raise ValueError(
+                f"estimate {estimate_id} fails the margin policy (margin_not_ok): "
+                + "; ".join(check.warnings)
+            )
         lines = session.scalars(
             select(EstimateLine)
             .where(EstimateLine.estimate_id == est.id)
@@ -400,7 +434,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
     ) -> dict[str, Any]:
         jid = _uid(job_id, "job_id")
         pol = config.policy()
-        priced, warnings = service.price_lines(session, lines)
+        priced, warnings = service.price_lines(session, lines, allow_credit=True)
         disc = service.dec(discount_pct)
         t = service.totals(priced, pol, Decimal(0), disc)
         t.warnings = warnings + t.warnings

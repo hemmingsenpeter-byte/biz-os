@@ -102,6 +102,7 @@ def test_register_takes_gate_config_and_tools_declared() -> None:
         assert sorted(reg.tools) == [
             "comms.classify_reply",
             "comms.draft",
+            "comms.match_reply",
             "comms.opt_out",
             "comms.queue",
             "comms.read_thread",
@@ -256,14 +257,25 @@ def test_reply_token_is_added_only_on_the_wire(session) -> None:  # type: ignore
 
 
 def test_match_reply_needs_token_and_same_sender(session) -> None:  # type: ignore[no-untyped-def]
-    from biz_cap_intake.web import match_reply
+    from types import SimpleNamespace
 
-    _msg_id, row = _sent_with_slots(session, _tools())
+    from biz_cap_intake import web
+
+    reg = _tools()
+    rt = SimpleNamespace(registry=reg, policy=None)  # a read tool never reaches policy
+    _msg_id, row = _sent_with_slots(session, reg)
     subj = f"Re: Times [ref:{row.reply_token}]"
-    assert match_reply(session, " A@X.org ", subj)["message_id"] == str(row.id)
-    assert match_reply(session, "evil@x.org", subj) is None
-    assert match_reply(session, "a@x.org", "Re: Times") is None
-    assert match_reply(session, "a@x.org", "Re: [ref:deadbeef00]") is None
+    assert web.match_reply(rt, session, " A@X.org ", subj)["message_id"] == str(row.id)
+    assert web.match_reply(rt, session, "evil@x.org", subj) is None
+    assert web.match_reply(rt, session, "a@x.org", "Re: Times") is None
+    assert web.match_reply(rt, session, "a@x.org", "Re: [ref:deadbeef00]") is None
+    # intake goes through the published tool, never the comms tables
+    assert (
+        web.match_reply(SimpleNamespace(registry=ToolRegistry()), session, "a@x.org", subj) is None
+    )
+    tool = reg.get("comms.match_reply")
+    assert tool.side_effect.value == "read"
+    assert tool.fn(session=session, reply_token="", sender="a@x.org")["matched"] is False
 
 
 def _resolve(session, reg, msg_id, text="the first", **kw):  # type: ignore[no-untyped-def]
@@ -280,17 +292,19 @@ def _resolve(session, reg, msg_id, text="the first", **kw):  # type: ignore[no-u
 
 def test_expired_token_does_not_match_or_resolve(session) -> None:  # type: ignore[no-untyped-def]
     from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
 
     from biz_cap_intake.web import match_reply
 
     reg = _tools()
+    rt = SimpleNamespace(registry=reg, policy=None)
     msg_id, row = _sent_with_slots(session, reg)
     assert row.reply_expires_at is not None
     subj = f"Re: Times [ref:{row.reply_token}]"
-    assert match_reply(session, "a@x.org", subj) is not None
+    assert match_reply(rt, session, "a@x.org", subj) is not None
     row.reply_expires_at = datetime.now(UTC) - timedelta(minutes=1)
     session.flush()
-    assert match_reply(session, "a@x.org", subj) is None
+    assert match_reply(rt, session, "a@x.org", subj) is None
     out = _resolve(session, reg, msg_id)
     assert out["action"] == "escalate" and "expired" in out["reason"]
 

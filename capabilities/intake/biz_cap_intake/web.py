@@ -11,10 +11,9 @@ import os
 import re
 import time
 from collections import deque
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 from typing import Any
 
-import sqlalchemy as sa
 from biz_kernel import db
 from biz_kernel.auth.deps import DbSession
 from fastapi import APIRouter, HTTPException, Request
@@ -186,38 +185,28 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
 _REF = re.compile(r"\[ref:([0-9a-f]{6,24})\]", re.I)
 
 
-def match_reply(session: Any, sender: str, subject: str) -> dict[str, Any] | None:
+MATCH_REPLY = "comms.match_reply"
+
+
+def match_reply(rt: Any, session: Any, sender: str, subject: str) -> dict[str, Any] | None:
     """Our sent message this mail replies to, found by the [ref:...] token in the subject.
 
-    The sender must be the address we wrote to (normalised); otherwise it is not a reply to
-    that thread, so someone else cannot hijack it. Reads the comms outbox by SQL: capabilities
-    never import each other.
+    Asks the published comms tool (capabilities never reach into each other's tables); the
+    tool matches only when the sender is the address we wrote to. Without comms, no match.
     """
     ref = _REF.search(subject)
-    if ref is None:
+    if ref is None or MATCH_REPLY not in rt.registry.tools:
         return None
-    row = (
-        session.execute(
-            sa.text(
-                'select id, "to", expected_to, party_id, meta from cap_comms_outbox '
-                "where reply_token = :t and channel = 'mail' and status = 'sent' "
-                "and (reply_expires_at is null or reply_expires_at > :now)"
-            ),
-            {"t": ref.group(1).lower(), "now": datetime.now(UTC)},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
+    out = rt.registry.call(
+        session,
+        rt.policy,
+        actor="intake",
+        name=MATCH_REPLY,
+        args={"reply_token": ref.group(1).lower(), "sender": service.normalize_address(sender)},
+    ).output
+    if not out or not out.get("matched"):
         return None
-    want = service.normalize_address(row["expected_to"] or row["to"])
-    if service.normalize_address(sender) != want:
-        return None
-    return {
-        "message_id": str(row["id"]),
-        "party_id": str(row["party_id"] or ""),
-        "enquiry_id": str((row["meta"] or {}).get("enquiry_id") or ""),
-    }
+    return {k: str(out.get(k) or "") for k in ("message_id", "party_id", "enquiry_id")}
 
 
 def sender_verified(m: Any) -> bool:
@@ -276,15 +265,10 @@ def poll_mail(rt: Any) -> int:
     new = 0
     with db.session_scope() as s:
         latest = since
-        has_outbox = sa.inspect(s.connection()).has_table("cap_comms_outbox")
         for m in sorted(messages, key=lambda m: m.received_at):
             try:
                 with s.begin_nested():
-                    thread = (
-                        match_reply(s, str(m.sender or ""), str(m.subject or ""))
-                        if has_outbox
-                        else None
-                    )
+                    thread = match_reply(rt, s, str(m.sender or ""), str(m.subject or ""))
                     if thread is not None:
                         receive_reply(s, rt, m, thread)
                         at = (

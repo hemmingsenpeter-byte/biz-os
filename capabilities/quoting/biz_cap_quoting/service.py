@@ -68,14 +68,29 @@ class Totals:
     warnings: list[str] = field(default_factory=list)
 
 
-def price_lines(session: Session, raw: list[dict[str, Any]]) -> tuple[list[PricedLine], list[str]]:
-    """Resolve lines against the price book. A line needs a book code or `unpriced: true`."""
+def _non_negative(value: Decimal, what: str) -> Decimal:
+    if value < 0:
+        raise ValueError(f"{what} must not be negative (negative_value): {value}")
+    return value
+
+
+def price_lines(
+    session: Session, raw: list[dict[str, Any]], *, allow_credit: bool = False
+) -> tuple[list[PricedLine], list[str]]:
+    """Resolve lines against the price book. A line needs a book code or `unpriced: true`.
+
+    Costs on book lines always come from the price book: a caller-supplied `unit_cost` is
+    never trusted. Prices may be overridden (with a warning); the margin check guards them.
+    Negative costs and prices are refused; negative quantities only when `allow_credit`
+    (removed work in a variation)."""
     out: list[PricedLine] = []
     warnings: list[str] = []
     for i, ln in enumerate(raw, start=1):
         code = ln.get("code") or None
         desc = str(ln.get("description") or (code or ""))
         qty = dec(ln["quantity"])
+        if not allow_credit:
+            _non_negative(qty, f"line {i}: quantity")
         unpriced = bool(ln.get("unpriced"))
         item = session.get(PriceItem, code) if code else None
         if code and item is None and not unpriced:
@@ -86,11 +101,21 @@ def price_lines(session: Session, raw: list[dict[str, Any]]) -> tuple[list[Price
             raise ValueError(
                 f"line {i}: needs a price-book code or unpriced=true (unknown_trade_item)"
             )
+        given_cost = ln.get("unit_cost")
+        given_price = ln.get("unit_price")
+        if given_cost is not None:
+            _non_negative(dec(given_cost), f"line {i}: unit_cost")
+        if given_price is not None:
+            _non_negative(dec(given_price), f"line {i}: unit_price")
         basis: dict[str, Any]
         if item is not None:
-            cost = dec(ln["unit_cost"]) if ln.get("unit_cost") is not None else item.unit_cost
-            price = dec(ln["unit_price"]) if ln.get("unit_price") is not None else item.unit_price
-            overridden = cost != item.unit_cost or price != item.unit_price
+            cost = item.unit_cost
+            if given_cost is not None and dec(given_cost) != item.unit_cost:
+                warnings.append(
+                    f"cost_override_ignored: line {i} ({code}) cost taken from the price book"
+                )
+            price = dec(given_price) if given_price is not None else item.unit_price
+            overridden = price != item.unit_price
             if overridden:
                 warnings.append(f"price_override: line {i} ({code}) differs from the price book")
             basis = {
@@ -102,8 +127,8 @@ def price_lines(session: Session, raw: list[dict[str, Any]]) -> tuple[list[Price
             }
             unit = str(ln.get("unit") or item.unit)
         else:
-            cost = dec(ln.get("unit_cost") or 0)
-            price = dec(ln.get("unit_price") or 0)
+            cost = dec(given_cost or 0)
+            price = dec(given_price or 0)
             basis = {"source": "unpriced", "code": code}
             warnings.append(f"unpriced_line: line {i} ({desc}) has no price-book basis")
             unit = str(ln.get("unit") or "")
@@ -118,7 +143,7 @@ def price_lines(session: Session, raw: list[dict[str, Any]]) -> tuple[list[Price
                 unit_price=price,
                 line_cost=money(qty * cost),
                 line_price=money(qty * price),
-                unpriced=unpriced and item is None,
+                unpriced=item is None,
                 cost_basis=basis,
             )
         )
@@ -131,7 +156,13 @@ def totals(
     contingency_pct: Decimal = Decimal(0),
     discount_pct: Decimal = Decimal(0),
 ) -> Totals:
-    """Contingency raises cost and price alike (margin unchanged); discount cuts price only."""
+    """Contingency raises cost and price alike (margin unchanged); discount cuts price only.
+
+    Any unpriced line makes `margin_ok` false: its cost is unknown, so the margin is too."""
+    _non_negative(contingency_pct, "contingency_pct")
+    _non_negative(discount_pct, "discount_pct")
+    if discount_pct >= HUNDRED:
+        raise ValueError(f"discount_pct must be under 100 (negative_value): {discount_pct}")
     cost = sum((ln.line_cost for ln in lines), Decimal(0))
     price = sum((ln.line_price for ln in lines), Decimal(0))
     if contingency_pct:
@@ -156,6 +187,12 @@ def totals(
         ok = False
         warnings.append(
             f"discount_above_policy: {discount_pct}% exceeds the {policy.max_discount_pct}% maximum"
+        )
+    n_unpriced = sum(1 for ln in lines if ln.unpriced)
+    if n_unpriced:
+        ok = False
+        warnings.append(
+            f"unpriced_blocks_margin: {n_unpriced} unpriced line(s); margin cannot be confirmed"
         )
     return Totals(cost, price, m, ok, warnings)
 

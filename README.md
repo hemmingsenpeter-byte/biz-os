@@ -20,7 +20,8 @@ Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. 
 | Milestone | State |
 | --- | --- |
 | M0 Kernel and demo app | Built. Acceptance passes in `apps/demo` and `apps/hive`. Mac mini deploy not yet run (see `deploy/README.md`) |
-| M1 Models, memory, evaluation | In progress |
+| M1 Models, memory, evaluation | Built and tested against fakes and mocked HTTP. Needs Ollama on the Mac mini for real local evals, and real HIVE material for `apps/hive/memory/` (currently placeholders) |
+| M2 Intake and Receptionist | In progress |
 
 ## How a role runs
 

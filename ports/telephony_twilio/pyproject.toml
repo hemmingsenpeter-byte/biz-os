@@ -3,7 +3,7 @@ name = "biz-port-telephony-twilio"
 version = "1.0.0"
 description = "Twilio SMS and voice webhooks adapter"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel", "twilio>=9"]
+dependencies = ["biz-kernel", "twilio>=9", "requests>=2.31"]
 
 [tool.uv.sources]
 biz-kernel = { workspace = true }

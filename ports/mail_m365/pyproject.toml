@@ -3,7 +3,7 @@ name = "biz-port-mail-m365"
 version = "1.0.0"
 description = "Microsoft 365 mail and calendar adapter via Microsoft Graph"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel", "msgraph-sdk>=1.0"]
+dependencies = ["biz-kernel", "httpx>=0.27"]
 
 [tool.uv.sources]
 biz-kernel = { workspace = true }

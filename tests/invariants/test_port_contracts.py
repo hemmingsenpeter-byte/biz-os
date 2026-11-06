@@ -62,3 +62,35 @@ def test_every_fake_is_mapped() -> None:
 @pytest.mark.parametrize("name", sorted(biz_port_fakes.FAKES))
 def test_fake_passes_contract_suite(name: str) -> None:
     _run(FAKE_KIND[name], biz_port_fakes.FAKES[name]())
+
+
+def _twilio() -> Any:
+    from biz_port_telephony_twilio import TwilioTelephony
+    from biz_port_telephony_twilio.testing import FakeTwilioClient
+
+    return TwilioTelephony(
+        "AC1", "tok", "+15550000", client=FakeTwilioClient(), webhook_url="https://h.example/w"
+    )
+
+
+def _m365() -> Any:
+    import httpx
+    from biz_port_mail_m365 import M365Mail
+    from biz_port_mail_m365.testing import FakeGraph
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(FakeGraph()))
+    return M365Mail("t", "c", "s", "box@example.com", http=http)
+
+
+def test_twilio_adapter_passes_contract_suite() -> None:
+    from biz_port_telephony_twilio.testing import signed_request
+
+    sample = signed_request(
+        "tok", "https://h.example/w", {"CallStatus": "busy", "From": "+1", "To": "+2"}
+    )
+    asyncio.run(suite.check_telephony_port(_twilio(), sample))
+
+
+def test_m365_adapter_passes_mail_and_calendar_suites() -> None:
+    asyncio.run(suite.check_mail_port(_m365()))
+    asyncio.run(suite.check_calendar_port(_m365()))

@@ -13,6 +13,7 @@ from biz_kernel.contracts.ports import (
     ModelPort,
     SignPort,
     SpeechPort,
+    StoragePort,
     TelephonyPort,
 )
 from biz_port_fakes import FAKES, FakeMail, FakeModel
@@ -79,6 +80,10 @@ async def test_speech():
     await suite.check_speech_port(FAKES["fake_speech"]())
 
 
+def test_storage():
+    suite.check_storage_port(FAKES["fake_storage"]())
+
+
 def test_fakes_satisfy_protocols():
     protos = {
         "fake_mail": MailPort,
@@ -88,6 +93,7 @@ def test_fakes_satisfy_protocols():
         "fake_sign": SignPort,
         "fake_model": ModelPort,
         "fake_speech": SpeechPort,
+        "fake_storage": StoragePort,
     }
     assert set(protos) == set(FAKES)
     for name, proto in protos.items():

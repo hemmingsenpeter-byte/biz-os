@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from biz_kernel.contracts.ports import (
     Signer,
     SignEvent,
     Slot,
+    StoredObject,
     TelephonyEvent,
     Transcript,
 )
@@ -132,6 +134,25 @@ class FakeSign:
         )
 
 
+class FakeStorage:
+    """In-memory content-addressed storage under fake://<sha256>."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def put(self, data: bytes, name: str, content_type: str) -> StoredObject:
+        sha = hashlib.sha256(data).hexdigest()
+        uri = f"fake://{sha}"
+        self.objects.setdefault(uri, data)
+        return StoredObject(uri=uri, sha256=sha, size=len(data))
+
+    def get(self, uri: str) -> bytes:
+        return self.objects[uri]
+
+    def exists(self, uri: str) -> bool:
+        return uri in self.objects
+
+
 def _sample(schema: dict[str, Any]) -> Any:
     """Smallest value that satisfies a simple JSON Schema."""
     if "enum" in schema:
@@ -221,4 +242,5 @@ FAKES: dict[str, type] = {
     "fake_sign": FakeSign,
     "fake_model": FakeModel,
     "fake_speech": FakeSpeech,
+    "fake_storage": FakeStorage,
 }

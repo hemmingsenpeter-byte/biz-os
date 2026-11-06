@@ -24,6 +24,7 @@ SUITE: dict[str, tuple[type, Callable[..., Any], Any]] = {
     "sign": (ports.SignPort, suite.check_sign_port, {"kind": "signed", "request_id": "r1"}),
     "model": (ports.ModelPort, suite.check_model_port, None),
     "speech": (ports.SpeechPort, suite.check_speech_port, None),
+    "storage": (ports.StoragePort, suite.check_storage_port, None),
 }
 FAKE_KIND = {f"fake_{k}": k for k in SUITE}
 
@@ -43,7 +44,9 @@ def _run(kind: str, port: Any) -> None:
     if "sample_webhook" in inspect.signature(check).parameters and sample is not None:
         asyncio.run(check(port, sample))
     else:
-        asyncio.run(check(port))
+        result = check(port)
+        if inspect.isawaitable(result):
+            asyncio.run(result)
 
 
 @pytest.mark.parametrize("proto", _protocols(), ids=lambda p: p.__name__)

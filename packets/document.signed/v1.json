@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "document.signed/v1",
+  "type": "object",
+  "required": [
+    "document_id",
+    "request_id",
+    "signed_at"
+  ],
+  "properties": {
+    "document_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "signed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "signed_document_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

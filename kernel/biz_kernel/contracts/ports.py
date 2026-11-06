@@ -26,6 +26,8 @@ __all__ = [
     "SignPort",
     "Signer",
     "SpeechPort",
+    "StoragePort",
+    "StoredObject",
     "TelephonyEvent",
     "TelephonyPort",
     "Transcript",
@@ -131,6 +133,12 @@ class SignEvent(BaseModel):
     at: datetime | None = None
 
 
+class StoredObject(BaseModel):
+    uri: str
+    sha256: str
+    size: int
+
+
 class Transcript(BaseModel):
     text: str
     language: str | None = None
@@ -208,3 +216,12 @@ class ModelPort(Protocol):
 @runtime_checkable
 class SpeechPort(Protocol):
     async def transcribe(self, audio_uri: str) -> Transcript: ...
+
+
+@runtime_checkable
+class StoragePort(Protocol):
+    """Content-addressed blob storage: putting the same bytes twice yields the same object."""
+
+    def put(self, data: bytes, name: str, content_type: str) -> StoredObject: ...
+    def get(self, uri: str) -> bytes: ...
+    def exists(self, uri: str) -> bool: ...

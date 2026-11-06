@@ -1,0 +1,10 @@
+name: documents
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [sign, storage] }
+tools:
+  - { name: documents.render, side_effect: draft, description: "Render an industry template with data to a versioned PDF document; identical inputs return the same document" }
+  - { name: documents.file, side_effect: draft, description: "Attach an already stored file to a job as a versioned document" }
+  - { name: documents.request_signature, side_effect: external, description: "Send a document for e-signature once per idempotency key; completion arrives by webhook" }
+publishes: [document.signed]
+consumes: []
+screens: []

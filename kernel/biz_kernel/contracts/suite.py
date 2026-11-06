@@ -33,6 +33,8 @@ from biz_kernel.contracts.ports import (
     SignPort,
     Slot,
     SpeechPort,
+    StoragePort,
+    StoredObject,
     TelephonyEvent,
     TelephonyPort,
     Transcript,
@@ -131,3 +133,18 @@ async def check_calendar_port(port: CalendarPort) -> None:
     assert ref1 == ref2, "same key must not book twice"
     after = await port.free_slots(start, start + timedelta(days=1), 60)
     assert first not in after, "a booked slot must no longer be free"
+
+
+def check_storage_port(port: StoragePort) -> None:
+    data = f"contract {uuid.uuid4()}".encode()
+    first = port.put(data, "doc.txt", "text/plain")
+    second = port.put(data, "other-name.txt", "text/plain")
+    assert isinstance(first, StoredObject) and first.uri, first
+    assert first.size == len(data)
+    assert len(first.sha256) == 64
+    assert first == second, "same bytes must give the same object"
+    assert port.exists(first.uri)
+    assert port.get(first.uri) == data
+    other = port.put(data + b"!", "doc.txt", "text/plain")
+    assert other.uri != first.uri and other.sha256 != first.sha256
+    assert not port.exists(first.uri + "-missing")

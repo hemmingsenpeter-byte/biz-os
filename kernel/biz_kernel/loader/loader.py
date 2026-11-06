@@ -14,9 +14,10 @@ import jsonschema
 import yaml
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import Version
-from sqlalchemy import MetaData, Table, insert
+from sqlalchemy import MetaData, Table, insert, inspect
 from sqlalchemy.engine import Engine
 
+from biz_kernel.db import utcnow, uuid7
 from biz_kernel.packets.bus import SchemaRegistry
 
 KERNEL_VERSION = "1.0.0"
@@ -471,10 +472,49 @@ def _own_tables(pack: IndustryPack, engine: Engine | None = None) -> tuple[MetaD
     return md, own
 
 
+def _audit_branch(engine: Engine, pack: IndustryPack, kind: str) -> None:
+    """Record the pack's Alembic branch label (`pack_<name>`) in the append-only audit log."""
+    from biz_kernel.audit.log import AuditEntry
+    from biz_kernel.migrations import pack_branch
+
+    if not inspect(engine).has_table(AuditEntry.__tablename__):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            insert(AuditEntry.__table__),
+            [
+                {
+                    "id": uuid7(),
+                    "at": utcnow(),
+                    "actor": "kernel.loader",
+                    "kind": kind,
+                    "subject": pack_branch(pack.name),
+                    "detail": {"pack": pack.name, "version": pack.version},
+                }
+            ],
+        )
+
+
 def install_pack(engine: Engine, pack: IndustryPack) -> list[str]:
-    """Create the pack's ext_ tables, then load fixtures/*.yaml into them."""
+    """Create the pack's ext_ tables (after the ext_ guard), record its branch, load fixtures.
+
+    A pack that ships real Alembic revisions in `<pack>/migrations/versions` (labelled
+    `pack_<name>`) is upgraded through Alembic; define()-style packs are created directly.
+    """
     md, own = _own_tables(pack, engine)
-    md.create_all(engine, tables=own)
+    versions = pack.path / "migrations" / "versions"
+    if versions.is_dir():
+        from biz_kernel import migrations
+        from biz_kernel.migrations import pack_branch
+
+        migrations.upgrade(
+            engine.url.render_as_string(hide_password=False),
+            f"{pack_branch(pack.name)}@head",
+            [versions],
+        )
+    else:
+        md.create_all(engine, tables=own)
+    _audit_branch(engine, pack, "pack.install")
     by_name = {t.name: t for t in own}
     fixtures = sorted((pack.path / "fixtures").glob("*.yaml"))
     with engine.begin() as conn:
@@ -493,4 +533,5 @@ def uninstall_pack(engine: Engine, pack: IndustryPack) -> list[str]:
     """Drop only the pack's own ext_ tables."""
     md, own = _own_tables(pack, engine)
     md.drop_all(engine, tables=own)
+    _audit_branch(engine, pack, "pack.uninstall")
     return sorted(t.name for t in own)

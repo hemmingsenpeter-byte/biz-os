@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -42,13 +44,33 @@ def load_cmd(
     typer.echo(manifest.render())
 
 
-def _port_available(name: str, root: Path) -> bool:
-    if (root / "ports" / name).is_dir():
-        return True
-    fakes = root / "ports" / "fakes"
-    return any(name in p.read_text() or p.stem == name for p in fakes.rglob("*.py")) or any(
-        d.name == name for d in fakes.rglob("*") if d.is_dir()
-    )
+def _check_port(impl: str) -> tuple[bool, str]:
+    """Fakes must be keys of biz_port_fakes.FAKES; real ports importable with a create()."""
+    if impl.startswith("fake_"):
+        try:
+            from biz_port_fakes import FAKES
+        except ImportError:
+            return False, "biz_port_fakes is not importable"
+        return (impl in FAKES), ("" if impl in FAKES else f"{impl} not in biz_port_fakes.FAKES")
+    try:
+        mod = importlib.import_module(f"biz_port_{impl}")
+    except ImportError:
+        return False, f"package biz_port_{impl} is not importable"
+    if callable(getattr(mod, "create", None)):
+        return True, ""
+    # Accept a class exposing create() (the adapter classes do this).
+    for obj in vars(mod).values():
+        if isinstance(obj, type) and callable(getattr(obj, "create", None)):
+            return True, ""
+    return False, f"biz_port_{impl} has no create()"
+
+
+def _check_capability(name: str) -> tuple[bool, str]:
+    try:
+        mod = importlib.import_module(f"biz_cap_{name}")
+    except ImportError:
+        return False, f"package biz_cap_{name} is not importable"
+    return (callable(getattr(mod, "register", None)), f"biz_cap_{name} has no register()")
 
 
 @app.command("doctor")
@@ -56,7 +78,7 @@ def doctor_cmd(
     app_dir: Path,
     repo_root: RepoRoot = None,
 ) -> None:
-    """Validate packs, ports, budgets and heartbeat cadences. Exit 1 on any failure."""
+    """Validate packs, ports, capabilities, budgets and heartbeats. Exit 1 on any failure."""
     root = repo_root or find_repo_root(app_dir)
     try:
         manifest = load_composition(app_dir, root)
@@ -76,10 +98,13 @@ def doctor_cmd(
         typer.echo(f"{'✓' if ok else '✗'} {msg}")
 
     for kind, impl in manifest.ports.items():
-        report(_port_available(impl, root), f"port {kind} -> {impl}")
-    budgets = manifest.policy.get("budgets_usd_month") or {}
+        ok, why = _check_port(impl)
+        report(ok, f"port {kind} -> {impl}" + ("" if ok else f": {why}"))
+    for cap in manifest.capabilities:
+        ok, why = _check_capability(cap)
+        report(ok, f"capability {cap}" + ("" if ok else f": {why}"))
     for r in manifest.roles:
-        report(budgets.get(r, 0) > 0, f"budget set for role {r} in policy.yaml")
+        report(manifest.role_budget(r) > 0, f"budget set for role {r}")
         cadence = manifest.roles[r].heartbeat_cadence
         try:
             parse_cadence(cadence)
@@ -88,6 +113,41 @@ def doctor_cmd(
             report(False, f"heartbeat cadence {cadence!r} for role {r} does not parse")
     if failed:
         raise typer.Exit(1)
+
+
+@app.command("migrate")
+def migrate_cmd(
+    app_dir: Path,
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Upgrade the database to head (kernel branch), after checking the composition loads."""
+    from biz_kernel import db, migrations
+
+    _load(app_dir, repo_root)
+    target = url or db.database_url()
+    migrations.upgrade(target)
+    typer.echo("✓ database is at head")
+
+
+@app.command("worker")
+def worker_cmd(app_dir: Path, repo_root: RepoRoot = None) -> None:
+    """Run the worker (migrations, DBOS, heartbeat loop) for an app directory."""
+    root = repo_root or find_repo_root(app_dir)
+    os.environ["BIZ_APP_DIR"] = str(app_dir)
+    os.environ["BIZ_REPO_ROOT"] = str(root)
+    from biz_kernel.workflows import worker
+
+    worker.main()
+
+
+# ---- biz eval: provided by biz_kernel.models.eval.cli (a Typer sub-app) -----------------
+try:
+    from biz_kernel.models.eval.cli import app as _eval_app
+
+    app.add_typer(_eval_app, name="eval")
+except ImportError:  # eval harness not installed yet
+    pass
 
 
 if __name__ == "__main__":

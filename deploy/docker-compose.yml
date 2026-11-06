@@ -7,7 +7,9 @@ x-biz-env: &biz-env
   BIZ_SECRET_KEY: ${BIZ_SECRET_KEY}
   BIZ_RP_ID: ${BIZ_RP_ID}
   BIZ_ORIGIN: ${BIZ_ORIGIN}
-  BIZ_APP: ${BIZ_APP:-/app/apps/demo}
+  BIZ_APP_DIR: ${BIZ_APP_DIR:-/app/apps/demo}
+  BIZ_REPO_ROOT: /app
+  BIZ_TICK_SECONDS: "60"
   OLLAMA_HOST: http://host.docker.internal:11434
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
@@ -43,7 +45,7 @@ services:
 
   biz-api:
     <<: *biz-service
-    command: ["uvicorn", "biz_kernel.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "biz_kernel.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/v1/health', timeout=3)"]
       interval: 30s
@@ -54,7 +56,7 @@ services:
 
   biz-worker:
     <<: *biz-service
-    # DBOS workflows, SOP runner and schedules. Module lands with the workflows milestone.
+    # Runs migrations, then DBOS workflows, SOP runner and schedules (heartbeat loop).
     command: ["python", "-m", "biz_kernel.workflows.worker"]
 
   biz-web:

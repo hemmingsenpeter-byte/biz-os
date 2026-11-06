@@ -3,7 +3,7 @@ name = "biz-cap-intake"
 version = "1.0.0"
 description = "BIZ OS intake capability"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel"]
+dependencies = ["biz-kernel", "python-multipart>=0.0.9"]
 
 [tool.uv.sources]
 biz-kernel = { workspace = true }

@@ -49,7 +49,7 @@ class RateLimiter:
 
 
 async def _payload(request: Request) -> dict[str, Any]:
-    """JSON or form body as a dict, plus `_headers` and `_url` for signature checks."""
+    """The webhook contract every TelephonyPort parses: {"form", "headers", "url"}."""
     ctype = request.headers.get("content-type", "")
     data: dict[str, Any]
     if "json" in ctype:
@@ -57,9 +57,7 @@ async def _payload(request: Request) -> dict[str, Any]:
         data = dict(body) if isinstance(body, dict) else {}
     else:
         data = {k: str(v) for k, v in (await request.form()).items()}
-    data["_headers"] = dict(request.headers)
-    data["_url"] = str(request.url)
-    return data
+    return {"form": data, "headers": dict(request.headers), "url": str(request.url)}
 
 
 def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:

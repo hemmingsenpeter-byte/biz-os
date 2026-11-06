@@ -102,7 +102,8 @@ class TwilioTelephony:
         try:
             form: Mapping[str, str] = request["form"]
             headers: Mapping[str, str] = request.get("headers", {})
-            url: str = request.get("url") or self.webhook_url or ""
+            # Twilio signs the public URL it called; behind a proxy the app sees another one.
+            url: str = self.webhook_url or request.get("url") or ""
         except (TypeError, KeyError, AttributeError) as exc:
             raise WebhookRejected("malformed request") from exc
         signature = _header(headers, "X-Twilio-Signature")
@@ -122,9 +123,9 @@ class TwilioTelephony:
                 provider_id=form["MessageSid"],
                 at=datetime.now(UTC),
             )
-        kind = "missed_call" if form.get("CallStatus") in MISSED_STATUSES else "other"
+        missed = form.get("CallStatus") in MISSED_STATUSES
         return TelephonyEvent(
-            kind=kind,
+            kind="missed_call" if missed else "other",
             from_number=sender,
             to_number=to,
             provider_id=form.get("CallSid") or form.get("MessageSid"),
@@ -133,10 +134,10 @@ class TwilioTelephony:
 
 
 def create() -> TwilioTelephony:
-    """Build from BIZ_TWILIO_SID / BIZ_TWILIO_TOKEN / BIZ_TWILIO_FROM / BIZ_PUBLIC_URL."""
+    """Build from BIZ_TWILIO_SID / BIZ_TWILIO_TOKEN / BIZ_TWILIO_FROM / BIZ_TWILIO_WEBHOOK_URL."""
     return TwilioTelephony(
         os.environ["BIZ_TWILIO_SID"],
         os.environ["BIZ_TWILIO_TOKEN"],
         os.environ["BIZ_TWILIO_FROM"],
-        webhook_url=os.environ.get("BIZ_PUBLIC_URL"),
+        webhook_url=os.environ.get("BIZ_TWILIO_WEBHOOK_URL"),  # full public URL Twilio calls
     )

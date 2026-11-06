@@ -176,6 +176,10 @@ class CalendarPort(Protocol):
     async def book(self, event: CalendarEvent, idempotency_key: str) -> ExternalRef: ...
 
 
+# Webhook contract shared by every port with parse_webhook: the capability passes
+# {"form": <body fields>, "headers": <request headers>, "url": <URL the app received>}.
+
+
 @runtime_checkable
 class TelephonyPort(Protocol):
     async def send_sms(self, to: str, body: str, idempotency_key: str) -> SendResult: ...

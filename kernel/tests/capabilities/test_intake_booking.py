@@ -135,3 +135,31 @@ def test_booking_offer_and_idempotent_book(session) -> None:  # type: ignore[no-
     first = reg.get("booking.book").fn(session=session, **args)
     again = reg.get("booking.book").fn(session=session, **args)
     assert first["meeting_id"] == again["meeting_id"] and len(cal.events) == 1
+
+
+def test_real_twilio_adapter_through_intake_route(rt, session) -> None:  # type: ignore[no-untyped-def]
+    """The intake route and the Twilio adapter agree on the webhook contract and URL."""
+    from biz_port_telephony_twilio import TwilioTelephony
+    from biz_port_telephony_twilio.testing import FakeTwilioClient
+    from twilio.request_validator import RequestValidator
+
+    public = "https://hooks.example.com/v1/intake/telephony"
+    rt.ports["telephony"] = TwilioTelephony(
+        "AC1", "secret-token", "+6490000000", client=FakeTwilioClient(), webhook_url=public
+    )
+    app = create_app()
+    mount_capability(app, "intake", build_router(rt))
+    app.dependency_overrides[get_session] = lambda: session
+    c = TestClient(app)
+    form = {"CallSid": "CA1", "CallStatus": "no-answer", "From": "+64211", "To": "+6490000000"}
+    good = RequestValidator("secret-token").compute_signature(public, form)
+    ok = c.post("/v1/intake/telephony", data=form, headers={"X-Twilio-Signature": good})
+    assert ok.status_code == 200, ok.text
+    forged = c.post(
+        "/v1/intake/telephony",
+        data={**form, "CallSid": "CA2"},
+        headers={"X-Twilio-Signature": good},
+    )
+    assert forged.status_code == 403
+    packets = session.scalars(select(Packet).where(Packet.type == "enquiry.received")).all()
+    assert len(packets) == 1 and packets[0].payload["channel"] == "phone"

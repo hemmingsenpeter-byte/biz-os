@@ -27,7 +27,8 @@ from biz_kernel.contracts.ports import (
 
 def _body(request: Any) -> dict[str, Any]:
     if isinstance(request, dict):
-        return request
+        form = request.get("form")  # the shared webhook contract: {"form", "headers", "url"}
+        return form if isinstance(form, dict) else request
     raise TypeError("fake webhooks take a dict")
 
 

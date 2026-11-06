@@ -92,7 +92,7 @@ def test_create_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "BIZ_TWILIO_SID": "AC1",
         "BIZ_TWILIO_TOKEN": TOKEN,
         "BIZ_TWILIO_FROM": "+15550000",
-        "BIZ_PUBLIC_URL": URL,
+        "BIZ_TWILIO_WEBHOOK_URL": URL,
     }.items():
         monkeypatch.setenv(k, v)
     port = create()

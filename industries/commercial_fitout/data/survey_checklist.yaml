@@ -1,0 +1,33 @@
+sections:
+  measurements:
+  - Gross floor area and net lettable area
+  - Ceiling heights, by zone
+  - Column grid and structural constraints
+  - Existing partition and door schedule
+  services:
+  - Electrical board capacity and spare ways
+  - HVAC zones and diffuser layout
+  - Fire detection, sprinklers and emergency lighting
+  - Data risers and comms room location
+  - Water and waste points
+  access:
+  - Building hours and out-of-hours rules
+  - Lift booking and size limits
+  - Lift protection requirements
+  - Parking and trade vehicle access
+  loading_dock:
+  - Dock location, height clearance and booking
+  - Dock hours and maximum stay
+  - Rubbish removal route and bin location
+  landlord_rules:
+  - Landlord approval process and lead time for design and works
+  - Approved contractor and trade lists
+  - Insurance and bond requirements
+  - Base-build standard and make-good obligations
+  - Hot work, noise and dust restrictions
+  hazards:
+  - Suspected asbestos or lead paint (age of building, any register)
+  - Live services in ceilings and floors
+  - Working at height and confined spaces
+  - Occupied floors above, below or adjacent
+  - Existing damage or defects to record before works

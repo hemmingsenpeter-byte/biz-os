@@ -1,0 +1,13 @@
+name: variation
+input:
+  packet:
+    type: variation.raised
+    summary: "Variation: extra data points"
+    payload:
+      variation_id: 0190f0e0-0000-7000-8000-0000000000b5
+      job_id: 0190f0e0-0000-7000-8000-0000000000b6
+      description: "Add six extra data points in the meeting rooms"
+expect:
+  packets_after_approval:
+    - type: variation.priced
+  evidence: ["packet:variation.priced", "approval.granted"]

@@ -1,0 +1,73 @@
+name: scope_writing
+trigger: survey.completed
+goal_key: quote_turnaround_hours
+task: { kind: scope_writing, title: "Write scope: {{packet.summary}}" }
+steps:
+  - id: draft
+    kind: draft
+    prompt: prompts/scope_writing.md
+    decision_type: scope_drafting
+    schema:
+      type: object
+      required: [areas, area_names, exclusions, assumptions, confidence]
+      properties:
+        areas:
+          type: array
+          items:
+            type: object
+            required: [name, items]
+            properties:
+              name: { type: string }
+              items:
+                type: array
+                items:
+                  type: object
+                  required: [category, description, quantity, unit]
+                  properties:
+                    category: { type: string }
+                    description: { type: string }
+                    quantity: { type: number }
+                    unit: { type: string }
+        area_names: { type: array, items: { type: string } }
+        exclusions: { type: array, items: { type: string } }
+        assumptions: { type: array, items: { type: string } }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+    inputs:
+      survey_id: "{{packet.payload.survey_id}}"
+      site_id: "{{packet.payload.site_id}}"
+      findings: "{{packet.payload.findings}}"
+  - id: scope
+    kind: tool
+    tool: quoting.scope_write
+    args:
+      job_id: "{{packet.job_id}}"
+      areas: "{{steps.draft.output.areas}}"
+      exclusions: "{{steps.draft.output.exclusions}}"
+      assumptions: "{{steps.draft.output.assumptions}}"
+  - id: render
+    kind: tool
+    tool: documents.render
+    args:
+      template: industry.scope_template
+      job_id: "{{packet.job_id}}"
+      kind: scope
+      title: "Scope of works"
+      data:
+        scope_id: "{{steps.scope.output.scope_id}}"
+        version: "{{steps.scope.output.version}}"
+        areas: "{{steps.draft.output.areas}}"
+        exclusions: "{{steps.draft.output.exclusions}}"
+        assumptions: "{{steps.draft.output.assumptions}}"
+  - id: review
+    kind: approve
+    approver: owner
+    reason: "Approve the drafted scope before it is priced"
+  - id: done
+    kind: publish
+    packet: scope.approved
+    summary: "Scope approved: {{packet.summary}}"
+    payload:
+      scope_document_id: "{{steps.scope.output.scope_id}}"
+      areas: "{{steps.draft.output.area_names}}"
+      exclusions: "{{steps.draft.output.exclusions}}"
+      assumptions: "{{steps.draft.output.assumptions}}"

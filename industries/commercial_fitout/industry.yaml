@@ -1,0 +1,17 @@
+industry: commercial_fitout
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", capabilities: [quoting] }  # + scheduling once M7 builds it
+ext_prefix: fitout
+extensions: [migrations/ext_fitout_job.py, migrations/ext_fitout_site.py]
+fills:
+  industry.scope_template: templates/scope_of_works.md
+  industry.proposal_template: templates/proposal.md
+  industry.price_book_categories: data/price_book_categories.yaml
+  industry.survey_checklist: data/survey_checklist.yaml
+  industry.safety_hazards: data/hazard_library.yaml
+  industry.lease_reading: skills/make_good.md
+  industry.glossary: data/glossary.yaml
+  industry.text_back_template: templates/text_back.txt
+  industry.reply_template: templates/reply.md
+skills: [skills/fitout_glossary.md, skills/make_good.md]
+signals: [data/signals.yaml]

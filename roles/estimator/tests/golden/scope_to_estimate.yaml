@@ -1,0 +1,14 @@
+name: scope_to_estimate
+input:
+  packet:
+    type: scope.approved
+    summary: "Scope approved: level 3 office"
+    payload:
+      scope_document_id: 0190f0e0-0000-7000-8000-0000000000b3
+      areas: ["Open plan", "Meeting rooms"]
+      exclusions: ["Furniture supply"]
+      assumptions: ["Work outside business hours"]
+expect:
+  packets_after_approval:
+    - type: estimate.ready
+  evidence: ["packet:estimate.ready", "approval.granted"]

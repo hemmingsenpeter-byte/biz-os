@@ -1,0 +1,34 @@
+hazards:
+- key: asbestos
+  name: Asbestos-containing materials
+  when: Buildings of the relevant era; ceiling tiles, lagging, floor adhesives
+  control: Obtain register or testing before strip-out; stop work if suspect material
+    found
+- key: live_services
+  name: Live electrical and data services
+  when: Strip-out of ceilings, floors and walls
+  control: Isolate and prove dead, tag and lock out
+- key: working_at_height
+  name: Working at height
+  when: Ceilings, partitions to deck, light fittings
+  control: Platforms or scaffold towers, no ladders for sustained work
+- key: dust_noise
+  name: Dust and noise in occupied buildings
+  when: Cutting, demolition, core drilling
+  control: Out-of-hours scheduling, dust barriers, notice to neighbouring tenants
+- key: manual_handling
+  name: Manual handling of glass, boards and joinery
+  when: Partition and joinery install
+  control: Mechanical aids and two-person lifts
+- key: fire_systems
+  name: Fire system impairment
+  when: Ceiling and detector works
+  control: Impairment notice, fire watch, reinstatement test
+- key: hot_work
+  name: Hot work
+  when: Cutting, welding, grinding
+  control: Hot work permit and extinguisher on hand
+- key: lift_damage
+  name: Lift and common-area damage
+  when: Deliveries and rubbish removal
+  control: Lift protection, floor protection and daily inspection

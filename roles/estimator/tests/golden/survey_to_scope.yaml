@@ -1,0 +1,13 @@
+name: survey_to_scope
+input:
+  packet:
+    type: survey.completed
+    summary: "Survey completed: level 3 office"
+    payload:
+      survey_id: 0190f0e0-0000-7000-8000-0000000000b1
+      site_id: 0190f0e0-0000-7000-8000-0000000000b2
+      findings: ["Open plan 420 m2", "Existing finishes to be removed", "Two meeting rooms required"]
+expect:
+  packets_after_approval:
+    - type: scope.approved
+  evidence: ["packet:scope.approved", "approval.granted"]

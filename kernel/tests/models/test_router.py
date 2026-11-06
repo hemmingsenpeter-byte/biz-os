@@ -99,3 +99,13 @@ def test_cost_recorded(session):
     )
     assert res.cost_usd == Decimal("0.25")
     assert book.spent(session, "x", T0) == Decimal("0.25")
+
+
+def test_high_stakes_matches_topic_or_full_task():
+    from biz_kernel.models.router import Router
+    from biz_port_fakes import FakeModel
+
+    r = Router(FakeModel(), FakeModel(), high_stakes={"pricing", "planner.weekly"})
+    assert r.pick("estimator.pricing") == "cloud"
+    assert r.pick("planner.weekly") == "cloud"
+    assert r.pick("estimator.variation_pricing") == "local"

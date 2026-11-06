@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice.received/v1",
+  "type": "object",
+  "required": ["voice_note_id", "audio_uri", "sha256"],
+  "properties": {
+    "voice_note_id": {"type": "string", "format": "uuid"},
+    "audio_uri": {"type": "string"},
+    "sha256": {"type": "string"},
+    "job_id": {"type": ["string", "null"], "format": "uuid"},
+    "duplicate": {"type": "boolean"}
+  }
+}

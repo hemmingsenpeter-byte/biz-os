@@ -1,0 +1,34 @@
+categories:
+- code: partitions
+  name: Partitions
+  description: Stud, glazed and demountable partitions, doors and frames
+- code: ceilings
+  name: Ceilings
+  description: Suspended grid, plasterboard, bulkheads, access panels
+- code: flooring
+  name: Flooring
+  description: Carpet tile, vinyl, polished concrete, floor preparation, raised floor
+- code: joinery
+  name: Joinery
+  description: Reception desks, kitchens, storage, shelving, feature joinery
+- code: electrical
+  name: Electrical
+  description: Lighting, power, switchboard works, emergency lighting, testing
+- code: data
+  name: Data and communications
+  description: Cabling, outlets, patching, comms cabinets
+- code: av
+  name: Audio visual
+  description: Meeting room displays, conferencing, control, cabling
+- code: acoustics
+  name: Acoustics
+  description: Acoustic ceilings, wall linings, seals, sound masking
+- code: signage
+  name: Signage
+  description: Wayfinding, reception and compliance signage
+- code: ffe
+  name: FF&E
+  description: Furniture, fixtures and equipment supply and install
+- code: make_good
+  name: Make good
+  description: Reinstatement of the premises to lease condition on exit

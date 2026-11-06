@@ -1,0 +1,92 @@
+name: pricing
+trigger: scope.approved
+goal_key: quote_turnaround_hours
+task: { kind: pricing, title: "Price scope: {{packet.summary}}" }
+steps:
+  - id: book
+    kind: tool
+    tool: quoting.price_book_read
+    args: {}
+  - id: draft
+    kind: draft
+    prompt: prompts/pricing.md
+    decision_type: estimate_drafting
+    schema:
+      type: object
+      required: [lines, confidence]
+      properties:
+        lines:
+          type: array
+          items:
+            type: object
+            required: [description, quantity, unit, unit_cost, unit_price]
+            properties:
+              code: { type: [string, "null"] }
+              description: { type: string }
+              quantity: { type: number }
+              unit: { type: string }
+              unit_cost: { type: number }
+              unit_price: { type: number }
+        unpriced: { type: array, items: { type: string } }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+    inputs:
+      scope_id: "{{packet.payload.scope_document_id}}"
+      areas: "{{packet.payload.areas}}"
+      exclusions: "{{packet.payload.exclusions}}"
+      assumptions: "{{packet.payload.assumptions}}"
+      price_book: "{{steps.book.output}}"
+  - id: estimate
+    kind: tool
+    tool: quoting.estimate_write
+    args:
+      job_id: "{{packet.job_id}}"
+      scope_id: "{{packet.payload.scope_document_id}}"
+      lines: "{{steps.draft.output.lines}}"
+  - id: check
+    kind: tool
+    tool: quoting.estimate_check
+    args: { estimate_id: "{{steps.estimate.output.estimate_id}}" }
+  - id: render
+    kind: tool
+    when: "{{steps.check.output.margin_ok}} == true"
+    tool: documents.render
+    args:
+      template: industry.proposal_template
+      job_id: "{{packet.job_id}}"
+      kind: estimate
+      title: "Estimate"
+      data:
+        estimate_id: "{{steps.estimate.output.estimate_id}}"
+        total_price: "{{steps.estimate.output.total_price}}"
+        margin_pct: "{{steps.estimate.output.margin_pct}}"
+        lines: "{{steps.draft.output.lines}}"
+        unpriced: "{{steps.draft.output.unpriced}}"
+        areas: "{{packet.payload.areas}}"
+        exclusions: "{{packet.payload.exclusions}}"
+        assumptions: "{{packet.payload.assumptions}}"
+  - id: review
+    kind: approve
+    when: "{{steps.check.output.margin_ok}} == true"
+    approver: owner
+    reason: "Approve the estimate before it goes to the customer"
+  - id: ready
+    kind: publish
+    when: "{{steps.check.output.margin_ok}} == true"
+    packet: estimate.ready
+    summary: "Estimate ready: {{packet.summary}}"
+    payload:
+      estimate_id: "{{steps.estimate.output.estimate_id}}"
+      document_id: "{{steps.render.output.document_id}}"
+      total_minor: "{{steps.estimate.output.total_price_minor}}"
+      currency: "{{steps.estimate.output.currency}}"
+      assumptions: "{{packet.payload.assumptions}}"
+  - id: escalate
+    kind: publish
+    when: "{{steps.check.output.margin_ok}} == false"
+    packet: escalation.raised
+    summary: "Estimate below margin policy: {{packet.summary}}"
+    payload:
+      subject: "Estimate {{steps.estimate.output.estimate_id}} is below margin policy"
+      reason: "Margin is {{steps.estimate.output.margin_pct}} percent; the owner must adjust scope or price"
+      raised_by: estimator
+      packet_id: "{{packet.id}}"

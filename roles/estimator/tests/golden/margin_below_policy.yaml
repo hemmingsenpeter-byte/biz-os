@@ -1,0 +1,15 @@
+name: margin_below_policy
+input:
+  packet:
+    type: scope.approved
+    summary: "Scope approved: thin margin job"
+    payload:
+      scope_document_id: 0190f0e0-0000-7000-8000-0000000000b4
+      areas: ["Open plan"]
+      exclusions: []
+      assumptions: []
+  tool_overrides:
+    quoting.estimate_check: { margin_ok: false, warnings: ["margin below policy floor"] }
+expect:
+  packets: [{ type: escalation.raised }]
+  no_packets: [estimate.ready]

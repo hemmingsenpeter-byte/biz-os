@@ -1,0 +1,48 @@
+signals:
+- key: relocation
+  description: Client is relocating offices
+  keywords:
+  - relocating
+  - moving office
+  - new premises
+  - moving to
+- key: new_lease
+  description: New lease signed or being negotiated
+  keywords:
+  - new lease
+  - lease signed
+  - heads of agreement
+  - fit-out contribution
+  - incentive
+- key: lease_expiry
+  description: Lease expiry approaching
+  keywords:
+  - lease expires
+  - lease expiry
+  - lease end
+  - expiring lease
+  - break option
+- key: make_good
+  description: Make-good or reinstatement obligation
+  keywords:
+  - make good
+  - make-good
+  - reinstatement
+  - handback
+  - hand back
+- key: expansion
+  description: Headcount growth or extra floor
+  keywords:
+  - expanding
+  - growing team
+  - extra floor
+  - additional space
+  - more desks
+- key: tender
+  description: Tender or request for pricing
+  keywords:
+  - tender
+  - rfp
+  - request for proposal
+  - rft
+  - invitation to quote

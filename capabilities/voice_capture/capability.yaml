@@ -1,0 +1,18 @@
+name: voice_capture
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [speech] }
+tools:
+  - { name: voice.transcribe, side_effect: draft, description: "Transcribe a stored audio file by uri via the speech port; idempotent on the audio sha256" }
+  - { name: voice.match_job, side_effect: read, description: "Top 3 candidate jobs for a transcript by site label, party name and job kind tokens; never guesses silently" }
+  - { name: voice.file_note, side_effect: draft, description: "Write a kernel Note (source=voice) and Task rows for extracted action items to a job" }
+publishes: [voice.received, note.captured]
+consumes: []
+screens: []
+# Owner-only upload: biz_cap_voice_capture.owner_routes(rt) -> APIRouter, to be mounted under /v1
+# (POST /v1/voice_capture/upload, multipart `file`, optional `job_id`). Needs BIZ_STORAGE_ROOT.
+#
+# Transcripts are UNTRUSTED text. They reach a model only through an SOP `draft` step, where the
+# router fences them in <untrusted>. Sample extraction schema for that draft step (see README.md):
+#   { job_hint: string, summary: string,
+#     action_items: [{ title: string, due: string|null, assignee: string|null }],
+#     issues: [string], measurements: [string] }

@@ -89,7 +89,9 @@ class Router:
         if tier_hint:
             return tier_hint
         default = self.task_tiers.get(task, "local")  # rule 1
-        if task in self.high_stakes and self.cloud is not None:  # rule 2
+        # rule 2: the list may name the full task ("estimator.pricing") or the topic ("pricing")
+        topic = task.rsplit(".", 1)[-1]
+        if (task in self.high_stakes or topic in self.high_stakes) and self.cloud is not None:
             return "cloud"
         return default
 

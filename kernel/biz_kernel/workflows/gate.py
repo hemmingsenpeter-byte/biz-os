@@ -57,6 +57,7 @@ class KernelGate:
         allow_list: set[str],
         decision_type: str | None,
     ) -> dict[str, Any]:
+        """Run or stage a tool call. BudgetExceeded and PolicyDenied propagate to the caller."""
         if tool not in allow_list:
             raise PermissionError(f"{actor} may not call {tool}")
         res = staged.run_or_stage(
@@ -77,6 +78,7 @@ class KernelGate:
         return str(staged.stage(session, action, approver, reason).id)
 
     def execute(self, session: Session, op_id: str) -> Any:
+        """Run an approved op. BudgetExceeded propagates (op stays approved, unexecuted)."""
         try:
             res = staged.execute(session, uuid.UUID(op_id), self.registry, self.policy)
         except staged.AlreadyExecuted as done:

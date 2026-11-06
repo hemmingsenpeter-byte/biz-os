@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 import jsonschema
 from sqlalchemy.orm import Session
 
+from biz_kernel import db
 from biz_kernel.audit.log import record
+from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
 from biz_kernel.policy.types import GATED, Action, Allow, Decision, SideEffect
 
 
@@ -23,6 +26,10 @@ class Tool:
     description: str = ""
     inner: tuple[str, ...] = ()  # tools a composite tool calls (strictest-gate rule)
     wants_actor: bool = False  # fn also receives the verified caller as `actor=`
+    cost_usd: float | Callable[[dict[str, Any]], float] = 0  # per-call price, maybe from args
+
+    def cost_for(self, args: dict[str, Any]) -> float:
+        return float(self.cost_usd(args) if callable(self.cost_usd) else self.cost_usd)
 
 
 class PolicyChecker(Protocol):
@@ -46,6 +53,8 @@ class NotAllowed(PermissionError):
 @dataclass
 class ToolRegistry:
     tools: dict[str, Tool] = field(default_factory=dict)
+    budgets: BudgetBook | None = None  # set => paid tools are checked and charged per actor
+    now: Callable[[], datetime] = db.utcnow
 
     def register(self, tool: Tool) -> None:
         if tool.name in self.tools:
@@ -85,6 +94,16 @@ class ToolRegistry:
             raise NotAllowed(f"{actor} may not call {name}")
         tool = self.get(name)
         jsonschema.validate(args, tool.schema)
+        cost = tool.cost_for(args)
+        metered = cost > 0 and self.budgets is not None
+        if metered:  # approval never bypasses the budget: checked before policy and execution
+            assert self.budgets is not None
+            if not self.budgets.can_spend(session, actor, self.now()):
+                raise BudgetExceeded(
+                    actor,
+                    self.budgets.spent(session, actor, self.now()),
+                    self.budgets.limits[actor],
+                )
         decision: Decision = Allow("ungated")
         if tool.side_effect in GATED or tool.inner:
             action = Action(
@@ -111,5 +130,8 @@ class ToolRegistry:
             raise ValueError("`actor` is set by the kernel, never by the caller")
         extra = {"actor": actor} if tool.wants_actor else {}
         output = tool.fn(session=session, **extra, **args)
+        if metered:
+            assert self.budgets is not None
+            self.budgets.charge(session, actor, cost, "tool", name, self.now())
         record(session, actor, "tool_call", name, args=args)
         return CallResult(decision, output)

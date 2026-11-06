@@ -226,6 +226,7 @@ def build_runtime(
     policy = PolicyEngine(manifest.policy, registry)
     bus = Bus(manifest.registry)
     budgets = BudgetBook({r: manifest.role_budget(r) for r in manifest.roles})
+    registry.budgets = budgets  # paid tool calls are checked and charged per role
     task_tiers: dict[str, Any] = {}
     for role in manifest.roles.values():
         for topic, tier in role.model_tier.items():

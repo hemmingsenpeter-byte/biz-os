@@ -199,7 +199,9 @@ def test_versioning_supersedes_never_overwrites(call: Any, session: Session) -> 
         in call("estimate_check", estimate_id=e1["estimate_id"])["warnings"]
     )
 
-    p1 = call("proposal_build", job_id=JOB, estimate_id=e1["estimate_id"])
+    with pytest.raises(ValueError, match="estimate_not_current"):
+        call("proposal_build", job_id=JOB, estimate_id=e1["estimate_id"])
+    p1 = call("proposal_build", job_id=JOB, estimate_id=e2["estimate_id"])
     p2 = call("proposal_build", job_id=JOB, estimate_id=e2["estimate_id"], valid_days=14)
     assert (p1["version"], p2["version"]) == (1, 2)
     assert session.get(Proposal, uuid.UUID(p1["proposal_id"])).status == "superseded"  # type: ignore[union-attr]
@@ -273,3 +275,150 @@ def test_defaults_when_unbound() -> None:
     config.bind(None)
     p = config.policy()
     assert p.currency == config.DEFAULT_CURRENCY and p.min_margin_pct == Decimal(10)
+
+
+# --- Margin bypasses: book costs, no negatives, unpriced blocks, checks recompute
+
+
+def test_model_cost_is_never_trusted(call: Any) -> None:
+    call("price_book_import", rows=ROWS, source="t")
+    r = call(
+        "estimate_write",
+        job_id=JOB,
+        scope_id=_scope(call),
+        lines=[{"code": "A1", "quantity": 10, "unit_cost": "1.00", "unit_price": "11.00"}],
+    )
+    assert r["total_cost"] == "100.00"  # book cost, not the 1.00 supplied
+    assert not r["margin_ok"]
+    assert any(w.startswith("cost_override_ignored") for w in r["warnings"])
+
+
+@pytest.mark.parametrize(
+    ("line", "extra"),
+    [
+        ({"code": "A1", "quantity": -10}, {}),
+        ({"code": "A1", "quantity": 10, "unit_price": "-15"}, {}),
+        ({"code": "A1", "quantity": 10, "unit_cost": "-5"}, {}),
+        ({"description": "x", "quantity": 1, "unit_cost": -50, "unpriced": True}, {}),
+        ({"code": "A1", "quantity": 10}, {"discount_pct": -20}),
+        ({"code": "A1", "quantity": 10}, {"contingency_pct": -50}),
+        ({"code": "A1", "quantity": 10}, {"discount_pct": 100}),
+    ],
+)
+def test_negative_values_refused(call: Any, line: dict[str, Any], extra: dict[str, Any]) -> None:
+    call("price_book_import", rows=ROWS, source="t")
+    with pytest.raises(ValueError, match="negative_value"):
+        call("estimate_write", job_id=JOB, scope_id=_scope(call), lines=[line], **extra)
+
+
+def test_negative_quantity_hides_low_margin_refused(call: Any) -> None:
+    """A negative cheap line could lift a loss-making estimate over the margin bar."""
+    call("price_book_import", rows=ROWS, source="t")
+    with pytest.raises(ValueError, match="negative_value"):
+        call(
+            "estimate_write",
+            job_id=JOB,
+            scope_id=_scope(call),
+            lines=[
+                {"code": "A1", "quantity": 10, "unit_price": "10.50"},
+                {"code": "B1", "quantity": -30, "unit_price": "0"},
+            ],
+        )
+
+
+def test_unpriced_line_blocks_margin(call: Any) -> None:
+    call("price_book_import", rows=ROWS, source="t")
+    r = call(
+        "estimate_write",
+        job_id=JOB,
+        scope_id=_scope(call),
+        lines=[
+            {"code": "A1", "quantity": 10},
+            {"description": "Big unknown", "quantity": 1, "unit_price": 0, "unpriced": True},
+        ],
+    )
+    assert r["margin_pct"] == 33.33 and not r["margin_ok"]
+    assert any(w.startswith("unpriced_blocks_margin") for w in r["warnings"])
+    assert not call("estimate_check", estimate_id=r["estimate_id"])["margin_ok"]
+    with pytest.raises(ValueError, match="margin_not_ok"):
+        call("proposal_build", job_id=JOB, estimate_id=r["estimate_id"])
+
+
+def test_unpriced_variation_escalates(call: Any) -> None:
+    call("price_book_import", rows=ROWS, source="t")
+    r = call(
+        "variation_price",
+        job_id=JOB,
+        description="extra",
+        lines=[
+            {"code": "A1", "quantity": 4},
+            {"description": "?", "quantity": 1, "unpriced": True},
+        ],
+    )
+    assert not r["margin_ok"]
+    with pytest.raises(ValueError, match="negative_value"):
+        call(
+            "variation_price",
+            job_id=JOB,
+            description="x",
+            lines=[{"code": "A1", "quantity": 1, "unit_price": "-1"}],
+        )
+
+
+def test_proposal_refuses_below_margin(call: Any) -> None:
+    call("price_book_import", rows=ROWS, source="t")
+    r = call(
+        "estimate_write",
+        job_id=JOB,
+        scope_id=_scope(call),
+        lines=[{"code": "A1", "quantity": 10, "unit_price": "11.00"}],
+    )
+    with pytest.raises(ValueError, match="margin_not_ok"):
+        call("proposal_build", job_id=JOB, estimate_id=r["estimate_id"])
+
+
+def test_proposal_refuses_superseded_scope(call: Any) -> None:
+    call("price_book_import", rows=ROWS, source="t")
+    sid = _scope(call)
+    r = call("estimate_write", job_id=JOB, scope_id=sid, lines=[{"code": "A1", "quantity": 1}])
+    _scope(call)  # a newer scope supersedes the one priced
+    with pytest.raises(ValueError, match="scope_not_current"):
+        call("proposal_build", job_id=JOB, estimate_id=r["estimate_id"])
+
+
+def test_estimate_check_recomputes_from_stored_lines(call: Any, session: Session) -> None:
+    from biz_cap_quoting.models import Estimate, EstimateLine
+
+    call("price_book_import", rows=ROWS, source="t")
+    r = call(
+        "estimate_write",
+        job_id=JOB,
+        scope_id=_scope(call),
+        lines=[{"code": "A1", "quantity": 10, "unit_price": "11.00"}],
+    )
+    est = session.get(Estimate, uuid.UUID(r["estimate_id"]))
+    assert est is not None
+    est.total_cost = Decimal("10.00")  # stored totals tampered to look healthy
+    session.flush()
+    chk = call("estimate_check", estimate_id=r["estimate_id"])
+    assert not chk["margin_ok"] and chk["margin_pct"] == 9.09
+    assert any(w.startswith("totals_mismatch") for w in chk["warnings"])
+
+    r2 = call(
+        "estimate_write",
+        job_id=JOB,
+        scope_id=est.scope_id.hex,
+        lines=[{"code": "A1", "quantity": 10}],
+    )
+    line = session.scalars(
+        select(EstimateLine).where(EstimateLine.estimate_id == uuid.UUID(r2["estimate_id"]))
+    ).one()
+    line.unit_cost = Decimal("1.00")  # a line cost that is not the book's
+    line.line_cost = Decimal("10.00")
+    est2 = session.get(Estimate, uuid.UUID(r2["estimate_id"]))
+    assert est2 is not None
+    est2.total_cost = Decimal("10.00")
+    session.flush()
+    chk2 = call("estimate_check", estimate_id=r2["estimate_id"])
+    assert not chk2["margin_ok"]
+    assert any(w.startswith("cost_basis_mismatch") for w in chk2["warnings"])

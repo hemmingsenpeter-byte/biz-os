@@ -19,14 +19,14 @@ steps:
           type: array
           items:
             type: object
-            required: [description, quantity, unit, unit_cost, unit_price]
+            required: [description, quantity, unit, unit_price]
             properties:
               code: { type: [string, "null"] }
               description: { type: string }
               quantity: { type: number }
               unit: { type: string }
-              unit_cost: { type: number }
-              unit_price: { type: number }
+              unit_price: { type: number, minimum: 0 }
+              unpriced: { type: boolean }
         unpriced: { type: array, items: { type: string } }
         notes: { type: string }
         confidence: { type: number, minimum: 0, maximum: 1 }

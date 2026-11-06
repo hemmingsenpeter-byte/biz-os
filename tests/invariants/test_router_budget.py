@@ -37,3 +37,46 @@ def test_router_budget(session):
     assert not book.can_spend(session, "clerk", T0)
     n = session.scalar(select(func.count()).select_from(CostEvent))
     assert n == 3  # paid calls are recorded; a stopped role records nothing more
+
+
+def test_no_cloud_retry_once_budget_is_spent(session):
+    """Review finding 3: the budget is checked before every paid call, not once per task."""
+    import asyncio
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    import pytest
+    from biz_kernel.budgets import BudgetBook
+    from biz_kernel.models import usage
+    from biz_kernel.models.router import Router
+    from biz_port_fakes import FakeModel
+
+    t0 = datetime(2026, 3, 10, tzinfo=UTC)
+    schema = {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}
+
+    class PricedCloud(FakeModel):
+        async def structured(self, system, messages, schema, tier):  # type: ignore[no-untyped-def]
+            out = await super().structured(system, messages, schema, tier)
+            usage.report(usage.Usage(cost_usd=Decimal(4)))
+            return out
+
+    cloud = PricedCloud()
+    book = BudgetBook({"clerk": 10})
+    book.charge(session, "clerk", 8, "model", "seed", t0)
+    router = Router(FakeModel(), cloud, high_stakes={"big"}, budgets=book)
+    fails = iter([True, False])
+    with pytest.raises(ValueError):
+        asyncio.run(
+            router.generate(
+                "big",
+                "s",
+                [],
+                schema,
+                session=session,
+                role="clerk",
+                now=t0,
+                rules=[lambda out: "bad" if next(fails) else None],
+            )
+        )
+    assert len(cloud.calls) == 1
+    assert book.spent(session, "clerk", t0) == Decimal(12)  # every paid call is recorded

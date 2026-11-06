@@ -31,7 +31,7 @@ def test_budget_stops_role(session):
     with pytest.raises(BudgetExceeded):
         book.charge(session, "sales", 0.01, "model", "e", T0)
     assert _count(session) == before  # nothing recorded
-    assert book.can_spend(session, "ops", T0) or True
+    assert book.can_spend(session, "ops", T0)  # a role without a limit is unaffected
 
 
 def test_resume_by_raising_limit_or_new_month(session):

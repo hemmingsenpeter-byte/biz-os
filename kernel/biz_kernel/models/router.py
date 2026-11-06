@@ -163,7 +163,10 @@ class Router:
         last_problem: str | None = None
         best: dict[str, Any] | None = None
 
-        for _ in range(2):
+        for attempt in range(2):
+            if attempt and tier == "cloud" and not cloud_allowed():
+                result.flagged = True  # budget reached mid-task: no further paid call
+                break
             out = await call(tier)
             last_problem = problem(out)
             if last_problem is None:
@@ -185,7 +188,10 @@ class Router:
             result.escalated.append(reason)
             if session is not None:
                 record(session, role or "router", "model.escalated", task, reason=last_problem)
-            for _ in range(2):
+            for attempt in range(2):
+                if attempt and not cloud_allowed():
+                    result.flagged = True
+                    break
                 out = await call("cloud")
                 last_problem = problem(out)
                 if last_problem is None:

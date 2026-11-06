@@ -117,6 +117,13 @@ def run_heartbeat(
             log.exception("heartbeat for %s failed", w.role)
             ok, w.note = False, f"error: {exc}"
         w.status = "done"
+        session.flush()
+        if not ok:
+            # Never drop work: re-queue every reason (starting a SOP is idempotent by
+            # workflow id, so reasons that did start are not repeated). The failed run
+            # also raises a health alert.
+            for reason in list(w.reasons):
+                enqueue(session, w.role, reason, now)
         report_run(session, name, ok, now)
         ran.append(w.role)
     session.flush()

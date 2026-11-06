@@ -35,3 +35,26 @@ def test_heartbeat_coalesces(session):
         )
         == []
     )
+
+
+def test_failing_reason_does_not_drop_the_others(session):
+    """Review finding 6: a failed run re-queues its reasons instead of losing them."""
+    from datetime import UTC, datetime
+
+    from biz_kernel.budgets.service import BudgetBook
+    from biz_kernel.heartbeats.models import Wakeup
+    from biz_kernel.heartbeats.service import enqueue, run_heartbeat
+    from sqlalchemy import select
+
+    now = datetime(2026, 3, 10, 9, tzinfo=UTC)
+    enqueue(session, "clerk", "packet:A", now)
+    enqueue(session, "clerk", "packet:B", now)
+
+    def runner(role: str, reasons: list[str]) -> None:
+        for r in reasons:
+            if r == "packet:A":
+                raise RuntimeError("boom")
+
+    run_heartbeat(session, runner, BudgetBook({}), lambda s: 0, now)
+    pending = session.scalars(select(Wakeup).where(Wakeup.status == "pending")).all()
+    assert [sorted(w.reasons) for w in pending] == [["packet:A", "packet:B"]]

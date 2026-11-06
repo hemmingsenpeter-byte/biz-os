@@ -33,5 +33,8 @@ def test_shadow_threshold():
 
 
 def test_cli_help():
+    import re
+
     res = CliRunner().invoke(app, ["run", "--help"])
-    assert res.exit_code == 0 and "--tier" in res.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", res.output)  # CI terminals get colour codes
+    assert res.exit_code == 0 and "--tier" in plain

@@ -1,11 +1,10 @@
 """UPDATE or DELETE on append-only tables fails at the database, whatever the caller."""
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
-
 from biz_kernel.audit.log import APPEND_ONLY_TABLES, record
 from biz_kernel.packets.bus import Packet
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 
 def _row(session, table: str):
@@ -32,6 +31,5 @@ def test_audit_append_only(session, table, stmt):
     row_id = _row(session, table)
     if row_id is None:
         pytest.skip(f"no row to mutate in {table}")
-    with pytest.raises(DBAPIError, match="append-only"):
-        with session.begin_nested():
-            session.execute(text(stmt.format(t=table)), {"i": row_id})
+    with pytest.raises(DBAPIError, match="append-only"), session.begin_nested():
+        session.execute(text(stmt.format(t=table)), {"i": row_id})

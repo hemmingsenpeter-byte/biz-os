@@ -3,7 +3,7 @@ name = "biz-os"
 version = "0.1.0"
 description = "Modular platform for AI-run small businesses"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel", "biz-port-fakes"]
+dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk"]
 
 [dependency-groups]
 dev = [
@@ -24,11 +24,12 @@ constraint-dependencies = ["cryptography<48", "cbor2<6"]
 no-build-package = ["cryptography", "cbor2", "pydantic-core", "psycopg-binary", "orjson", "uvloop", "watchfiles", "httptools", "pyyaml", "rpds-py", "greenlet", "sqlalchemy", "markupsafe", "cffi", "numpy"]
 
 [tool.uv.workspace]
-members = ["kernel", "ports/*"]
+members = ["kernel", "ports/*", "capabilities/*"]
 
 [tool.uv.sources]
 biz-kernel = { workspace = true }
 biz-port-fakes = { workspace = true }
+biz-cap-demo-desk = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "kernel/tests"]

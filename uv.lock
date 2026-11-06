@@ -4,6 +4,7 @@ requires-python = "==3.12.*"
 
 [manifest]
 members = [
+    "biz-cap-demo-desk",
     "biz-kernel",
     "biz-os",
     "biz-port-fakes",
@@ -112,6 +113,17 @@ wheels = [
 ]
 
 [[package]]
+name = "biz-cap-demo-desk"
+version = "1.0.0"
+source = { editable = "capabilities/demo_desk" }
+dependencies = [
+    { name = "biz-kernel" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "biz-kernel", editable = "kernel" }]
+
+[[package]]
 name = "biz-kernel"
 version = "1.0.0"
 source = { editable = "kernel" }
@@ -155,6 +167,7 @@ name = "biz-os"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "biz-cap-demo-desk" },
     { name = "biz-kernel" },
     { name = "biz-port-fakes" },
 ]
@@ -173,6 +186,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "biz-cap-demo-desk", editable = "capabilities/demo_desk" },
     { name = "biz-kernel", editable = "kernel" },
     { name = "biz-port-fakes", editable = "ports/fakes" },
 ]

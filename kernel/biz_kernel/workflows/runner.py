@@ -219,7 +219,13 @@ def _begin(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, A
             )
             s.add(run)
             record(s, role, "sop.start", sop_name, run_id=run_id, packet_id=packet.id)
-        return {"packet": pkt, "steps": {}, "task_id": str(run.task_id), "goal_key": run.goal_key}
+        return {
+            "packet": pkt,
+            "steps": {},
+            "task_id": str(run.task_id),
+            "goal_key": run.goal_key,
+            "sop": sop_name,
+        }
 
 
 @DBOS.step(name="biz.sop.tool")
@@ -296,7 +302,7 @@ def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, A
     inputs = render(step.get("inputs", {}), state)
     # Drafting gets no tools, and every input is untrusted data.
     messages = [{"role": "user", "content": fence(_as_text(inputs))}]
-    task = step.get("task", f"{role}.{step['id']}")
+    task = step.get("task", f"{role}.{state.get('sop', step['id'])}")
     result = asyncio.run(c.router.generate(task, system, messages, step["schema"]))
     with db.session_scope() as s:
         if _ledger(s, run_id, step["id"]) is None:

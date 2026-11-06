@@ -1,12 +1,20 @@
-authority:
-  owner: demo_owner
-  approvers: [demo_owner]
-limits:
-  max_send_per_day: 50
-  max_spend_usd_month: 25
-hard_rules:
+# Read by kernel/biz_kernel/policy/engine.py (limits, authority, hard_rules, autonomy)
+# and by the budget book (budgets_usd_month).
+objective: Answer every service request within a working day, politely and accurately.
+notes:
   - Nothing leaves the company without a named approver.
+authority:
+  default: demo_owner
+limits:
+  max_amount: { default: 500 }
+  over_limit: deny
+hard_rules:
+  deny_tools: []
+  deny_decision_types: []
+autonomy:            # ladder level per decision type: 1 draft, 2 recommend, 3 act+report, 4 silent
+  default: 2
+  reply_drafting: 2
+  reply_sending: 2
 budgets_usd_month:
   demo_clerk: 10
-autonomy:
-  demo_clerk: { handle_request: 2 }
+high_stakes: []

@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
 from biz_kernel.api.app import create_app
 from biz_kernel.auth.deps import get_session
 from biz_port_fakes import FakeMail
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 
 @pytest.fixture(autouse=True)

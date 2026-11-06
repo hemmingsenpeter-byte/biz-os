@@ -33,30 +33,47 @@ class KernelGate:
     def __post_init__(self) -> None:
         if ACKNOWLEDGE not in self.registry.tools:
             self.registry.register(
-                Tool(ACKNOWLEDGE, "kernel", SideEffect.READ, {"type": "object"}, _acknowledge,
-                     "Placeholder for an explicit approval step")
+                Tool(
+                    ACKNOWLEDGE,
+                    "kernel",
+                    SideEffect.READ,
+                    {"type": "object"},
+                    _acknowledge,
+                    "Placeholder for an explicit approval step",
+                )
             )
 
     def accepts_idempotency(self, tool: str) -> bool:
         props = self.registry.get(tool).schema.get("properties", {})
         return "idempotency_key" in props
 
-    def call_or_stage(self, session: Session, *, actor: str, tool: str, args: dict[str, Any],
-                      allow_list: set[str], decision_type: str | None) -> dict[str, Any]:
+    def call_or_stage(
+        self,
+        session: Session,
+        *,
+        actor: str,
+        tool: str,
+        args: dict[str, Any],
+        allow_list: set[str],
+        decision_type: str | None,
+    ) -> dict[str, Any]:
         if tool not in allow_list:
             raise PermissionError(f"{actor} may not call {tool}")
-        res = staged.run_or_stage(session, self.registry, self.policy, actor, tool, args,
-                                  decision_type)
+        res = staged.run_or_stage(
+            session, self.registry, self.policy, actor, tool, args, decision_type
+        )
         if isinstance(res, StagedOperation):
             return {"status": "staged", "op_id": str(res.id)}
         if isinstance(res.decision, Deny):
             raise PolicyDenied(res.decision.reason)
         return {"status": "ran", "output": res.output}
 
-    def request(self, session: Session, *, actor: str, approver: str, reason: str,
-                subject: dict[str, Any]) -> str:
-        action = Action(actor=actor, tool=ACKNOWLEDGE, side_effect=SideEffect.READ,
-                        inputs={"subject": subject})
+    def request(
+        self, session: Session, *, actor: str, approver: str, reason: str, subject: dict[str, Any]
+    ) -> str:
+        action = Action(
+            actor=actor, tool=ACKNOWLEDGE, side_effect=SideEffect.READ, inputs={"subject": subject}
+        )
         return str(staged.stage(session, action, approver, reason).id)
 
     def execute(self, session: Session, op_id: str) -> Any:
@@ -69,8 +86,9 @@ class KernelGate:
         return res.output
 
 
-def decide(op_id: uuid.UUID, by: str, *, approve: bool, version: int | None = None,
-           reason: str = "") -> StagedOperation:
+def decide(
+    op_id: uuid.UUID, by: str, *, approve: bool, version: int | None = None, reason: str = ""
+) -> StagedOperation:
     """Owner approves or rejects a staged operation, then the waiting SOP run is woken."""
     from biz_kernel.workflows.runner import notify_decision
 

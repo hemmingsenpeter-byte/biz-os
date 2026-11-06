@@ -1,0 +1,16 @@
+[project]
+name = "biz-cap-intake"
+version = "1.0.0"
+description = "BIZ OS intake capability"
+requires-python = ">=3.12,<3.13"
+dependencies = ["biz-kernel"]
+
+[tool.uv.sources]
+biz-kernel = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["biz_cap_intake"]

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import jsonschema
 from biz_kernel.contracts.ports import (
     BillDraft,
+    CalendarEvent,
     ExternalRef,
     InboundMessage,
     InvoiceDraft,
@@ -18,6 +19,7 @@ from biz_kernel.contracts.ports import (
     SendResult,
     Signer,
     SignEvent,
+    Slot,
     TelephonyEvent,
     Transcript,
 )
@@ -188,7 +190,30 @@ class FakeSpeech:
         return Transcript(text=self.text, language="en", duration_s=1.0)
 
 
+class FakeCalendar:
+    """Working hours 09:00-17:00 UTC on weekdays, minus anything booked."""
+
+    def __init__(self) -> None:
+        self.events: dict[str, CalendarEvent] = {}
+
+    async def free_slots(self, start: datetime, end: datetime, duration_minutes: int) -> list[Slot]:
+        step = timedelta(minutes=duration_minutes)
+        cur = start.replace(minute=0, second=0, microsecond=0)
+        out: list[Slot] = []
+        while cur + step <= end:
+            busy = any(e.start < cur + step and cur < e.end for e in self.events.values())
+            if cur.weekday() < 5 and 9 <= cur.hour < 17 and cur >= start and not busy:
+                out.append(Slot(start=cur, end=cur + step))
+            cur += step
+        return out
+
+    async def book(self, event: CalendarEvent, idempotency_key: str) -> ExternalRef:
+        self.events.setdefault(idempotency_key, event)
+        return ExternalRef(system="fake_calendar", id=f"evt-{idempotency_key}")
+
+
 FAKES: dict[str, type] = {
+    "fake_calendar": FakeCalendar,
     "fake_mail": FakeMail,
     "fake_telephony": FakeTelephony,
     "fake_accounting": FakeAccounting,

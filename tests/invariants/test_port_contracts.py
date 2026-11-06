@@ -14,6 +14,7 @@ from biz_kernel.contracts import ports, suite
 # port kind -> (Protocol, suite check, sample webhook body or None). Explicit on purpose.
 SUITE: dict[str, tuple[type, Callable[..., Any], Any]] = {
     "mail": (ports.MailPort, suite.check_mail_port, None),
+    "calendar": (ports.CalendarPort, suite.check_calendar_port, None),
     "telephony": (
         ports.TelephonyPort,
         suite.check_telephony_port,

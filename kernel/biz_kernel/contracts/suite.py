@@ -16,6 +16,8 @@ import jsonschema
 from biz_kernel.contracts.ports import (
     AccountingPort,
     BillDraft,
+    CalendarEvent,
+    CalendarPort,
     ExternalRef,
     InboundMessage,
     InvoiceDraft,
@@ -29,6 +31,7 @@ from biz_kernel.contracts.ports import (
     Signer,
     SignEvent,
     SignPort,
+    Slot,
     SpeechPort,
     TelephonyEvent,
     TelephonyPort,
@@ -112,3 +115,19 @@ async def check_model_port(port: ModelPort) -> None:
 async def check_speech_port(port: SpeechPort) -> None:
     t = await port.transcribe("file:///audio.wav")
     assert isinstance(t, Transcript) and isinstance(t.text, str)
+
+
+async def check_calendar_port(port: CalendarPort) -> None:
+    start = datetime(2030, 1, 7, 0, 0, tzinfo=UTC)  # a Monday
+    slots = await port.free_slots(start, start + timedelta(days=1), 60)
+    assert slots and all(isinstance(s, Slot) for s in slots)
+    first = slots[0]
+    event = CalendarEvent(
+        title="Meeting", start=first.start, end=first.end, attendees=["a@example.com"]
+    )
+    key = f"k-{uuid.uuid4()}"
+    ref1 = await port.book(event, key)
+    ref2 = await port.book(event, key)
+    assert ref1 == ref2, "same key must not book twice"
+    after = await port.free_slots(start, start + timedelta(days=1), 60)
+    assert first not in after, "a booked slot must no longer be free"

@@ -152,6 +152,30 @@ class MailPort(Protocol):
     async def fetch_new(self, since: datetime) -> list[InboundMessage]: ...
 
 
+class Slot(BaseModel):
+    start: datetime
+    end: datetime
+
+
+class CalendarEvent(BaseModel):
+    title: str
+    start: datetime
+    end: datetime
+    attendees: list[str] = Field(default_factory=list)
+    location: str | None = None
+    body: str | None = None
+
+
+@runtime_checkable
+class CalendarPort(Protocol):
+    """Free/busy and event booking. Booking is idempotent like sends."""
+
+    async def free_slots(
+        self, start: datetime, end: datetime, duration_minutes: int
+    ) -> list[Slot]: ...
+    async def book(self, event: CalendarEvent, idempotency_key: str) -> ExternalRef: ...
+
+
 @runtime_checkable
 class TelephonyPort(Protocol):
     async def send_sms(self, to: str, body: str, idempotency_key: str) -> SendResult: ...

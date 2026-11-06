@@ -1,0 +1,16 @@
+[project]
+name = "biz-port-mail-m365"
+version = "1.0.0"
+description = "Microsoft 365 mail and calendar adapter via Microsoft Graph"
+requires-python = ">=3.12,<3.13"
+dependencies = ["biz-kernel", "msgraph-sdk>=1.0"]
+
+[tool.uv.sources]
+biz-kernel = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["biz_port_mail_m365"]

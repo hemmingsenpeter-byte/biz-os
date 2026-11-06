@@ -7,6 +7,7 @@ import pytest
 from biz_kernel.contracts import suite
 from biz_kernel.contracts.ports import (
     AccountingPort,
+    CalendarPort,
     InboundMessage,
     MailPort,
     ModelPort,
@@ -81,6 +82,7 @@ async def test_speech():
 def test_fakes_satisfy_protocols():
     protos = {
         "fake_mail": MailPort,
+        "fake_calendar": CalendarPort,
         "fake_telephony": TelephonyPort,
         "fake_accounting": AccountingPort,
         "fake_sign": SignPort,

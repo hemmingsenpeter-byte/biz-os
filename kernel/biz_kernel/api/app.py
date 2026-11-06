@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -10,6 +11,7 @@ from fastapi import APIRouter, FastAPI, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
+from biz_kernel.api import routes_approvals, routes_status, routes_suggestions
 from biz_kernel.audit.log import AuditEntry
 from biz_kernel.auth.deps import CurrentUser, DbSession, OwnerUser
 from biz_kernel.auth.routes import router as auth_router
@@ -81,10 +83,17 @@ def _v1() -> APIRouter:
             q = q.where(AuditEntry.kind == kind)
         return list(session.scalars(q))
 
-    # TODO(approvals): the approvals agent mounts GET /v1/approvals, POST
-    # /v1/approvals/{id}/decide here via `mount_capability(app, "approvals", router)`
-    # or by including its router in this function. Owner-only decisions use `owner_only`.
+    router.include_router(routes_approvals.router())
+    router.include_router(routes_suggestions.router())
+    router.include_router(routes_status.router())
     return router
+
+
+def _default_decide(*args: Any, **kwargs: Any) -> Any:
+    """Approve or reject via the gate, which wakes the waiting SOP run."""
+    from biz_kernel.workflows.gate import decide
+
+    return decide(*args, **kwargs)
 
 
 def mount_capability(app: FastAPI, name: str, router: APIRouter) -> None:
@@ -92,11 +101,18 @@ def mount_capability(app: FastAPI, name: str, router: APIRouter) -> None:
     app.include_router(router, prefix=f"/v1/{name}", tags=[name])
 
 
-def create_app(manifest: Any | None = None, mail: MailPort | None = None) -> FastAPI:
+def create_app(
+    manifest: Any | None = None,
+    mail: MailPort | None = None,
+    decide: Callable[..., Any] | None = None,
+    registry: Any | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="BIZ OS", version="1.0.0", openapi_url="/v1/openapi.json", docs_url="/v1/docs"
     )
     app.state.manifest = manifest
     app.state.mail = mail
+    app.state.registry = registry
+    app.state.decide = decide or _default_decide
     app.include_router(_v1(), prefix="/v1")
     return app

@@ -79,6 +79,20 @@ def schedule_cadence(session: Session, roles: dict[str, timedelta], now: datetim
     return woken
 
 
+def _requeue(session: Session, w: Wakeup) -> None:
+    """Budget-stopped: keep the work. Back to pending, or merged into a newer pending one."""
+    newer = session.scalar(
+        select(Wakeup).where(Wakeup.role == w.role, Wakeup.status == "pending", Wakeup.id != w.id)
+    )
+    if newer is None:
+        w.status, w.note = "pending", "waiting: budget stopped"
+        return
+    newer.reasons = [*w.reasons, *newer.reasons]
+    newer.coalesced_count += w.coalesced_count
+    newer.due_at = min(newer.due_at, w.due_at)
+    w.status, w.note = "done", "merged: budget stopped"
+
+
 def run_heartbeat(
     session: Session,
     role_runner: RoleRunner,
@@ -93,7 +107,7 @@ def run_heartbeat(
         if session.scalar(select(Schedule.id).where(Schedule.name == name)) is None:
             register_schedule(session, name, timedelta(hours=1), now)
         if not budgets.can_spend(session, w.role, now):
-            w.status, w.note = "done", "skipped: budget stopped"
+            _requeue(session, w)
             continue
         try:
             role_runner(w.role, list(w.reasons))

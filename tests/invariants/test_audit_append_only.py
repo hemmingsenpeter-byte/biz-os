@@ -15,6 +15,10 @@ def _row(session, table: str):
         session.add(p)
         session.flush()
         return p.id
+    if table == "evidence_events":
+        from biz_kernel.evidence.service import note
+
+        return note(session, "test.evidence").id
     return session.execute(text(f"SELECT id FROM {table} LIMIT 1")).scalar()
 
 

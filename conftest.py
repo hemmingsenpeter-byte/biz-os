@@ -9,7 +9,7 @@ from collections.abc import Iterator
 import pytest
 from biz_kernel import db
 from biz_kernel.models_registry import import_all_models
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -36,7 +36,12 @@ def fresh_db(pg_server) -> str:  # type: ignore[no-untyped-def]
     """A brand-new committed database (for DBOS/subprocess tests). Returns its SQLAlchemy URL."""
     name = f"biz_{uuid.uuid4().hex[:10]}"
     pg_server.psql(f"CREATE DATABASE {name};")
-    return sa_url(pg_server, name)
+    url = sa_url(pg_server, name)
+    eng = create_engine(url)
+    with eng.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    eng.dispose()
+    return url
 
 
 @pytest.fixture(scope="session")

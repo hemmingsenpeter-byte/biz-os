@@ -19,7 +19,24 @@ def test_skips_stopped_role_and_leaves_note(session):
     from sqlalchemy import select
 
     w = session.scalar(select(Wakeup).where(Wakeup.role == "sales"))
-    assert w.status == "done" and "budget" in w.note
+    assert w.status == "pending" and "budget" in w.note and w.reasons == ["x"]
+
+
+def test_work_resumes_after_raise_limit(session):
+    book = BudgetBook({"sales": 1})
+    book.charge(session, "sales", 1, "model", None, T0)
+    enqueue(session, "sales", "a", T0)
+    runs = []
+    t1 = T0 + timedelta(minutes=5)
+    assert run_heartbeat(session, lambda r, rs: runs.append(rs), book, lambda s: 0, t1) == []
+    enqueue(session, "sales", "b", t1)  # coalesces into the retained wakeup
+    assert run_heartbeat(session, lambda r, rs: runs.append(rs), book, lambda s: 0, t1) == []
+    assert runs == []
+    book.raise_limit("sales", 5)
+    t2 = T0 + timedelta(minutes=10)
+    assert run_heartbeat(session, lambda r, rs: runs.append(rs), book, lambda s: 0, t2) == ["sales"]
+    assert runs == [["a", "b"]]
+    assert run_heartbeat(session, lambda r, rs: runs.append(rs), book, lambda s: 0, t2) == []
 
 
 def test_future_wakeup_not_claimed_and_new_pending_after_claim(session):

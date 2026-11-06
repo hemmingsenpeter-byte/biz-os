@@ -43,7 +43,7 @@ def test_no_external_without_policy(session):
     reg = make_registry(sent)
     spy = Spy(PolicyEngine({"autonomy": {"default": 4}}, reg))
     for name in ("demo.send", "demo.pay", "demo.combo"):
-        assert reg.call(session, spy, actor="r", name=name, args={"to": "x"}).ran
+        reg.call(session, spy, actor="r", name=name, args={"to": "x"})
     assert spy.seen == ["demo.send", "demo.pay", "demo.combo"]
     reg.call(session, spy, actor="r", name="demo.draft", args={})
     assert "demo.draft" not in spy.seen

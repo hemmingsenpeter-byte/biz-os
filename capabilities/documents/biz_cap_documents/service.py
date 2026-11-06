@@ -50,6 +50,7 @@ def add_version(
     kind: str,
     title: str,
     template: str | None = None,
+    source_document_id: uuid.UUID | None = None,
 ) -> tuple[Document, bool]:
     """Store `data` as the next version of (job, kind, title); same content hash -> no new row."""
     prev = latest(session, job_id, kind, title)
@@ -70,7 +71,13 @@ def add_version(
     session.add(doc)
     session.flush()
     session.add(
-        Render(document_id=doc.id, content_hash=content_hash, template=template, format=fmt)
+        Render(
+            document_id=doc.id,
+            content_hash=content_hash,
+            template=template,
+            format=fmt,
+            source_document_id=source_document_id,
+        )
     )
     record(
         session,

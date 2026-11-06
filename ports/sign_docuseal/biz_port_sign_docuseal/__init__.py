@@ -2,8 +2,10 @@
 
 `request_signature` creates a submission. With a `document_loader` the document's PDF is
 uploaded (POST /api/submissions/pdf); otherwise `template_id` selects a DocuSeal template
-(POST /api/submissions). A durable ledger guards against creating two submissions (and so
-two sets of emails) for the same document and signers.
+(POST /api/submissions). A durable ledger keyed on the caller's idempotency key guards
+against two submissions (and so two sets of emails) for one request; a new key is a new
+submission. Template mode (no upload, so the signed file is not the document) must be
+enabled explicitly.
 """
 
 from __future__ import annotations
@@ -158,10 +160,12 @@ class DocuSealSign:
         template_id: int | None = None,
         document_loader: DocumentLoader | None = None,
         ledger: RequestLedger | None = None,
+        allow_template_mode: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.template_id = template_id
+        self.allow_template_mode = allow_template_mode
         self.document_loader = document_loader
         self.ledger: RequestLedger = ledger if ledger is not None else MemoryLedger()
         self._injected_http = http
@@ -184,16 +188,22 @@ class DocuSealSign:
                 "documents": [{"name": name, "file": base64.b64encode(data).decode()}],
                 "submitters": submitters,
             }
-        if self.template_id is None:
-            raise SignRequestFailed("no document loader or template_id configured")
+        if self.template_id is None or not self.allow_template_mode:
+            raise SignRequestFailed("no document loader, and template mode is not enabled")
         return "/api/submissions", {
             "template_id": self.template_id,
             "send_email": True,
             "submitters": submitters,
         }
 
-    async def request_signature(self, doc_id: uuid.UUID, signers: list[Signer]) -> ExternalRef:
-        key = _request_key(doc_id, signers)
+    async def request_signature(
+        self, doc_id: uuid.UUID, signers: list[Signer], idempotency_key: str | None = None
+    ) -> ExternalRef:
+        if idempotency_key:
+            digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
+            key = f"idem:{idempotency_key}" if len(idempotency_key) <= 150 else f"idem:{digest}"
+        else:
+            key = _request_key(doc_id, signers)
         prior = self.ledger.get(key)
         if prior is None:
             if self.ledger.claim(key):
@@ -288,6 +298,7 @@ def create() -> DocuSealSign:
         os.environ["BIZ_DOCUSEAL_API_KEY"],
         template_id=int(template) if template else None,
         document_loader=_db_loader() if os.environ.get("BIZ_STORAGE_ROOT") else None,
+        allow_template_mode=os.environ.get("BIZ_DOCUSEAL_ALLOW_TEMPLATE_MODE") == "1",
         ledger=SqlLedger(_db_engine()),
     )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from typing import Any
 
@@ -124,7 +125,10 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         who = [Signer(**s) for s in signers]
         if not who:
             raise ValueError("at least one signer is required")
-        ref = asyncio.run(sign.request_signature(doc.id, who))
+        extra: dict[str, Any] = {}
+        if "idempotency_key" in inspect.signature(sign.request_signature).parameters:
+            extra["idempotency_key"] = idempotency_key  # a new key is a new provider request
+        ref = asyncio.run(sign.request_signature(doc.id, who, **extra))
         sig = Signature(
             document_id=doc.id,
             idempotency_key=idempotency_key,

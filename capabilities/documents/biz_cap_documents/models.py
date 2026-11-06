@@ -20,6 +20,8 @@ class Render(Base):
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     template: Mapped[str | None] = mapped_column(String(500))
     format: Mapped[str] = mapped_column(String(10))  # pdf | html | file
+    # for "<kind>.signed" copies: the exact version that was signed (a reference, not supersedes)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -31,8 +33,8 @@ class Signature(Base):
     system: Mapped[str] = mapped_column(String(40))
     request_id: Mapped[str] = mapped_column(String(200), index=True)
     status: Mapped[str] = mapped_column(
-        String(12), default="requested"
-    )  # requested|signed|declined
+        String(24), default="requested"
+    )  # requested|signed_pending_copy|signed|declined
     signers: Mapped[list[Any]] = mapped_column(JSONB)
     signed_by: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     signed_document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id"))

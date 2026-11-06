@@ -57,14 +57,16 @@ SIGNERS = [Signer(name="A", email="a@example.com")]
 
 
 def test_is_a_sign_port_and_passes_contract_suite() -> None:
-    port = _port(FakeDocuSeal(), template_id=5)
+    port = _port(FakeDocuSeal(), template_id=5, allow_template_mode=True)
     assert isinstance(port, SignPort)
     asyncio.run(suite.check_sign_port(port, FORM_COMPLETED))
 
 
 def test_template_submission_request_shape() -> None:
     api = FakeDocuSeal()
-    ref = asyncio.run(_port(api, template_id=5).request_signature(uuid.uuid4(), SIGNERS))
+    ref = asyncio.run(
+        _port(api, template_id=5, allow_template_mode=True).request_signature(uuid.uuid4(), SIGNERS)
+    )
     assert (ref.system, ref.id, ref.url) == ("docuseal", "101", "https://d/s/x")
     req = api.requests[0]
     assert str(req.url) == "https://docuseal.test/api/submissions"
@@ -83,9 +85,26 @@ def test_pdf_submission_uploads_document() -> None:
     assert body["documents"][0]["name"] == "Contract" and body["documents"][0]["file"]
 
 
+def test_ledger_is_keyed_on_idempotency_key() -> None:
+    api = FakeDocuSeal()
+    port = _port(api, template_id=5, allow_template_mode=True)
+    doc = uuid.uuid4()
+    a = asyncio.run(port.request_signature(doc, SIGNERS, idempotency_key="k1"))
+    assert asyncio.run(port.request_signature(doc, SIGNERS, idempotency_key="k1")) == a
+    b = asyncio.run(port.request_signature(doc, SIGNERS, idempotency_key="k2"))
+    assert b.id != a.id and len(api.requests) == 2
+
+
+def test_template_mode_needs_explicit_enable() -> None:
+    api = FakeDocuSeal()
+    with pytest.raises(SignRequestFailed):
+        asyncio.run(_port(api, template_id=5).request_signature(uuid.uuid4(), SIGNERS))
+    assert api.requests == []
+
+
 def test_same_document_and_signers_creates_one_submission() -> None:
     api = FakeDocuSeal()
-    port = _port(api, template_id=5)
+    port = _port(api, template_id=5, allow_template_mode=True)
     doc = uuid.uuid4()
     a = asyncio.run(port.request_signature(doc, SIGNERS))
     b = asyncio.run(port.request_signature(doc, SIGNERS))
@@ -96,7 +115,7 @@ def test_same_document_and_signers_creates_one_submission() -> None:
 
 def test_error_is_retryable_and_timeout_is_uncertain() -> None:
     api = FakeDocuSeal()
-    port = _port(api, template_id=5)
+    port = _port(api, template_id=5, allow_template_mode=True)
     doc = uuid.uuid4()
     api.mode = "error"
     with pytest.raises(SignRequestFailed):

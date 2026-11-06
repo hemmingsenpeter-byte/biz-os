@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -27,8 +27,9 @@ SECRET_ENV = "BIZ_DOCUSEAL_WEBHOOK_SECRET"
 HEADER_ENV = "BIZ_DOCUSEAL_WEBHOOK_HEADER"
 DEFAULT_HEADER = "X-Docuseal-Secret"
 MAX_PDF = 25 * 1024 * 1024
+PENDING = "signed_pending_copy"
 
-Fetch = Callable[[str], bytes | None]
+Fetch = Callable[[str], Awaitable[bytes | None]]
 
 
 def secret_ok(headers: Any) -> bool:
@@ -38,19 +39,35 @@ def secret_ok(headers: Any) -> bool:
     return bool(secret) and hmac.compare_digest(given.encode(), secret.encode())
 
 
-def default_fetch(url: str) -> bytes | None:
-    """Download a signed PDF, only from the configured DocuSeal host, never following redirects."""
+async def default_fetch(url: str) -> bytes | None:
+    """Download a signed PDF, only from the configured DocuSeal host, never following redirects.
+
+    Streamed with a size cap so an oversized body is never buffered whole.
+    """
     base = os.environ.get("BIZ_DOCUSEAL_URL", "")
     if not base or urlparse(url).netloc != urlparse(base).netloc:
         log.warning("signed pdf url is not on the DocuSeal host; not fetched")
         return None
     try:
-        resp = httpx.get(url, timeout=30, follow_redirects=False)
-        resp.raise_for_status()
+        async with (
+            httpx.AsyncClient(timeout=30, follow_redirects=False) as client,
+            client.stream("GET", url) as resp,
+        ):
+            resp.raise_for_status()
+            declared = resp.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > MAX_PDF:
+                return None
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_PDF:
+                    return None
+                chunks.append(chunk)
     except httpx.HTTPError as exc:
         log.warning("signed pdf fetch failed: %s", type(exc).__name__)
         return None
-    return resp.content if len(resp.content) <= MAX_PDF else None
+    return b"".join(chunks)
 
 
 def _pdf_url(body: dict[str, Any]) -> str | None:
@@ -61,9 +78,11 @@ def _pdf_url(body: dict[str, Any]) -> str | None:
     return None
 
 
-def _store_signed(
-    session: Session, storage: Any, sig: Signature, original: Document, blob: bytes
-) -> Document:
+def _store_signed(storage: Any, session: Session, original: Document, blob: bytes) -> Document:
+    """Store the signed PDF as its own Document that references (never supersedes) the original.
+
+    The unsigned document's version chain is untouched, so "latest" does not move.
+    """
     doc, _ = service.add_version(
         session,
         storage,
@@ -73,59 +92,86 @@ def _store_signed(
         fmt="pdf",
         content_hash=service.sha256(blob),
         job_id=original.job_id,
-        kind=original.kind,
-        title=original.title,
+        kind=f"{original.kind[:53]}.signed",
+        title=f"{original.title} (signed v{original.version})",
+        source_document_id=original.id,
     )
     return doc
 
 
-def apply_event(
+def _lock(session: Session, request_id: str) -> Signature | None:
+    stmt = select(Signature).where(Signature.request_id == request_id)
+    stmt = stmt.order_by(Signature.created_at.desc()).limit(1).with_for_update()
+    return session.scalar(stmt)
+
+
+async def apply_event(
     session: Session,
     rt: Any,
     event: Any,
     pdf_url: str | None,
     fetch: Fetch,
 ) -> str:
-    """Update the signature row for an event. Returns the resulting status word."""
-    sig = session.scalar(
-        select(Signature).where(Signature.request_id == event.request_id).with_for_update()
-    )
+    """Update the signature row for an event (matched on the provider submission id).
+
+    A completed signature is "signed_pending_copy" until its PDF is stored; only then is it
+    "signed" and document.signed published. The row lock is not held across the network call.
+    """
+    sig = _lock(session, event.request_id)
     if sig is None:
         return "unknown"
-    if sig.status != "requested":
+    if sig.status not in ("requested", PENDING):
         return "duplicate"  # terminal states are final; replays change nothing
-    if event.kind == "declined":
-        sig.status, sig.resolved_at = "declined", utcnow()
-        record(session, "documents", "documents.declined", str(sig.id), request_id=sig.request_id)
-        session.flush()
-        return "declined"
-    if event.kind == "signed":
-        who = (event.signer_email or "").lower()
-        done = {str(e).lower() for e in sig.signed_by}
-        if who and who not in done:
-            sig.signed_by = [*sig.signed_by, who]
-        wanted = {str(s["email"]).lower() for s in sig.signers}
-        if not wanted <= {str(e).lower() for e in sig.signed_by}:
+    if sig.status == "requested":
+        if event.kind == "declined":
+            sig.status, sig.resolved_at = "declined", utcnow()
+            record(
+                session, "documents", "documents.declined", str(sig.id), request_id=sig.request_id
+            )
             session.flush()
-            return "progress"
-    elif event.kind != "completed":
+            return "declined"
+        if event.kind == "signed":
+            who = (event.signer_email or "").lower()
+            done = {str(e).lower() for e in sig.signed_by}
+            if who and who not in done:
+                sig.signed_by = [*sig.signed_by, who]
+            wanted = {str(s["email"]).lower() for s in sig.signers}
+            if not wanted <= {str(e).lower() for e in sig.signed_by}:
+                session.flush()
+                return "progress"
+        elif event.kind != "completed":
+            return "ignored"
+        sig.status, sig.resolved_at = PENDING, utcnow()
+    elif event.kind not in ("signed", "completed"):
         return "ignored"
+    sig_id, request_id = sig.id, sig.request_id
+    session.flush()
+    session.commit()  # release the row lock (and persist "pending") before the network call
+    blob = await fetch(pdf_url) if pdf_url else None
+    storage = rt.ports.get("storage")
+    if blob is None and storage is not None:
+        return "pending_copy"  # a later webhook carrying the PDF url finishes the job
+    sig = session.get(Signature, sig_id, with_for_update=True, populate_existing=True)
+    if sig is None or sig.status != PENDING:
+        return "duplicate"
     original = session.get(Document, sig.document_id)
     assert original is not None
+    signed: Document | None = None
+    if blob is not None and storage is not None:
+        signed = _store_signed(storage, session, original, blob)
+        sig.signed_document_id = signed.id
     sig.status, sig.resolved_at = "signed", utcnow()
-    signed_id = None
-    blob = fetch(pdf_url) if pdf_url else None
-    if blob is not None and "storage" in rt.ports:
-        signed_id = _store_signed(session, rt.ports["storage"], sig, original, blob).id
-        sig.signed_document_id = signed_id
     signed_at: datetime = event.at or utcnow()
     payload: dict[str, Any] = {
         "document_id": str(original.id),
-        "request_id": sig.request_id,
+        "request_id": request_id,
         "signed_at": signed_at.isoformat(),
     }
-    if signed_id:
-        payload["signed_document_id"] = str(signed_id)
+    evidence: dict[str, Any] = {"signature_id": str(sig_id), "request_id": request_id}
+    if signed is not None:
+        payload["signed_document_id"] = str(signed.id)
+        evidence["signed_document_sha256"] = signed.sha256
+        evidence["signed_version"] = original.version
     rt.bus.publish(
         session,
         type="document.signed",
@@ -133,8 +179,8 @@ def apply_event(
         from_part="documents",
         job_id=original.job_id,
         summary=f"{original.title} signed",
-        evidence={"signature_id": str(sig.id), "document_sha256": original.sha256},
-        idempotency_key=f"document.signed:{sig.request_id}",
+        evidence=evidence,
+        idempotency_key=f"document.signed:{request_id}",
     )
     session.flush()
     return "signed"
@@ -157,7 +203,7 @@ def build_router(rt: Any, fetch: Fetch | None = None) -> APIRouter:
         except Exception as exc:  # malformed body: say nothing about why
             log.warning("sign webhook rejected: %s", type(exc).__name__)
             raise HTTPException(403, "rejected") from exc
-        status = apply_event(session, rt, event, _pdf_url(body), get_pdf)
+        status = await apply_event(session, rt, event, _pdf_url(body), get_pdf)
         return {"status": status}
 
     return router

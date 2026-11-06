@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 import httpx
 import pytest
 from biz_cap_documents import config, render
-from biz_cap_documents.models import Signature
+from biz_cap_documents.models import Render, Signature
 from biz_cap_documents.tools import register
 from biz_cap_documents.web import apply_event, build_router
 from biz_kernel.api.app import create_app
@@ -164,7 +165,9 @@ class Api:
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         self.calls += 1
-        return httpx.Response(200, json=[{"submission_id": 501, "embed_src": "https://d/s/x"}])
+        return httpx.Response(
+            200, json=[{"submission_id": 500 + self.calls, "embed_src": "https://d/s/x"}]
+        )
 
 
 @pytest.fixture
@@ -175,6 +178,7 @@ def stack(session: Any, templates: Path) -> Any:
         "key",
         http=httpx.AsyncClient(transport=httpx.MockTransport(api)),
         template_id=1,
+        allow_template_mode=True,
     )
     storage = FakeStorage()
     reg = SchemaRegistry()
@@ -185,16 +189,23 @@ def stack(session: Any, templates: Path) -> Any:
     registry = ToolRegistry()
     register(registry, rt.ports)
     fetched: list[str] = []
+    fetched_blob: list[bytes | None] = [b"%PDF-signed"]
 
-    def fetch(url: str) -> bytes | None:
+    async def fetch(url: str) -> bytes | None:
         fetched.append(url)
-        return b"%PDF-signed"
+        return fetched_blob[0]
 
     app = create_app()
     app.include_router(build_router(rt, fetch), prefix="/webhooks")
     app.dependency_overrides[get_session] = lambda: session
     return SimpleNamespace(
-        api=api, rt=rt, reg=registry, client=TestClient(app), fetched=fetched, storage=storage
+        api=api,
+        rt=rt,
+        reg=registry,
+        client=TestClient(app),
+        fetched=fetched,
+        storage=storage,
+        blob=fetched_blob,
     )
 
 
@@ -246,10 +257,12 @@ def test_webhook_round_trip_signs_stores_pdf_and_publishes_once(stack: Any, sess
     sig = session.scalars(select(Signature)).one()
     assert sig.status == "signed" and sig.signed_document_id is not None
     signed = session.get(Document, sig.signed_document_id)
-    assert signed.version == 2 and signed.supersedes_id is not None
+    assert signed.kind == "document.signed" and signed.supersedes_id is None
     assert stack.storage.get(signed.uri) == b"%PDF-signed"
     packets = session.scalars(select(Packet).where(Packet.type == "document.signed")).all()
     assert len(packets) == 1 and packets[0].payload["document_id"] == doc["document_id"]
+    assert packets[0].evidence["signed_document_sha256"] == signed.sha256
+    assert "document_sha256" not in packets[0].evidence
     # replay: no change, no second packet, no second fetch
     assert _hook(stack.client, COMPLETED).json() == {"status": "duplicate"}
     assert _hook(
@@ -304,3 +317,152 @@ def test_multiple_signers_complete_only_when_all_signed(stack: Any, session: Any
     second = {**COMPLETED, "data": {**COMPLETED["data"], "email": "b@example.com"}}
     assert _hook(stack.client, second).json() == {"status": "signed"}
     assert apply_event  # imported for direct use by callers
+
+
+def _file(stack: Any, session: Any, blob: bytes, title: str = "Contract") -> dict[str, Any]:
+    stored = stack.storage.put(blob, "c.pdf", "application/pdf")
+    return stack.reg.get("documents.file").fn(session=session, uri=stored.uri, title=title)
+
+
+def _req(stack: Any, session: Any, doc_id: str, key: str) -> dict[str, Any]:
+    return stack.reg.get("documents.request_signature").fn(
+        session=session,
+        document_id=doc_id,
+        signers=[{"name": "A", "email": "a@example.com"}],
+        idempotency_key=key,
+    )
+
+
+def test_rerequest_after_decline_creates_new_submission_and_completes(
+    stack: Any, session: Any
+) -> None:
+    d = _file(stack, session, b"%PDF-1")
+    _req(stack, session, d["document_id"], "k1")
+    declined = {
+        "event_type": "form.declined",
+        "data": {"email": "a@example.com", "submission": {"id": 501}},
+    }
+    assert _hook(stack.client, declined).json() == {"status": "declined"}
+    second = _req(stack, session, d["document_id"], "k2")
+    assert stack.api.calls == 2 and second["request_id"] == "502"
+    done = {**COMPLETED, "data": {**COMPLETED["data"], "submission": {"id": 502}}}
+    assert _hook(stack.client, done).json() == {"status": "signed"}
+    rows = session.scalars(select(Signature).order_by(Signature.created_at)).all()
+    assert [r.status for r in rows] == ["declined", "signed"]
+
+
+def test_signed_copy_is_separate_document_and_latest_unchanged(stack: Any, session: Any) -> None:
+    v1 = _file(stack, session, b"%PDF-v1")
+    _req(stack, session, v1["document_id"], "k1")
+    v2 = _file(stack, session, b"%PDF-v2-revised")
+    assert v2["version"] == 2
+    assert _hook(stack.client, COMPLETED).json() == {"status": "signed"}
+    sig = session.scalars(select(Signature)).one()
+    signed = session.get(Document, sig.signed_document_id)
+    assert signed.kind == "document.signed" and signed.supersedes_id is None
+    assert session.get(Render, signed.id).source_document_id == uuid.UUID(v1["document_id"])
+    from biz_cap_documents import service
+
+    assert str(service.latest(session, None, "document", "Contract").id) == v2["document_id"]
+    pkt = session.scalars(select(Packet).where(Packet.type == "document.signed")).one()
+    assert pkt.evidence["signed_document_sha256"] == signed.sha256
+
+
+def test_failed_fetch_is_not_marked_signed_and_later_webhook_completes(
+    stack: Any, session: Any
+) -> None:
+    _request(stack, session)
+    stack.blob[0] = None
+    assert _hook(stack.client, COMPLETED).json() == {"status": "pending_copy"}
+    assert session.scalars(select(Signature)).one().status == "signed_pending_copy"
+    assert session.scalars(select(Packet).where(Packet.type == "document.signed")).all() == []
+    stack.blob[0] = b"%PDF-signed"
+    later = {
+        "event_type": "submission.completed",
+        "data": {"id": 501, "documents": COMPLETED["data"]["documents"]},
+    }
+    assert _hook(stack.client, later).json() == {"status": "signed"}
+    sig = session.scalars(select(Signature)).one()
+    assert sig.status == "signed" and sig.signed_document_id is not None
+    assert len(session.scalars(select(Packet).where(Packet.type == "document.signed")).all()) == 1
+
+
+def test_default_fetch_caps_size_and_checks_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from biz_cap_documents import web
+
+    monkeypatch.setenv("BIZ_DOCUSEAL_URL", "https://docuseal.test")
+    monkeypatch.setattr(web, "MAX_PDF", 10)
+    assert asyncio.run(web.default_fetch("https://evil.test/x.pdf")) is None
+    real = httpx.AsyncClient
+
+    def client(body: bytes) -> Any:
+        return lambda **kw: real(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body)), **kw
+        )
+
+    monkeypatch.setattr(web.httpx, "AsyncClient", client(b"x" * 11))
+    assert asyncio.run(web.default_fetch("https://docuseal.test/f.pdf")) is None
+    monkeypatch.setattr(web.httpx, "AsyncClient", client(b"x" * 10))
+    assert asyncio.run(web.default_fetch("https://docuseal.test/f.pdf")) == b"x" * 10
+
+
+def test_upload_path_sends_the_documents_own_bytes(session: Any, templates: Path) -> None:
+    import base64
+    import json
+
+    seen: list[httpx.Request] = []
+
+    def api(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json={"id": 9, "submitters": [{"slug": "s"}]})
+
+    storage = FakeStorage()
+
+    def loader(doc_id: uuid.UUID) -> tuple[str, bytes]:
+        d = session.get(Document, doc_id)
+        return d.title, storage.get(d.uri)
+
+    sign = DocuSealSign(
+        "https://docuseal.test",
+        "key",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(api)),
+        document_loader=loader,
+    )
+    registry = ToolRegistry()
+    register(registry, {"storage": storage, "sign": sign})
+    stored = storage.put(b"%PDF-the-real-contract", "c.pdf", "application/pdf")
+    doc = registry.get("documents.file").fn(session=session, uri=stored.uri, title="Contract")
+    out = registry.get("documents.request_signature").fn(
+        session=session,
+        document_id=doc["document_id"],
+        signers=[{"name": "A", "email": "a@example.com"}],
+        idempotency_key="up1",
+    )
+    assert out["request_id"] == "9" and seen[0].url.path == "/api/submissions/pdf"
+    sent = json.loads(seen[0].content)["documents"][0]["file"]
+    assert base64.b64decode(sent) == b"%PDF-the-real-contract"
+
+
+def test_template_mode_refused_unless_enabled(session: Any, templates: Path) -> None:
+    api = Api()
+    sign = DocuSealSign(
+        "https://docuseal.test",
+        "key",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(api)),
+        template_id=1,
+    )
+    registry = ToolRegistry()
+    storage = FakeStorage()
+    register(registry, {"storage": storage, "sign": sign})
+    stored = storage.put(b"%PDF", "c.pdf", "application/pdf")
+    doc = registry.get("documents.file").fn(session=session, uri=stored.uri, title="C")
+    with pytest.raises(Exception, match="template mode"):
+        registry.get("documents.request_signature").fn(
+            session=session,
+            document_id=doc["document_id"],
+            signers=[{"name": "A", "email": "a@example.com"}],
+            idempotency_key="t1",
+        )
+    assert api.calls == 0

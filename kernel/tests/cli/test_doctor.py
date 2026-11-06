@@ -30,7 +30,9 @@ def _broken(tmp_path: Path, edit) -> Path:  # type: ignore[no-untyped-def]
 BREAKS = [
     lambda t: t.replace("fake_mail", "fake_nonexistent"),
     lambda t: t.replace("mail: fake_mail", "mail: no_such_port"),
-    lambda t: t.replace("capabilities: [demo_desk, intake, booking]", "capabilities: [nope]"),
+    lambda t: t.replace(
+        "capabilities: [demo_desk, intake, booking, comms]", "capabilities: [nope]"
+    ),
 ]
 
 

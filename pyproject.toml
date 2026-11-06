@@ -3,7 +3,7 @@ name = "biz-os"
 version = "0.1.0"
 description = "Modular platform for AI-run small businesses"
 requires-python = ">=3.12,<3.13"
-dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk", "biz-port-model-ollama", "biz-port-model-claude", "biz-port-telephony-twilio", "biz-port-mail-m365", "biz-cap-intake", "biz-cap-booking"]
+dependencies = ["biz-kernel", "biz-port-fakes", "biz-cap-demo-desk", "biz-port-model-ollama", "biz-port-model-claude", "biz-port-telephony-twilio", "biz-port-mail-m365", "biz-cap-intake", "biz-cap-booking", "biz-cap-comms"]
 
 [dependency-groups]
 dev = [
@@ -36,6 +36,7 @@ biz-port-telephony-twilio = { workspace = true }
 biz-port-mail-m365 = { workspace = true }
 biz-cap-intake = { workspace = true }
 biz-cap-booking = { workspace = true }
+biz-cap-comms = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "kernel/tests"]

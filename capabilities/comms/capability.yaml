@@ -1,0 +1,13 @@
+name: comms
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [telephony, mail] }
+tools:
+  - { name: comms.draft, side_effect: draft, description: "Store a drafted message in the outbox; drafting itself happens in SOP steps" }
+  - { name: comms.queue, side_effect: draft, description: "Run the deterministic send gate; the message becomes queued or blocked" }
+  - { name: comms.send, side_effect: external, description: "Send a queued message once per idempotency key; uncertain results are never retried until reconciled" }
+  - { name: comms.reconcile, side_effect: read, description: "Resolve an uncertain send by asking the provider, when it can say" }
+  - { name: comms.classify_reply, side_effect: draft, description: "Deterministic opt-out and auto-reply rules before any model; flags the rest for the model" }
+  - { name: comms.opt_out, side_effect: draft, description: "Record a permanent, channel-agnostic suppression" }
+publishes: [message.queued, message.sent, reply.received, optout.recorded]
+consumes: []
+screens: []

@@ -1,6 +1,6 @@
 name: demo
 kernel: "1.x"
-capabilities: [demo_desk, intake, booking]
+capabilities: [demo_desk, intake, booking, comms]
 ports:
   mail: fake_mail
   telephony: fake_telephony

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "optout.recorded/v1",
+  "type": "object",
+  "required": [
+    "address",
+    "source"
+  ],
+  "properties": {
+    "address": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

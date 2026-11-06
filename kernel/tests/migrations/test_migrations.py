@@ -32,7 +32,7 @@ def test_upgrade_matches_metadata_and_downgrade_empties(fresh_db: str) -> None:
         trig = {
             r[0] for r in conn.execute(text("select tgname from pg_trigger where not tgisinternal"))
         }
-    assert trig == {f"{t}_append_only" for t in log.APPEND_ONLY_TABLES}
+    assert trig == {f"{t}_append_only" for t in log.APPEND_ONLY_TABLES} | {"tasks_done_guard"}
 
     with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:
         conn.execute(

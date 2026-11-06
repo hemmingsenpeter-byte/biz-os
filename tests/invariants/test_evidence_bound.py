@@ -46,3 +46,19 @@ def test_no_bypass_and_other_job_evidence_ignored(session):
         complete_task(session, other.id, RULES)
     with pytest.raises(EvidenceMissing):  # undeclared kind fails closed
         complete_task(session, task.id, {})
+
+
+def test_bulk_update_cannot_bypass_evidence(session):
+    """Review finding 8: the database itself refuses done-without-complete_task."""
+    import pytest
+    from biz_kernel.evidence.service import note
+    from biz_kernel.records.models import Task
+    from sqlalchemy import update
+    from sqlalchemy.exc import DBAPIError
+
+    task = Task(title="t", kind="k")
+    session.add(task)
+    session.flush()
+    note(session, "anything", "ref", task_id=task.id)
+    with pytest.raises(DBAPIError, match="complete_task"), session.begin_nested():
+        session.execute(update(Task).where(Task.id == task.id).values(status="done"))

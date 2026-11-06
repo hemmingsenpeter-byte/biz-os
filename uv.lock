@@ -5,6 +5,7 @@ requires-python = "==3.12.*"
 [manifest]
 members = [
     "biz-cap-booking",
+    "biz-cap-comms",
     "biz-cap-demo-desk",
     "biz-cap-intake",
     "biz-kernel",
@@ -220,6 +221,17 @@ dependencies = [
 requires-dist = [{ name = "biz-kernel", editable = "kernel" }]
 
 [[package]]
+name = "biz-cap-comms"
+version = "1.0.0"
+source = { editable = "capabilities/comms" }
+dependencies = [
+    { name = "biz-kernel" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "biz-kernel", editable = "kernel" }]
+
+[[package]]
 name = "biz-cap-demo-desk"
 version = "1.0.0"
 source = { editable = "capabilities/demo_desk" }
@@ -290,6 +302,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "biz-cap-booking" },
+    { name = "biz-cap-comms" },
     { name = "biz-cap-demo-desk" },
     { name = "biz-cap-intake" },
     { name = "biz-kernel" },
@@ -315,6 +328,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "biz-cap-booking", editable = "capabilities/booking" },
+    { name = "biz-cap-comms", editable = "capabilities/comms" },
     { name = "biz-cap-demo-desk", editable = "capabilities/demo_desk" },
     { name = "biz-cap-intake", editable = "capabilities/intake" },
     { name = "biz-kernel", editable = "kernel" },

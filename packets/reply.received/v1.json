@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reply.received/v1",
+  "type": "object",
+  "required": [
+    "channel",
+    "sender",
+    "body"
+  ],
+  "properties": {
+    "channel": {
+      "type": "string"
+    },
+    "sender": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "message_ref": {
+      "type": "string"
+    },
+    "opt_out": {
+      "type": "boolean"
+    }
+  }
+}

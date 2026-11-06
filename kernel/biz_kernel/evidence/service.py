@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import event, or_, select
+from sqlalchemy import event, or_, select, text
 from sqlalchemy.orm import Session
 
 from biz_kernel.db import utcnow
@@ -62,9 +62,13 @@ def complete_task(session: Session, task_id: uuid.UUID, rules: EvidenceRules) ->
         raise EvidenceMissing(missing)
     allowed: set[uuid.UUID] = session.info.setdefault(_ALLOWED, set())
     allowed.add(task.id)
+    session.execute(text("SELECT set_config('biz.task_done_ok', :id, true)"), {"id": str(task.id)})
     task.status = "done"
-    session.flush()
-    allowed.discard(task.id)
+    try:
+        session.flush()
+    finally:
+        allowed.discard(task.id)
+        session.execute(text("SELECT set_config('biz.task_done_ok', '', true)"))
     return task
 
 

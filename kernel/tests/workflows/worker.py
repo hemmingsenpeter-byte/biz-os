@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from biz_kernel import db
+from biz_kernel.evidence import service as evidence
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, SchemaRegistry
 from biz_kernel.policy.types import Allow, SideEffect
-from biz_kernel.records.models import Note, Task
+from biz_kernel.records.models import Note
 from biz_kernel.tools.registry import Tool, ToolRegistry
 from biz_kernel.workflows import runner
 from dbos import DBOS
@@ -65,13 +66,12 @@ def main() -> None:
         def execute(self, *a: Any, **k: Any) -> Any:
             raise NotImplementedError
 
-    class Evidence:
+    class Evidence:  # the real evidence service: done only with declared evidence
         def note(self, session: Any, kind: str, ref: str, *, task_id: Any, job_id: Any) -> None:
-            pass
+            evidence.note(session, kind, ref, job_id=job_id, task_id=task_id)
 
         def complete(self, session: Any, task_id: uuid.UUID) -> None:
-            task = session.get(Task, task_id)
-            task.status = "done"
+            evidence.complete_task(session, task_id, {"s": ["packet:demo.done"]})
 
     schemas = SchemaRegistry()
     schemas.register("demo.ping", 1, OBJ)

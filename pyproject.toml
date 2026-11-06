@@ -1,0 +1,48 @@
+[project]
+name = "biz-os"
+version = "0.1.0"
+description = "Modular platform for AI-run small businesses"
+requires-python = ">=3.12,<3.13"
+dependencies = ["biz-kernel", "biz-port-fakes"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pgserver>=0.1.4",
+    "respx>=0.21",
+    "httpx>=0.27",
+    "types-PyYAML",
+]
+
+[tool.uv]
+package = false
+constraint-dependencies = ["cryptography<48", "cbor2<6"]
+# Intel macOS 12 dev box: never compile native deps from source; pick versions with wheels.
+no-build-package = ["cryptography", "cbor2", "pydantic-core", "psycopg-binary", "orjson", "uvloop", "watchfiles", "httptools", "pyyaml", "rpds-py", "greenlet", "sqlalchemy", "markupsafe", "cffi", "numpy"]
+
+[tool.uv.workspace]
+members = ["kernel", "ports/*"]
+
+[tool.uv.sources]
+biz-kernel = { workspace = true }
+biz-port-fakes = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "kernel/tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -14,13 +15,28 @@ from sqlalchemy.orm import Session
 
 
 @pytest.fixture(scope="session")
-def pg_url() -> Iterator[str]:
+def pg_server():  # type: ignore[no-untyped-def]
     import pgserver
 
-    srv = pgserver.get_server(tempfile.mkdtemp(prefix="bizpg-"), cleanup_mode="stop")
-    srv.psql("CREATE DATABASE biz_test;")
-    uri = srv.get_uri("biz_test").replace("postgresql://", "postgresql+psycopg://", 1)
-    yield uri
+    return pgserver.get_server(tempfile.mkdtemp(prefix="bizpg-"), cleanup_mode="stop")
+
+
+def sa_url(srv, database: str) -> str:  # type: ignore[no-untyped-def]
+    return srv.get_uri(database).replace("postgresql://", "postgresql+psycopg://", 1)
+
+
+@pytest.fixture(scope="session")
+def pg_url(pg_server) -> Iterator[str]:  # type: ignore[no-untyped-def]
+    pg_server.psql("CREATE DATABASE biz_test;")
+    yield sa_url(pg_server, "biz_test")
+
+
+@pytest.fixture
+def fresh_db(pg_server) -> str:  # type: ignore[no-untyped-def]
+    """A brand-new committed database (for DBOS/subprocess tests). Returns its SQLAlchemy URL."""
+    name = f"biz_{uuid.uuid4().hex[:10]}"
+    pg_server.psql(f"CREATE DATABASE {name};")
+    return sa_url(pg_server, name)
 
 
 @pytest.fixture(scope="session")

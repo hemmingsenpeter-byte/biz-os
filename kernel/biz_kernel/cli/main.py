@@ -143,9 +143,16 @@ def worker_cmd(app_dir: Path, repo_root: RepoRoot = None) -> None:
 
 # ---- biz eval: provided by biz_kernel.models.eval.cli (a Typer sub-app) -----------------
 try:
-    from biz_kernel.models.eval.cli import app as _eval_app
+    from biz_kernel.models.eval.cli import eval_cmd as _eval_cmd
 
-    app.add_typer(_eval_app, name="eval")
+    @app.command("eval")
+    def eval_task(
+        task: str,
+        tier: Annotated[str, typer.Option(help="local | cloud | shadow")] = "local",
+        cases: Annotated[Path, typer.Option(help="Folder of golden case YAML files")] = Path("."),
+    ) -> None:
+        """Score a model task on golden cases."""
+        _eval_cmd(task, tier, cases)
 except ImportError:  # eval harness not installed yet
     pass
 

@@ -1,5 +1,5 @@
+import jsonschema
 import pytest
-
 from biz_kernel.memory import Cite, HashEmbedder, curate, ingest_source, write_draft
 from biz_kernel.memory.tools import register
 from biz_kernel.policy.types import Allow
@@ -49,7 +49,7 @@ def test_recall_tool_scopes_come_from_role_pack(session):
 def test_caller_cannot_claim_an_actor(session):
     reg = ToolRegistry()
     register(reg, {"clerk": ["business"]}, HashEmbedder(768))
-    with pytest.raises(Exception):
+    with pytest.raises((ValueError, jsonschema.ValidationError)):
         reg.call(
             session,
             AllowAll(),

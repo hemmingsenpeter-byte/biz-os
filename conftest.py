@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import tempfile
 import uuid
 from collections.abc import Iterator
@@ -12,6 +13,21 @@ from biz_kernel.models_registry import import_all_models
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_live_network():  # type: ignore[no-untyped-def]
+    """Tests never touch the network: only Unix sockets (local Postgres) may connect."""
+    real = socket.socket.connect
+
+    def guarded(self, address):  # type: ignore[no-untyped-def]
+        if self.family != socket.AF_UNIX:
+            raise RuntimeError(f"live network blocked in tests: {address!r}")
+        return real(self, address)
+
+    socket.socket.connect = guarded  # type: ignore[method-assign]
+    yield
+    socket.socket.connect = real  # type: ignore[method-assign]
 
 
 @pytest.fixture(scope="session")

@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import cast
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Table, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,7 @@ Sweep = Callable[[Session], object]
 
 def enqueue(session: Session, role: str, reason: str, now: datetime) -> None:
     """Add a wake-up, or merge into the role's pending one (reasons joined, count + 1)."""
-    t = Wakeup.__table__
+    t = cast(Table, Wakeup.__table__)
     stmt = insert(t).values(
         id=uuid7(),
         role=role,

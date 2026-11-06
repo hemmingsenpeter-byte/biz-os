@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,6 +22,7 @@ from biz_kernel.health.service import register_schedule
 from biz_kernel.heartbeats import service as heartbeats
 from biz_kernel.heartbeats.followthrough import FollowThrough
 from biz_kernel.loader import Manifest, load_composition, parse_cadence
+from biz_kernel.memory import tools as memory_tools
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.policy.engine import PolicyEngine
@@ -75,7 +77,20 @@ class Runtime:
     budgets: BudgetBook
     router: Router
     gate: KernelGate
+    embedder: Any = None
     follow: FollowThrough = field(default_factory=FollowThrough)
+
+    # -------------------------------------------------------------- memory
+
+    def seed_memory(self) -> int:
+        """Ingest the composition's memory_profile folder as cited draft notes (idempotent)."""
+        from biz_kernel.memory import load_profile
+
+        folder = self.manifest.app_dir / "memory"
+        if not folder.is_dir():
+            return 0
+        with db.session_scope() as s:
+            return len(load_profile(s, folder, self.embedder) or [])
 
     # -------------------------------------------------------------- heartbeats
 
@@ -135,6 +150,27 @@ def _as_uuid(col: Any) -> Any:
     return cast(col, Uuid)
 
 
+def _embedder(model: Any) -> Any:
+    """Use the local model's embeddings when it has them; otherwise a deterministic hash."""
+    import asyncio
+    import inspect
+
+    from biz_kernel.memory import HashEmbedder
+
+    embed = getattr(model, "embed", None)
+    if embed is None or not inspect.iscoroutinefunction(embed):
+        return HashEmbedder(int(os.environ.get("BIZ_EMBED_DIM", "768")))
+
+    async_embed = embed
+
+    class _Sync:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            result: list[list[float]] = asyncio.run(async_embed(texts))
+            return result
+
+    return _Sync()
+
+
 def build_runtime(
     app_dir: Path,
     repo_root: Path,
@@ -146,10 +182,14 @@ def build_runtime(
     resolved.update(ports or {})
 
     registry = ToolRegistry()
+    embedder = _embedder(resolved.get("model_local"))
+    memory_tools.register(
+        registry, {name: list(r.sources) for name, r in manifest.roles.items()}, embedder
+    )
     for cap in manifest.capabilities:
         mod = importlib.import_module(f"biz_cap_{cap}")
         mod.register(registry, resolved)
-    missing = set(manifest.tools) - set(registry.tools)
+    missing = set(manifest.tools) - set(registry.tools) - {"memory.recall"}
     if missing:
         raise CompositionError(f"capabilities declared tools they did not register: {missing}")
 
@@ -165,13 +205,14 @@ def build_runtime(
         cloud=resolved.get("model_cloud"),
         task_tiers=task_tiers,
         high_stakes=set(manifest.policy.get("high_stakes") or []),
+        budgets=budgets,
     )
     gate = KernelGate(registry, policy)
     rules: evidence.EvidenceRules = {}
     for role in manifest.roles.values():
         rules.update(role.evidence)
 
-    rt = Runtime(manifest, resolved, registry, policy, bus, budgets, router, gate)
+    rt = Runtime(manifest, resolved, registry, policy, bus, budgets, router, gate, embedder)
     for name, role in manifest.roles.items():
         for packet_type in set(role.consumes) | set(role.heartbeat_triggers):
             bus.subscribe(packet_type, name, rt.on_packet(name))

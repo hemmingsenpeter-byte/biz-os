@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jsonschema
 import yaml
@@ -481,7 +481,7 @@ def _audit_branch(engine: Engine, pack: IndustryPack, kind: str) -> None:
         return
     with engine.begin() as conn:
         conn.execute(
-            insert(AuditEntry.__table__),
+            insert(cast(Table, AuditEntry.__table__)),
             [
                 {
                     "id": uuid7(),

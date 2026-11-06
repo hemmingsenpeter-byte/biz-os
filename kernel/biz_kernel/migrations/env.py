@@ -42,7 +42,7 @@ def run() -> None:
         with context.begin_transaction():
             context.run_migrations()
         return
-    engine = create_engine(url, future=True)
+    engine = create_engine(str(url), future=True)
     with engine.connect() as conn:
         context.configure(
             connection=conn,

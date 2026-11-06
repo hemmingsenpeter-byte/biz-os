@@ -1,0 +1,39 @@
+"""Cloud model calls stop at the monthly budget."""
+
+import asyncio
+from datetime import UTC, datetime
+from decimal import Decimal
+
+from biz_kernel.budgets import BudgetBook, CostEvent
+from biz_kernel.models import usage
+from biz_kernel.models.router import Router
+from biz_port_fakes import FakeModel
+from sqlalchemy import func, select
+
+T0 = datetime(2026, 3, 10, tzinfo=UTC)
+SCHEMA = {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}
+
+
+class PricedCloud(FakeModel):
+    """Each call costs 4 USD."""
+
+    async def structured(self, system, messages, schema, tier):
+        out = await super().structured(system, messages, schema, tier)
+        usage.report(usage.Usage(cost_usd=Decimal(4)))
+        return out
+
+
+def test_router_budget(session):
+    cloud, local = PricedCloud(), FakeModel()
+    book = BudgetBook({"clerk": 10})
+    router = Router(local, cloud, high_stakes={"big"}, budgets=book)
+    results = [
+        asyncio.run(router.generate("big", "s", [], SCHEMA, session=session, role="clerk", now=T0))
+        for _ in range(5)
+    ]
+    assert [r.tier for r in results] == ["cloud", "cloud", "cloud", "local", "local"]
+    assert len(cloud.calls) == 3  # 4 + 4 + 4 reaches 12 >= 10, then it stops
+    assert [r.flagged for r in results] == [False, False, False, True, True]
+    assert not book.can_spend(session, "clerk", T0)
+    n = session.scalar(select(func.count()).select_from(CostEvent))
+    assert n == 3  # paid calls are recorded; a stopped role records nothing more

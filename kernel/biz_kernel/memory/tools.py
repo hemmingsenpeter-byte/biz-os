@@ -52,4 +52,3 @@ def register(
             wants_actor=True,
         )
     )
-

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from biz_kernel import db
 from biz_kernel.audit.log import record
-from biz_kernel.models.router import Router, fence
+from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
 from biz_kernel.workflows.models import SopRun, SopStep
@@ -116,14 +116,23 @@ def start_for_packet(role: str, packet_id: uuid.UUID, packet_type: str) -> list[
     return started
 
 
-def notify_decision(op_id: str, decision: str) -> bool:
-    """Called when a staged operation is approved or rejected; wakes the waiting SOP run."""
+def notify_decision(op_id: str, decision: str, client: Any | None = None) -> bool:
+    """Called when a staged operation is approved or rejected; wakes the waiting SOP run.
+
+    Pass a `dbos.DBOSClient` (or set module attribute `_CLIENT`) when this process has not
+    launched DBOS, as in the API process.
+    """
+    client = client or globals().get("_CLIENT")
     with db.session_scope() as s:
         run = s.query(SopRun).filter_by(waiting_op_id=op_id).one_or_none()
         if run is None:
             return False
         run_id = run.id
-    DBOS.send(run_id, decision, topic=f"op:{op_id}", idempotency_key=f"{op_id}:{decision}")
+    key = f"{op_id}:{decision}"
+    if client is not None:
+        client.send(run_id, decision, topic=f"op:{op_id}", idempotency_key=key)
+    else:
+        DBOS.send(run_id, decision, topic=f"op:{op_id}", idempotency_key=key)
     return True
 
 
@@ -301,9 +310,13 @@ def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, A
     system = (spec.pack_dir / step["prompt"]).read_text()
     inputs = render(step.get("inputs", {}), state)
     # Drafting gets no tools, and every input is untrusted data.
-    messages = [{"role": "user", "content": fence(_as_text(inputs))}]
     task = step.get("task", f"{role}.{state.get('sop', step['id'])}")
-    result = asyncio.run(c.router.generate(task, system, messages, step["schema"]))
+    with db.session_scope() as s:
+        result = asyncio.run(
+            c.router.generate(
+                task, system, [], step["schema"], untrusted=[_as_text(inputs)], session=s, role=role
+            )
+        )
     with db.session_scope() as s:
         if _ledger(s, run_id, step["id"]) is None:
             _save(s, run_id, step["id"], result.output)

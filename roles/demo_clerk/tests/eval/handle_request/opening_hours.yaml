@@ -1,0 +1,11 @@
+name: opening_hours
+system_file: ../../../prompts/handle_request.md
+untrusted:
+  - "Subject: Opening hours. When are you open on public holidays?"
+schema:
+  type: object
+  required: [subject, body]
+  properties: { subject: { type: string }, body: { type: string } }
+checks:
+  - { type: json_schema }
+  - { type: contains, field: body, value: holiday }

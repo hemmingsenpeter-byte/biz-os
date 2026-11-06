@@ -53,6 +53,14 @@ class ToolRegistry:
         jsonschema.Draft202012Validator.check_schema(tool.schema)
         self.tools[tool.name] = tool
 
+    def not_idempotent(self) -> list[str]:
+        """Gated tools that take no idempotency_key (the runner passes a stable one)."""
+        return sorted(
+            t.name
+            for t in self.tools.values()
+            if t.side_effect in GATED and "idempotency_key" not in t.schema.get("properties", {})
+        )
+
     def get(self, name: str) -> Tool:
         return self.tools[name]
 

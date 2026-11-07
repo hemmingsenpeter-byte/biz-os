@@ -70,3 +70,18 @@ def test_signal_matches_any_step_kind() -> None:
     assert check(conds, kind="tool", output={"signals": []}) is None
     assert check(conds, kind="tool", output={"x": 1}) is None
     assert check(conds, kind="tool", output=None) is None
+
+
+def test_sop_keeps_control_of_what_it_handles() -> None:
+    from biz_kernel.workflows.runner import _conditions_by_step
+
+    conds = parse([{"confidence_below": 0.7}, "sig"], known_signals={"sig"})
+    reads = {
+        "steps": [
+            {"id": "d", "kind": "draft"},
+            {"id": "p", "kind": "tool", "args": {"c": "{{steps.d.output.confidence}}"}},
+        ]
+    }
+    own = {"steps": [{"id": "d", "kind": "draft"}, {"id": "s", "kind": "stop"}]}
+    assert [c.name for c in _conditions_by_step(reads, conds)["d"]] == ["sig"]
+    assert [c.name for c in _conditions_by_step(own, conds)["d"]] == ["confidence_below"]

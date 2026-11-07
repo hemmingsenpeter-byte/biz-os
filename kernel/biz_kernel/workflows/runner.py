@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,7 +24,7 @@ from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
-from biz_kernel.workflows.escalation import Condition, check
+from biz_kernel.workflows.escalation import CONFIDENCE, Condition, check
 from biz_kernel.workflows.models import SopRun, SopStep
 from biz_kernel.workflows.templating import TemplateError, holds, render
 
@@ -175,9 +176,7 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     assert run_id is not None
     state = _begin(run_id, role, sop_name, packet_id)
     sop = ctx().roles[role].sops[sop_name]
-    # Role conditions apply to every SOP, including ones with their own escalation steps:
-    # a match ends the run escalated before those steps, so the owner is told once.
-    conds = ctx().roles[role].escalate_when
+    conds = _conditions_by_step(sop, ctx().roles[role].escalate_when)
     for step in sop["steps"]:
         kind = step["kind"]
         if step.get("when") and not _step_applies(step["when"], state):
@@ -191,7 +190,7 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
                 stage = functools.partial(_execute_staged, run_id, role, step["id"], res["op_id"])
                 res = _budgeted(run_id, role, stage)
             state["steps"][step["id"]] = {"output": res["output"]}
-            if why := check(conds, kind=kind, output=res["output"]):
+            if why := check(conds[step["id"]], kind=kind, output=res["output"]):
                 return _escalate(run_id, role, state, why)
         elif kind == "approve":
             op_id = _approval_step(run_id, role, step, state)
@@ -202,7 +201,7 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
         elif kind == "draft":
             out = _draft_step(run_id, role, step, state)
             state["steps"][step["id"]] = {"output": out}
-            if why := check(conds, kind=kind, output=out):
+            if why := check(conds[step["id"]], kind=kind, output=out):
                 return _escalate(run_id, role, state, why)
         elif kind == "stop":
             # End the run without completing the task: it stays open for the owner.
@@ -501,6 +500,28 @@ def _publish_step(run_id: str, role: str, step: dict[str, Any], state: dict[str,
                 s, step["evidence"], str(packet.id), task_id=run.task_id, job_id=run.job_id
             )
         return _save(s, run_id, step["id"], {"packet_id": str(packet.id)})
+
+
+def _conditions_by_step(
+    sop: dict[str, Any], conds: tuple[Condition, ...]
+) -> dict[str, tuple[Condition, ...]]:
+    """The role's escalate_when conditions that each step is checked against.
+
+    A SOP keeps control of what it handles itself: confidence is skipped for a draft whose
+    confidence a later step reads, and signals are skipped in a SOP with its own escalation
+    (a stop step or an escalation.raised publish). Everything else is checked.
+    """
+    text = json.dumps(sop["steps"])
+    own = any(s["kind"] == "stop" or s.get("packet") == "escalation.raised" for s in sop["steps"])
+    out = {}
+    for step in sop["steps"]:
+        reads_conf = f"steps.{step['id']}.output.confidence" in text
+        out[step["id"]] = tuple(
+            c
+            for c in conds
+            if (c.name == CONFIDENCE and not reads_conf) or (c.name != CONFIDENCE and not own)
+        )
+    return out
 
 
 def _escalate(run_id: str, role: str, state: dict[str, Any], why: str) -> dict[str, Any]:

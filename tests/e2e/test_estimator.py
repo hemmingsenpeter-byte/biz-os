@@ -251,3 +251,20 @@ def test_below_margin_escalates(rt, app_name: str) -> None:  # type: ignore[no-u
     assert len(esc) == 1 and esc[0].payload["raised_by"] == "estimator"
     with db.session_scope() as s:  # nothing claims the pricing was done
         assert s.get(Task, price_run.task_id).status == "open"
+
+
+def test_low_confidence_pricing_escalates(rt, app_name: str) -> None:  # type: ignore[no-untyped-def]
+    # pricing has its own margin escalation; the role's confidence_below still applies.
+    job_id = _seed(rt, app_name)
+    cloud: FakeModel = rt.ports["model_cloud"]
+    cloud.script(_scope(app_name), {**_lines(90), "confidence": 0.3})
+    approved = _to_scope_approved(rt, job_id, app_name)
+
+    assert "estimator" in rt.tick()
+    price_run = _run("pricing", approved.id)
+    assert DBOS.retrieve_workflow(price_run.id).get_result()["status"] == "escalated"
+    assert _packets("estimate.ready") == []
+    esc = _packets("escalation.raised")
+    assert len(esc) == 1 and "confidence" in esc[0].payload["reason"]
+    with db.session_scope() as s:
+        assert s.get(Task, price_run.task_id).status == "open"

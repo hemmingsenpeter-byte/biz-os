@@ -175,9 +175,9 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     assert run_id is not None
     state = _begin(run_id, role, sop_name, packet_id)
     sop = ctx().roles[role].sops[sop_name]
-    # A SOP that already escalates itself (stop step or escalation packet) keeps control.
-    own = any(s["kind"] == "stop" or s.get("packet") == "escalation.raised" for s in sop["steps"])
-    conds = () if own else ctx().roles[role].escalate_when
+    # Role conditions apply to every SOP, including ones with their own escalation steps:
+    # a match ends the run escalated before those steps, so the owner is told once.
+    conds = ctx().roles[role].escalate_when
     for step in sop["steps"]:
         kind = step["kind"]
         if step.get("when") and not _step_applies(step["when"], state):

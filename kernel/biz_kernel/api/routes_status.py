@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
@@ -65,5 +65,12 @@ def router() -> APIRouter:
         if status:
             q = q.where(Task.status == status)
         return list(session.scalars(q))
+
+    @r.get("/tasks/{task_id}", response_model=TaskOut, tags=["tasks"])
+    def task(task_id: uuid.UUID, _: CurrentUser, session: DbSession) -> Task:
+        row = session.get(Task, task_id)
+        if row is None:
+            raise HTTPException(404, "no such task")
+        return row
 
     return r

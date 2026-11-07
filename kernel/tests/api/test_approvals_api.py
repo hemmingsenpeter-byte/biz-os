@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -12,6 +13,7 @@ from biz_kernel.goals.models import Goal, GoalReading
 from biz_kernel.health.service import raise_alert
 from biz_kernel.policy.types import Action, SideEffect
 from biz_kernel.records.models import Task
+from biz_kernel.workflows.models import SopRun, SopStep
 from fastapi.testclient import TestClient
 
 
@@ -118,3 +120,63 @@ def test_scorecard_alerts_tasks(client, session):
     assert card[0]["key"] == "rev" and card[0]["rag"] == "green"
     assert client.get("/v1/health/alerts").json()[0]["kind"] == "schedule.missed"
     assert [t["title"] for t in client.get("/v1/tasks", params={"status": "open"}).json()] == ["a"]
+
+
+def test_approval_cards_link_to_approval_task_and_run(client, session):
+    owner = create_user(session, "o5@example.com", "owner", "O")
+    task = Task(title="reply", status="open")
+    session.add(task)
+    session.flush()
+    job_id = uuid.uuid4()
+    waiting, approval = _op(session), _op(session)
+    plain = _op(session)  # staged outside any run: it links only to itself
+    session.add_all(
+        [
+            SopRun(
+                id="r1",
+                role="sales",
+                sop="s",
+                task_id=task.id,
+                job_id=job_id,
+                waiting_op_id=str(waiting.id),
+            ),
+            SopRun(id="r2", role="sales", sop="s", task_id=task.id),
+        ]
+    )
+    session.flush()
+    session.add(SopStep(run_id="r2", step_id="ok:request", output=str(approval.id)))
+    session.flush()
+    _login(client, owner)
+    cards = {c["id"]: c for c in client.get("/v1/approvals").json()}
+    w = cards[str(waiting.id)]
+    assert w["run_id"] == "r1" and w["task_id"] == str(task.id) and w["job_id"] == str(job_id)
+    assert w["links"] == {
+        "self": f"/v1/approvals/{waiting.id}",
+        "task": f"/v1/tasks/{task.id}",
+        "job": f"/v1/jobs/{job_id}/timeline",
+    }
+    a = cards[str(approval.id)]
+    assert a["run_id"] == "r2" and a["links"]["task"] == f"/v1/tasks/{task.id}"
+    assert "job" not in a["links"]
+    p = cards[str(plain.id)]
+    assert p["run_id"] is None and p["links"] == {"self": f"/v1/approvals/{plain.id}"}
+    # every link opens
+    one = client.get(w["links"]["self"])
+    assert one.status_code == 200 and one.json()["links"] == w["links"]
+    assert client.get(w["links"]["task"]).json()["title"] == "reply"
+    assert client.get(f"/v1/approvals/{uuid.uuid4()}").status_code == 404
+    assert client.get(f"/v1/tasks/{uuid.uuid4()}").status_code == 404
+    # a staged tool call is still found after the run stops waiting on it
+    run = session.get(SopRun, "r1")
+    run.waiting_op_id = None
+    session.add(
+        SopStep(
+            run_id="r1",
+            step_id="send:staged",
+            output={"status": "staged", "op_id": str(waiting.id)},
+        )
+    )
+    session.flush()
+    # decisions return the linked card too
+    r = client.post(f"/v1/approvals/{waiting.id}/edit", json={"inputs": {"a": 3}})
+    assert r.status_code == 200 and r.json()["links"] == w["links"]

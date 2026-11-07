@@ -159,7 +159,11 @@ def test_stale_approval_is_never_acted_on(live) -> None:  # type: ignore[no-unty
     with db.session_scope() as s:  # approve v1, then edit (which clears the approval)
         staged.approve(s, op_id, approver, 1)
         op = s.get(StagedOperation, op_id)
-        staged.edit(s, op_id, {**op.inputs, "body": "Yes, two visitor spaces."}, by=approver)
+        key = op.inputs.get("idempotency_key")
+        edited = {k: v for k, v in op.inputs.items() if k != "idempotency_key"}
+        edited["body"] = "Yes, two visitor spaces."  # an editor that drops the key
+        op = staged.edit(s, op_id, edited, by=approver)
+        assert op.inputs.get("idempotency_key") == key  # every version keeps the run's key
     assert notify_decision(str(op_id), "approved")  # the stale wake-up arrives
     time.sleep(2.5)  # > approval_poll_seconds: the run re-checked and kept waiting
     assert mail.sent == [] and waiting() is not None

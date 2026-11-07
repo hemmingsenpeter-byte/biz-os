@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from biz_cap_comms import config
 from biz_cap_comms.gate import GateConfig
 from biz_cap_comms.tools import register
+from biz_kernel.approvals import staged
 from biz_kernel.contracts.ports import SendResult
 from biz_kernel.health.models import Alert
-from biz_kernel.tools.registry import ToolRegistry
+from biz_kernel.policy.engine import PolicyEngine
+from biz_kernel.policy.types import Action, SideEffect
+from biz_kernel.tools.registry import Tool, ToolRegistry
 from biz_port_fakes import FakeMail, FakeTelephony
 from sqlalchemy import select
 
@@ -102,3 +107,62 @@ def test_reconcile_confirmed_failure_allows_requeue(env) -> None:  # type: ignor
     mail.reconcile = lambda key: SendResult(status="failed", error="never sent")  # type: ignore[attr-defined]
     assert reg.get("comms.reconcile").fn(session=session, message_id=mid)["status"] == "failed"
     assert reg.get("comms.queue").fn(session=session, message_id=mid)["status"] == "queued"
+
+
+# ------------------------------------------------- approver edits keep the operation's key
+
+
+def _keyed_send_registry(tel: FakeTelephony) -> ToolRegistry:
+    """A gated send that dedupes on the call's idempotency_key, as the port ledgers do."""
+
+    def send(session, to: str, body: str, idempotency_key: str):  # type: ignore[no-untyped-def]
+        return asyncio.run(tel.send_sms(to, body, idempotency_key)).status
+
+    reg = ToolRegistry()
+    schema = {
+        "type": "object",
+        "properties": {"to": {}, "body": {}, "idempotency_key": {"type": "string"}},
+        "required": ["to", "body", "idempotency_key"],
+    }
+    reg.register(Tool("demo.sms", "demo", SideEffect.EXTERNAL, schema, send))
+    return reg
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        {"to": "+64210", "body": "Edited"},  # an editor that drops the key
+        {"to": "+64210", "body": "Edited", "idempotency_key": "other"},  # or replaces it
+    ],
+    ids=["dropped", "replaced"],
+)
+def test_edit_keeps_idempotency_key(session, edited) -> None:  # type: ignore[no-untyped-def]
+    tel = FakeTelephony()
+    reg = _keyed_send_registry(tel)
+    pol = PolicyEngine({"autonomy": {"default": 2}}, reg)
+    args = {"to": "+64210", "body": "Original", "idempotency_key": "run1:reply"}
+    op = staged.run_or_stage(session, reg, pol, "role_a", "demo.sms", args)
+    assert isinstance(op, staged.StagedOperation)
+    staged.approve(session, op.id, "owner", 1)
+    # v1 reaches the provider, then the DB write is lost (a crash before commit)
+    nested = session.begin_nested()
+    staged.execute(session, op.id, reg, pol)
+    nested.rollback()
+    session.expire_all()
+    assert len(tel.sent) == 1
+    # the approver edits the still-approved operation: the version bumps, approval clears
+    op = staged.edit(session, op.id, edited, by="owner")
+    assert op.version == 2 and op.status == "pending" and op.approved_version is None
+    assert op.inputs["idempotency_key"] == "run1:reply"
+    assert op.inputs["body"] == "Edited"
+    with pytest.raises(staged.NotApproved):
+        staged.execute(session, op.id, reg, pol)
+    staged.approve(session, op.id, "owner", 2)
+    staged.execute(session, op.id, reg, pol)
+    assert len(tel.sent) == 1  # the provider ledger deduped: an edit never double-sends
+
+
+def test_edit_of_unkeyed_operation_adds_no_key(session) -> None:  # type: ignore[no-untyped-def]
+    action = Action(actor="r", tool="t", side_effect=SideEffect.EXTERNAL, inputs={"a": 1})
+    op = staged.stage(session, action, "owner")
+    assert staged.edit(session, op.id, {"a": 2}).inputs == {"a": 2}

@@ -1,8 +1,9 @@
 """Role `escalate_when` conditions: parsed strictly, evaluated generically, fail closed.
 
-`{confidence_below: N}` reads the `confidence` of a draft step's output; a missing or
-non-numeric confidence counts as a match. A bare name is a signal condition: it parses, but
-is declared-not-yet-enforced (the loader warns) until capabilities can declare signals.
+Two forms exist. `{confidence_below: N}` reads the `confidence` of a draft step's output;
+a missing or non-numeric confidence counts as a match. A bare name is a signal: it matches
+when a step output carries it in its `signals` list. Signal names are declared by
+capabilities (`signals:` in capability.yaml); nothing here knows what they mean.
 """
 
 from __future__ import annotations
@@ -13,8 +14,6 @@ from dataclasses import dataclass
 from typing import Any
 
 CONFIDENCE = "confidence_below"
-# Signal conditions roles declare today. Accepted, not yet enforced.
-PENDING_SIGNALS = frozenset({"margin_below_policy", "unknown_trade_item"})
 
 
 class ConditionError(ValueError):
@@ -62,4 +61,8 @@ def check(conds: Collection[Condition], *, kind: str, output: Any) -> str | None
             )
             if not ok:
                 return f"confidence {conf!r} is below {c.threshold} (or missing)"
+        elif isinstance(output, dict):
+            sigs = output.get("signals")
+            if isinstance(sigs, list) and c.name in sigs:
+                return f"condition {c.name} met"
     return None

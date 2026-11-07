@@ -20,7 +20,7 @@ from sqlalchemy.engine import Engine
 from biz_kernel.db import utcnow, uuid7
 from biz_kernel.evidence.service import merge_rules
 from biz_kernel.packets.bus import SchemaRegistry
-from biz_kernel.workflows.escalation import CONFIDENCE, PENDING_SIGNALS, ConditionError, parse
+from biz_kernel.workflows.escalation import CONFIDENCE, ConditionError, parse
 
 KERNEL_VERSION = "1.0.0"
 SCHEMA_DIR = Path(__file__).parent / "schemas"
@@ -46,6 +46,7 @@ class CapabilityInfo:
     publishes: list[str]
     consumes: list[str]
     screens: list[str]
+    signals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -119,7 +120,6 @@ class Manifest:
     policy: dict[str, Any]
     goals: dict[str, Any]
     registry: SchemaRegistry = field(repr=False, default_factory=SchemaRegistry)
-    warnings: list[str] = field(default_factory=list)
 
     def role_budget(self, role: str) -> float:
         budgets = self.policy.get("budgets_usd_month") or {}
@@ -288,7 +288,7 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
 
     caps: dict[str, CapabilityInfo] = {}
     tools: dict[str, tuple[str, str]] = {}
-    warnings: list[str] = []
+    signals: set[str] = set()
     for c in comp["capabilities"]:
         d = _read(repo_root / "capabilities" / c / "capability.yaml", "capability", problems)
         if d is None:
@@ -303,6 +303,7 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
                 problems.append(f"{what}: needs capability {p} which is not in the composition")
         for t in d["tools"]:
             tools[t["name"]] = (c, t["side_effect"])
+        signals.update(d.get("signals", []))
         caps[c] = CapabilityInfo(
             d["name"],
             d["version"],
@@ -312,6 +313,7 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
             d["publishes"],
             d["consumes"],
             d.get("screens", []),
+            d.get("signals", []),
         )
 
     industries: dict[str, IndustryPack] = {}
@@ -369,15 +371,10 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
             if g not in goal_keys:
                 problems.append(f"{what}: goal {g} not in goals.yaml")
         try:
-            conds = parse(d.get("escalate_when", []), known_signals=PENDING_SIGNALS)
+            conds = parse(d.get("escalate_when", []), known_signals=signals)
         except ConditionError as exc:
             conds = ()
             problems.append(f"{what}: escalate_when: {exc}")
-        warnings.extend(
-            f"{what}: escalate_when {c.name} is declared but not yet enforced"
-            for c in conds
-            if c.name != CONFIDENCE
-        )
         wants_confidence = any(c.name == CONFIDENCE for c in conds)
         topics: list[TopicInfo] = []
         for t in d["topics"]:
@@ -453,7 +450,6 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
         policy,
         goals_doc,
         registry,
-        warnings,
     )
 
 

@@ -191,8 +191,8 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
                 stage = functools.partial(_execute_staged, run_id, role, step["id"], res["op_id"])
                 res = _budgeted(run_id, role, stage)
             state["steps"][step["id"]] = {"output": res["output"]}
-            if check(conds, kind=kind, output=res["output"]):
-                return _end(run_id, "escalated")
+            if why := check(conds, kind=kind, output=res["output"]):
+                return _escalate(run_id, role, state, why)
         elif kind == "approve":
             op_id = _approval_step(run_id, role, step, state)
             if _await_decision(run_id, op_id) != "approved":
@@ -202,8 +202,8 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
         elif kind == "draft":
             out = _draft_step(run_id, role, step, state)
             state["steps"][step["id"]] = {"output": out}
-            if check(conds, kind=kind, output=out):
-                return _end(run_id, "escalated")
+            if why := check(conds, kind=kind, output=out):
+                return _escalate(run_id, role, state, why)
         elif kind == "stop":
             # End the run without completing the task: it stays open for the owner.
             return _end(run_id, step.get("status", "escalated"))
@@ -501,6 +501,37 @@ def _publish_step(run_id: str, role: str, step: dict[str, Any], state: dict[str,
                 s, step["evidence"], str(packet.id), task_id=run.task_id, job_id=run.job_id
             )
         return _save(s, run_id, step["id"], {"packet_id": str(packet.id)})
+
+
+def _escalate(run_id: str, role: str, state: dict[str, Any], why: str) -> dict[str, Any]:
+    """An escalate_when condition matched: tell the owner, then end like a stop step."""
+    _raise_escalation(run_id, role, state["packet"], why)
+    return _end(run_id, "escalated")
+
+
+@DBOS.step(name="biz.sop.escalate")
+def _raise_escalation(run_id: str, role: str, packet: dict[str, Any], why: str) -> None:
+    c = ctx()
+    with db.session_scope() as s:
+        run = s.get(SopRun, run_id)
+        assert run is not None
+        c.bus.publish(
+            s,
+            type="escalation.raised",
+            payload={
+                "subject": f"{run.sop} needs the owner: {packet.get('summary', '')}",
+                "reason": why,
+                "raised_by": role,
+                "packet_id": packet["id"],
+            },
+            from_part=role,
+            from_sop=run.sop,
+            job_id=run.job_id,
+            summary=f"{run.sop} escalated: {why}",
+            goal_key=run.goal_key,
+            idempotency_key=f"{run_id}:escalate_when",
+        )
+        record(s, role, "sop.escalate_when", run.sop, run_id=run_id, reason=why)
 
 
 @DBOS.step(name="biz.sop.end")

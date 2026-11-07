@@ -87,8 +87,19 @@ def _supersede(session: Session, model: Any, job_id: uuid.UUID, new_id: uuid.UUI
         old.superseded_by = new_id
 
 
+def _signals(warnings: list[str]) -> list[str]:
+    """Escalation signals a role may declare in escalate_when."""
+    out = []
+    if any(w.startswith("margin_below_policy") for w in warnings):
+        out.append("margin_below_policy")
+    if any(w.startswith("unpriced_") for w in warnings):
+        out.append("unknown_trade_item")
+    return out
+
+
 def _totals_out(t: service.Totals, currency: str) -> dict[str, Any]:
     return {
+        "signals": _signals(t.warnings),
         "total_cost": str(t.total_cost),
         "total_price": str(t.total_price),
         "total_cost_minor": service.minor(t.total_cost),
@@ -356,6 +367,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             "margin_pct": float(t.margin_pct),
             "margin_ok": t.margin_ok,
             "warnings": t.warnings,
+            "signals": _signals(t.warnings),
         }
 
     def proposal_build(

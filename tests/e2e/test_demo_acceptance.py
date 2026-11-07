@@ -211,4 +211,7 @@ def test_low_confidence_escalates_instead_of_sending(live) -> None:  # type: ign
     assert run.status == "escalated"
     assert mail.sent == [] and run.waiting_op_id is None
     with db.session_scope() as s:
+        esc = list(s.scalars(select(Packet).where(Packet.type == "escalation.raised")))
+    assert len(esc) == 1 and esc[0].payload["raised_by"] == "demo_clerk"
+    with db.session_scope() as s:
         assert s.get(Task, run.task_id).status == "open"

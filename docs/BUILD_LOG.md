@@ -1,5 +1,24 @@
 # Build log
 
+## 2026-11-06 to 11-07: M4-M5 review fixes, cloud fixes, merge
+
+### Decisions made (check these)
+
+- **Quoting costs come only from the price book** (`fd480a9`). A cost the caller supplies for a price-book line is ignored with a `cost_override_ignored` warning. Price overrides still work, with a `price_override` warning, and the margin check covers them.
+- **Negative values are refused** (`negative_value`): costs, prices, discounts and contingencies, and any discount of 100% or more. Negative quantities are refused on estimates but **allowed on variations**, where they price removed work as a credit.
+- **Any unpriced line makes `margin_ok` false**, so it escalates to the owner. `estimate_check` recomputes from the stored lines, and `proposal_build` refuses a superseded estimate, a superseded scope, or a failed margin re-check.
+- **Intake matches replies through a published comms tool**, `comms.match_reply` (read), instead of reading `cap_comms_outbox` (`cd65c60`). On the merge, the reply-token expiry rule from `922f0f0` moved into that tool, so an expired token matches nothing and the mail becomes a new enquiry.
+- **Reply threads** (`922f0f0`): tokens expire, a thread books at most once, unverified senders are flagged, and customer text is fenced in approval cards.
+- **Documents** (`ea79969`): the DocuSeal ledger is keyed on the idempotency key and webhooks match by submission id, so a re-request after a decline works; a signed copy is a separate document that references the signed version; template mode is opt-in (`BIZ_DOCUSEAL_ALLOW_TEMPLATE_MODE`).
+- **The stopped agent's partial quoting work** is kept in `git stash` (`stash@{0}`) rather than discarded. `fd480a9` replaces it.
+- **The reviewer's proof tests** (`review3/`) were run against the merge: the 5 quoting bypasses are all blocked, and the 2 documents defects are covered by `ea79969`'s own regression tests.
+- **Checks on the merge** (`942a516`): 413 passed and 1 skipped (PDF, no Pango on the Mac); mypy, ruff and `biz doctor` for both apps are clean.
+
+### Waiting on the owner
+
+- **Defect #3, sender verification.** It is always false today. Fixing it means adding authentication results (`Authentication-Results`) to the mail port's inbound message, which is a port interface change.
+- **`SignPort` idempotency key.** Whether to add an optional `idempotency_key` to the interface. The adapter works without it.
+
 ## 2026-11-06: first build session (M0 to M3)
 
 ### Decisions made during the build (check these)

@@ -43,7 +43,8 @@ class AutonomyLevel(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     role: Mapped[str] = mapped_column(String(120))
     decision_type: Mapped[str] = mapped_column(String(120))
-    level: Mapped[int] = mapped_column(Integer, default=1)
+    # NULL = counters only: no level was ever set, so the configured default applies.
+    level: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     approved_unchanged_streak: Mapped[int] = mapped_column(Integer, default=0)
     good_outcomes: Mapped[int] = mapped_column(Integer, default=0)
     bad_outcomes: Mapped[int] = mapped_column(Integer, default=0)

@@ -13,7 +13,8 @@ MIN_LEVEL, MAX_LEVEL = 1, 4
 DEFAULT_STREAK_BAR = 20
 
 
-def _row(session: Session, role: str, decision_type: str, default: int = 1) -> AutonomyLevel:
+def _row(session: Session, role: str, decision_type: str) -> AutonomyLevel:
+    """The counters row. A new row has no level: counting must never pin one."""
     row = session.scalar(
         select(AutonomyLevel).where(
             AutonomyLevel.role == role, AutonomyLevel.decision_type == decision_type
@@ -23,7 +24,7 @@ def _row(session: Session, role: str, decision_type: str, default: int = 1) -> A
         row = AutonomyLevel(
             role=role,
             decision_type=decision_type,
-            level=default,
+            level=None,
             approved_unchanged_streak=0,
             good_outcomes=0,
             bad_outcomes=0,
@@ -40,7 +41,7 @@ def level(session: Session, role: str, decision_type: str, default: int = 1) -> 
             AutonomyLevel.role == role, AutonomyLevel.decision_type == decision_type
         )
     )
-    return row.level if row else default
+    return row.level if row is not None and row.level is not None else default
 
 
 def set_level(session: Session, role: str, decision_type: str, new: int, by: str) -> int:
@@ -61,15 +62,19 @@ def record_approval(session: Session, role: str, decision_type: str, unchanged: 
     session.flush()
 
 
-def record_outcome(session: Session, role: str, decision_type: str, good: bool) -> int:
-    """Any bad outcome demotes one level (min 1) and resets the streak."""
+def record_outcome(
+    session: Session, role: str, decision_type: str, good: bool, default: int = 1
+) -> int:
+    """Any bad outcome demotes one level (min 1) and resets the streak.
+
+    `default` is the configured level, used when no level has been stored yet."""
     row = _row(session, role, decision_type)
     if good:
         row.good_outcomes += 1
     else:
-        old = row.level
+        old = row.level if row.level is not None else default
         row.bad_outcomes += 1
-        row.level = max(MIN_LEVEL, row.level - 1)
+        row.level = max(MIN_LEVEL, old - 1)
         row.approved_unchanged_streak = 0
         record(
             session,
@@ -82,21 +87,26 @@ def record_outcome(session: Session, role: str, decision_type: str, good: bool) 
         )
     row.updated_at = utcnow()
     session.flush()
-    return row.level
+    return row.level if row.level is not None else default
 
 
 def promotion_due(
-    session: Session, role: str, decision_type: str, bar: int = DEFAULT_STREAK_BAR
+    session: Session,
+    role: str,
+    decision_type: str,
+    bar: int = DEFAULT_STREAK_BAR,
+    default: int = 1,
 ) -> bool:
     row = _row(session, role, decision_type)
-    return row.level < MAX_LEVEL and row.approved_unchanged_streak >= bar
+    current = row.level if row.level is not None else default
+    return current < MAX_LEVEL and row.approved_unchanged_streak >= bar
 
 
-def promote(session: Session, role: str, decision_type: str, by: str) -> int:
-    """Raise one level. Only ever called explicitly (owner decision)."""
+def promote(session: Session, role: str, decision_type: str, by: str, default: int = 1) -> int:
+    """Raise one level from the stored (else configured) one. Only ever an owner decision."""
     row = _row(session, role, decision_type)
-    old = row.level
-    row.level = min(MAX_LEVEL, row.level + 1)
+    old = row.level if row.level is not None else default
+    row.level = min(MAX_LEVEL, old + 1)
     row.approved_unchanged_streak = 0
     row.updated_at = utcnow()
     session.flush()

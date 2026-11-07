@@ -18,6 +18,7 @@ from sqlalchemy import MetaData, Table, insert, inspect
 from sqlalchemy.engine import Engine
 
 from biz_kernel.db import utcnow, uuid7
+from biz_kernel.evidence.service import merge_rules
 from biz_kernel.packets.bus import SchemaRegistry
 
 KERNEL_VERSION = "1.0.0"
@@ -401,6 +402,11 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
             d.get("escalate_when", []),
             d["requires"],
         )
+
+    _, conflicts = merge_rules(*(r.evidence for r in roles.values()))
+    for kind in conflicts:
+        who = [n for n, r in roles.items() if kind in r.evidence]
+        problems.append(f"evidence rule for task kind {kind!r} is declared differently by {who}")
 
     for iname, pack in industries.items():
         try:

@@ -243,9 +243,8 @@ def build_runtime(
         budgets=budgets,
     )
     gate = KernelGate(registry, policy)
-    rules: evidence.EvidenceRules = {}
-    for role in manifest.roles.values():
-        rules.update(role.evidence)
+    # Never overwrite: conflicting declarations merge to the strictest (the loader rejects them).
+    rules, _ = evidence.merge_rules(*(r.evidence for r in manifest.roles.values()))
 
     rt = Runtime(manifest, resolved, registry, policy, bus, budgets, router, gate, embedder)
     for name, role in manifest.roles.items():

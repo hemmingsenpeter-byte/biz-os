@@ -17,6 +17,22 @@ from biz_kernel.records.models import Task
 
 EvidenceRules = dict[str, list[str]]  # task kind -> required evidence kinds
 
+
+def merge_rules(*rule_sets: EvidenceRules) -> tuple[EvidenceRules, list[str]]:
+    """Union per task kind (the strictest rule), plus the kinds declared differently."""
+    merged: EvidenceRules = {}
+    conflicts: set[str] = set()
+    for rules in rule_sets:
+        for kind, required in rules.items():
+            if kind not in merged:
+                merged[kind] = list(required)
+                continue
+            if set(merged[kind]) != set(required):
+                conflicts.add(kind)
+            merged[kind] += [k for k in required if k not in merged[kind]]
+    return merged, sorted(conflicts)
+
+
 _ALLOWED = "evidence_complete_ids"
 
 

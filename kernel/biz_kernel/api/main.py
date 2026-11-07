@@ -6,7 +6,6 @@ Env: BIZ_DATABASE_URL, BIZ_DBOS_SYSTEM_URL, BIZ_APP_DIR, BIZ_REPO_ROOT.
 
 from __future__ import annotations
 
-import importlib
 import os
 from pathlib import Path
 
@@ -29,21 +28,16 @@ def build_app():  # type: ignore[no-untyped-def]
     db.configure(url)
     sys_url = os.environ.get("BIZ_DBOS_SYSTEM_URL") or dbos_system_url(url)
     runner._CLIENT = DBOSClient(system_database_url=sys_url, lazy=True)  # type: ignore[attr-defined]
-    app = create_app(manifest)
-    hooks = ("routes", "owner_routes")
-    if any(
-        hasattr(importlib.import_module(f"biz_cap_{c}"), h)
-        for c in manifest.capabilities
-        for h in hooks
-    ):
-        # Capability routes need the runtime (bus, ports). Building it launches no DBOS.
-        rt = build_runtime(app_dir, root or find_repo_root(app_dir))
-        for name, router in capability_routes(rt):
-            # Public paths only: /webhooks/* is what the tunnel exposes; /v1 stays private.
-            app.include_router(router, prefix="/webhooks", tags=[name])
-        for name, router in capability_routes(rt, "owner_routes"):
-            # Owner/staff endpoints; the router itself requires a signed-in user.
-            app.include_router(router, prefix="/v1", tags=[name])
+    # The runtime resolves the composition's ports (mail, telephony, ...) and builds the
+    # capability routes. Building it launches no DBOS.
+    rt = build_runtime(app_dir, root or find_repo_root(app_dir))
+    app = create_app(manifest, mail=rt.ports.get("mail"))
+    for name, router in capability_routes(rt):
+        # Public paths only: /webhooks/* is what the tunnel exposes; /v1 stays private.
+        app.include_router(router, prefix="/webhooks", tags=[name])
+    for name, router in capability_routes(rt, "owner_routes"):
+        # Owner/staff endpoints; the router itself requires a signed-in user.
+        app.include_router(router, prefix="/v1", tags=[name])
     return app
 
 

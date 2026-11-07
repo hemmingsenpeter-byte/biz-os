@@ -14,6 +14,7 @@ The owner asked for these decisions to be made for them. Each one is below, with
 - **The confidence field on the receptionist's drafts stays required.** `confidence_below` fails closed on a missing value anyway, so requiring it only makes the failure visible earlier.
 - **Infinite and text money limits stay refused**, and the 2-not-3 cloud calls test stays: both are the fail-closed behaviour.
 - **`autonomy_defaults` in role.yaml is now read, but it can only tighten.** For a key `policy.yaml` doesn't name, the level is the lower of the composition's `default` and the pack's own default, so a role pack can never raise trust. A key `policy.yaml` names is decided by the file. Every current pack declares 2, the same as the apps' default, so nothing changes today.
+- **A budget-stopped run waits until the budget covers what it needs.** The resume reason now carries the amount (`budget-resume:<run>@<USD>`), and a wake-up made only of such reasons stays pending until `can_afford` that amount. Before, a raise too small for the stopped call woke the run and stopped it again on every heartbeat.
 - **Worktrees:** all four removed (the signals branch is merged). About 1.3 GB freed.
 - **M6 started, built on fakes, nothing live.**
   - **Xero adapter uses Xero's REST API over httpx, not xero-python** — this departs from CLAUDE.md's reuse list, like M365 did with msgraph-sdk. xero-python is synchronous (urllib3), our ports are async, and httpx is mocked the same way as every other port. The dependency is removed. Invoices and bills are created as **DRAFT only**, with a durable ledger (`port_xero_posts`, migration `0014`) plus Xero's `Idempotency-Key`. A create that may have reached Xero is reconciled by reference before any retry; a "sending" row under 2 minutes old is treated as in flight. It uses a Xero custom connection (client credentials); see `deploy/.env.example`.
@@ -36,7 +37,7 @@ The owner asked for these decisions to be made for them. Each one is below, with
   - No SOP runs the forecast yet (no trigger packet; `brief.daily` is M8).
   - POs reach payables only through `payables.po_record`: `po.issued` has no PO number, so procurement (M7) should call the tool or the schema needs a `number`.
   - The owner routes for bank changes exist, but there is no web screen for them yet.
-- **Still open from before:** a raised budget that still can't cover the next call wakes and stops on every heartbeat.
+
 
 ## 2026-11-07: kernel review fixes (before M6 money code)
 

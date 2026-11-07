@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import cast
 
 from sqlalchemy import Table, func, select, text
@@ -80,6 +81,27 @@ def schedule_cadence(session: Session, roles: dict[str, timedelta], now: datetim
     return woken
 
 
+BUDGET_RESUME = "budget-resume:"  # reason "budget-resume:<run_id>@<USD needed>"
+
+
+def resume_needed(reasons: list[str]) -> Decimal | None:
+    """If every reason resumes a budget-stopped run, the most any of them needs; else None.
+
+    Such a wake-up waits until the budget covers that amount, not merely until the role is
+    under its limit, so a raise too small for the stopped call doesn't wake it every beat.
+    """
+    if not reasons or not all(r.startswith(BUDGET_RESUME) for r in reasons):
+        return None
+    needed = Decimal(0)
+    for r in reasons:
+        amount = r.split("@", 1)[1] if "@" in r else ""
+        try:
+            needed = max(needed, Decimal(amount or 0))
+        except ArithmeticError:
+            continue
+    return needed
+
+
 def _requeue(session: Session, w: Wakeup) -> None:
     """Budget-stopped: keep the work. Back to pending, or merged into a newer pending one."""
     newer = session.scalar(
@@ -107,7 +129,10 @@ def run_heartbeat(
         name = f"heartbeat:{w.role}"
         if session.scalar(select(Schedule.id).where(Schedule.name == name)) is None:
             register_schedule(session, name, timedelta(hours=1), now)
-        if not budgets.can_spend(session, w.role, now):
+        needed = resume_needed(list(w.reasons))
+        if not budgets.can_spend(session, w.role, now) or (
+            needed is not None and not budgets.can_afford(session, w.role, needed, now)
+        ):
             _requeue(session, w)
             continue
         try:

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from biz_kernel import db
 from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
+from biz_kernel.heartbeats.service import BUDGET_RESUME  # wake-up reason: resume a stopped run
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
@@ -86,9 +87,6 @@ class RunnerContext:
     roles: dict[str, RoleSpec] = field(default_factory=dict)
     approval_poll_seconds: float = 3600.0
     budgets: BudgetBook | None = None
-
-
-BUDGET_RESUME = "budget-resume:"  # wake-up reason that resumes a budget-stopped run
 
 
 _CTX: RunnerContext | None = None
@@ -223,8 +221,8 @@ def _budgeted(run_id: str, role: str, step: Any) -> Any:
     while True:
         try:
             return step()
-        except BudgetExceeded:
-            _budget_stop(run_id, role)
+        except BudgetExceeded as exc:
+            _budget_stop(run_id, role, str(exc.needed))
         DBOS.recv(topic="budget", timeout_seconds=ctx().approval_poll_seconds)
         _set_waiting(run_id, None)  # back to running
 
@@ -235,7 +233,7 @@ def resume_budget_stopped(reasons: list[str], client: Any | None = None) -> list
     woken = []
     for reason in reasons:
         if reason.startswith(BUDGET_RESUME):
-            run_id = reason[len(BUDGET_RESUME) :]
+            run_id = reason[len(BUDGET_RESUME) :].split("@", 1)[0]
             if client is not None:
                 client.send(run_id, "resume", topic="budget")
             else:
@@ -245,13 +243,14 @@ def resume_budget_stopped(reasons: list[str], client: Any | None = None) -> list
 
 
 @DBOS.step(name="biz.sop.budget_stop")
-def _budget_stop(run_id: str, role: str) -> None:
+def _budget_stop(run_id: str, role: str, needed: str = "0") -> None:
     from sqlalchemy import select
 
     from biz_kernel.heartbeats.models import Wakeup
     from biz_kernel.heartbeats.service import enqueue
 
-    reason = f"{BUDGET_RESUME}{run_id}"
+    prefix = f"{BUDGET_RESUME}{run_id}@"
+    reason = f"{prefix}{needed}"
     with db.session_scope() as s:
         run = s.get(SopRun, run_id)
         assert run is not None
@@ -259,7 +258,7 @@ def _budget_stop(run_id: str, role: str) -> None:
             run.status = "budget_stopped"
             record(s, role, "sop.budget_stopped", run.sop, run_id=run_id)
         pending = s.scalar(select(Wakeup).where(Wakeup.role == role, Wakeup.status == "pending"))
-        if pending is None or reason not in pending.reasons:
+        if pending is None or not any(r.startswith(prefix) for r in pending.reasons):
             enqueue(s, role, reason, db.utcnow())
 
 

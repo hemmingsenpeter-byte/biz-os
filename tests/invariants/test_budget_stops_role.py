@@ -299,7 +299,8 @@ def test_budget_stop_mid_run_resumes_when_limit_raised(fresh_db):
                 return list(w.reasons) if w is not None else []
 
         _wait(lambda: run_status() == "budget_stopped")  # a clear state, not "running"
-        assert f"{runner.BUDGET_RESUME}{run_id}" in _wait(pending)  # the wake-up is kept
+        kept = _wait(pending)  # the wake-up is kept
+        assert any(r.startswith(f"{runner.BUDGET_RESUME}{run_id}@") for r in kept)
 
         def role_runner(role: str, reasons: list[str]) -> None:
             runner.resume_budget_stopped(reasons)
@@ -315,6 +316,8 @@ def test_budget_stop_mid_run_resumes_when_limit_raised(fresh_db):
             assert s.get(Task, run.task_id).status == "open"
             assert s.scalar(select(func.count()).select_from(Note)) == 0  # tool never ran
 
+        book.raise_limit("r", 6)  # under the limit again, but 4 spent + 3 needed is over 6
+        assert heartbeat() == [] and pending()  # no wake-and-stop on every heartbeat
         book.raise_limit("r", 10)
         assert heartbeat() == ["r"]
         result: Any = DBOS.retrieve_workflow(run_id).get_result()

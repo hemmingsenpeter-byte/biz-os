@@ -90,7 +90,9 @@ class PolicyEngine:
         """Strictest (lowest) level among the tool's own key and the SOP's decision type.
 
         A decision type can never loosen a tool's own setting; with neither configured
-        nor stored, the default applies.
+        nor stored, the default applies. A key named in policy.yaml is an upper bound: a stored
+        level (owner-set, promoted or demoted) can only be stricter, so lowering the file
+        always takes effect.
         """
         levels = []
         for key in (action.tool, action.decision_type):
@@ -98,10 +100,10 @@ class PolicyEngine:
                 continue
             configured = self.autonomy.get(key)
             stored = autonomy.level(session, action.actor, key, -1)
-            if stored != -1:
+            if configured is not None:
+                levels.append(int(configured) if stored == -1 else min(stored, int(configured)))
+            elif stored != -1:
                 levels.append(stored)
-            elif configured is not None:
-                levels.append(int(configured))
         if levels:
             return min(levels)
         return int(self.autonomy.get("default", DEFAULT_LEVEL))

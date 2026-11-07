@@ -54,3 +54,15 @@ def test_strictest_of_tool_and_decision_type(session):
     assert pol._level(session, _action()) == 3
     autonomy.record_approval(session, "r", "dt", unchanged=True)
     assert pol._level(session, _action()) == 3
+
+
+def test_policy_yaml_bounds_stored_levels(session):
+    # Owner set 4 earlier; a later policy.yaml edit to 2 must win. A demotion still sticks.
+    autonomy.set_level(session, "r", "dt", 4, "owner")
+    reg, pol = _setup({"default": 2, "dt": 2})
+    assert pol._level(session, _action()) == 2
+    reg, pol = _setup({"default": 2, "dt": 3})
+    assert pol._level(session, _action()) == 3
+    autonomy.record_outcome(session, "r", "dt", good=False, default=3)  # 4 -> 3
+    autonomy.record_outcome(session, "r", "dt", good=False, default=3)  # 3 -> 2
+    assert pol._level(session, _action()) == 2

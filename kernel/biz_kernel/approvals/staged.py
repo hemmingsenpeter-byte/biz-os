@@ -19,6 +19,7 @@ from biz_kernel.policy.types import Action, Deny, NeedsApproval
 from biz_kernel.tools.registry import CallResult, PolicyChecker, ToolRegistry
 
 OWNER = "owner"
+IDEMPOTENCY_KEY = "idempotency_key"
 
 
 class ApprovalError(Exception):
@@ -119,11 +120,17 @@ def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> Staged
 def edit(
     session: Session, op_id: uuid.UUID, new_inputs: dict[str, Any], by: str = ""
 ) -> StagedOperation:
-    """Change inputs: bumps the version and clears any approval."""
+    """Change inputs: bumps the version and clears any approval.
+
+    The operation's idempotency key is not the editor's to change: every version carries
+    the original key, so the send ledgers dedupe and an edit can never cause a second send.
+    """
     op = _locked(session, op_id)
     if op.status not in ("pending", "approved"):
         raise ApprovalError(f"operation is {op.status}, cannot edit")
     inputs = _json(new_inputs)
+    if IDEMPOTENCY_KEY in op.inputs:
+        inputs[IDEMPOTENCY_KEY] = op.inputs[IDEMPOTENCY_KEY]
     op.inputs, op.inputs_sha256 = inputs, digest(inputs)
     op.version += 1
     op.status = "pending"

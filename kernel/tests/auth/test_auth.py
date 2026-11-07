@@ -8,12 +8,18 @@ from biz_kernel.auth.users import create_user
 from sqlalchemy import select
 
 
+def _token(body: str) -> str:
+    m = re.search(r"token=(\S+)", body)
+    assert m is not None
+    return m.group(1)
+
+
 async def test_magic_link_and_session(client, session, mail):
     create_user(session, "staff@example.com", "staff", "Sam")
     r = client.post("/v1/auth/magic/request", json={"email": "Staff@Example.com"})
     assert r.status_code == 202
     assert len(mail.sent) == 1
-    token = re.search(r"token=(\S+)", mail.sent[0].body).group(1)
+    token = _token(mail.sent[0].body)
 
     assert client.get("/v1/auth/me").status_code == 401
     r = client.post("/v1/auth/magic/verify", json={"token": token})
@@ -100,13 +106,12 @@ def test_login_begin_and_finish_rejects_bad_response(client, session):
 
 def test_magic_link_works_once(client, session, mail):
     """Review finding 7: magic links can't be replayed."""
-    import re
 
     from biz_kernel.auth.users import create_user
 
     create_user(session, "once@example.com", "staff", "Once")
     client.post("/v1/auth/magic/request", json={"email": "once@example.com"})
-    token = re.search(r"token=(\S+)", mail.sent[-1].body).group(1)
+    token = _token(mail.sent[-1].body)
     assert client.post("/v1/auth/magic/verify", json={"token": token}).status_code == 200
     assert client.post("/v1/auth/magic/verify", json={"token": token}).status_code == 401
 

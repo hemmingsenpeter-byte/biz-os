@@ -45,7 +45,7 @@ def _run(kind: str, port: Any) -> None:
         asyncio.run(check(port, sample))
     else:
         result = check(port)
-        if inspect.isawaitable(result):
+        if inspect.iscoroutine(result):
             asyncio.run(result)
 
 

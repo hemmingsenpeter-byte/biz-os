@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from biz_kernel.audit.log import AuditEntry
@@ -11,7 +12,7 @@ from biz_port_fakes import FakeModel
 from sqlalchemy import select
 
 T0 = datetime(2026, 3, 10, tzinfo=UTC)
-S = {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}
+S: dict[str, Any] = {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}
 
 
 def gen(router, **kw):

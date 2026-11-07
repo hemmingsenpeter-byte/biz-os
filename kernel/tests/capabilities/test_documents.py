@@ -226,7 +226,7 @@ def _hook(client: TestClient, body: dict[str, Any], secret: str | None = SECRET)
     return client.post("/webhooks/documents/sign", json=body, headers=headers)
 
 
-COMPLETED = {
+COMPLETED: dict[str, Any] = {
     "event_type": "form.completed",
     "timestamp": "2030-01-02T03:04:05Z",
     "data": {

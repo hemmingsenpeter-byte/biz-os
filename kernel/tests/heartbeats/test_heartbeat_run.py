@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from biz_kernel.budgets import BudgetBook
 from biz_kernel.health import check_missed, register_schedule
@@ -12,7 +13,7 @@ def test_skips_stopped_role_and_leaves_note(session):
     book.charge(session, "sales", 1, "model", None, T0)
     enqueue(session, "sales", "x", T0)
     calls = []
-    sweeps = []
+    sweeps: list[Any] = []
     ran = run_heartbeat(session, lambda r, rs: calls.append(r), book, sweeps.append, T0)
     assert ran == [] and calls == [] and len(sweeps) == 1
     from biz_kernel.heartbeats import Wakeup

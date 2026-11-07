@@ -113,7 +113,7 @@ def main() -> None:
     wf_id = runner.run_id_for("r", "s", packet_id)
     if mode == "crash":
         runner.start_for_packet("r", uuid.UUID(packet_id), "demo.ping")
-    result = DBOS.retrieve_workflow(wf_id).get_result()
+    result: Any = DBOS.retrieve_workflow(wf_id).get_result()
     with db.session_scope() as s:
         notes = len(list(s.scalars(select(Note).where(Note.author == "t.step_one"))))
     print(f"RESULT {result['status']} notes={notes}")

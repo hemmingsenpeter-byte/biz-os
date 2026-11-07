@@ -19,6 +19,6 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy kernel/biz_kernel capabilities ports
+      - run: uv run mypy .
       - run: uv run pytest -p no:cacheprovider
       - run: uv run biz doctor apps/demo && uv run biz doctor apps/hive

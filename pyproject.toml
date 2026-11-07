@@ -65,3 +65,6 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
+# Two conftest.py files (root, kernel/tests) need package bases to have distinct names.
+explicit_package_bases = true
+exclude = '(^|/)(\.venv|\.claude|web|node_modules)/'

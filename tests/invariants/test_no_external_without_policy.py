@@ -31,7 +31,8 @@ def make_registry(sent: list[dict[str, Any]]) -> ToolRegistry:
 
 class Spy:
     def __init__(self, inner: PolicyEngine) -> None:
-        self.inner, self.seen = inner, []
+        self.inner = inner
+        self.seen: list[Any] = []
 
     def check(self, session, action):
         self.seen.append(action.tool)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 from biz_cap_demo_desk.models import DemoRequest
@@ -116,7 +117,7 @@ def test_demo_clerk_end_to_end(live) -> None:  # type: ignore[no-untyped-def]
 
     assert op.approver == approver
     decide(op.id, approver, approve=True, version=op.version)
-    result = DBOS.retrieve_workflow(run.id).get_result()
+    result: Any = DBOS.retrieve_workflow(run.id).get_result()
     assert result["status"] == "done"
 
     assert len(mail.sent) == 1

@@ -1,6 +1,7 @@
 """A role at 100% of its monthly budget makes no further paid calls; owner warned at 80%."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from biz_kernel.approvals import staged
@@ -316,7 +317,7 @@ def test_budget_stop_mid_run_resumes_when_limit_raised(fresh_db):
 
         book.raise_limit("r", 10)
         assert heartbeat() == ["r"]
-        result = DBOS.retrieve_workflow(run_id).get_result()
+        result: Any = DBOS.retrieve_workflow(run_id).get_result()
         assert result["status"] == "done"
         with db.session_scope() as s:
             run = s.get(SopRun, run_id)

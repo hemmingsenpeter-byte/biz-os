@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,23 @@ from biz_kernel.tools.registry import ToolRegistry
 DEFAULT_APPROVER = "owner"
 DEFAULT_LEVEL = 2  # unknown decision types recommend; they never act alone
 MAX_DEPTH = 8
+
+
+class BadMoney(ValueError):
+    """A money amount or limit that is not a finite, non-negative number."""
+
+
+def _money(value: Any, what: str) -> float:
+    """A finite, non-negative number, or BadMoney. Booleans and strings are not amounts."""
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        raise BadMoney(f"money {what} {value!r} is not a number")
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        raise BadMoney(f"money {what} {value!r} is not a usable number") from None
+    if not math.isfinite(number) or number < 0:
+        raise BadMoney(f"money {what} {value!r} must be finite and not negative")
+    return number
 
 
 class PolicyEngine:
@@ -49,13 +68,14 @@ class PolicyEngine:
         return self.authority.get("default", DEFAULT_APPROVER)
 
     def _limit(self, action: Action) -> float | None:
+        """The configured limit, None if there is none. Raises BadMoney for an unusable one."""
         per = self.limits.get("max_amount")
         if isinstance(per, dict):
             for key in (action.tool, action.decision_type, "default"):
                 if key and key in per:
-                    return float(per[key])
+                    return _money(per[key], "limit")
             return None
-        return float(per) if per is not None else None
+        return _money(per, "limit") if per is not None else None
 
     def _hard_deny(self, action: Action) -> Deny | None:
         if action.tool in (self.hard_rules.get("deny_tools") or []):
@@ -96,12 +116,18 @@ class PolicyEngine:
         approver = self.approver_for(action)
         over_limit: NeedsApproval | None = None
         if action.side_effect == SideEffect.MONEY:
-            limit = self._limit(action)
+            # Fail closed: a negative, NaN, infinite or non-numeric amount or limit would
+            # slip past `amount > limit`, so it is a Deny that no approval can override.
+            try:
+                limit = self._limit(action)
+                amount = None if action.amount is None else _money(action.amount, "amount")
+            except BadMoney as exc:
+                return Deny(str(exc))
             if limit is None:
                 over_limit = NeedsApproval(approver, "no money limit configured")  # fail closed
-            elif action.amount is None:
+            elif amount is None:
                 over_limit = NeedsApproval(approver, "money action without an amount")
-            elif action.amount > limit:
+            elif amount > limit:
                 if self.limits.get("over_limit", "approval") == "deny":
                     return Deny(f"amount {action.amount} is over the limit {limit}")
                 over_limit = NeedsApproval(

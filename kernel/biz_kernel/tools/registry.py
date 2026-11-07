@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
 import jsonschema
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from biz_kernel import db
 from biz_kernel.audit.log import record
-from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
+from biz_kernel.budgets.service import BudgetBook
 from biz_kernel.policy.types import GATED, Action, Allow, Decision, SideEffect
 
 
@@ -98,12 +100,8 @@ class ToolRegistry:
         metered = cost > 0 and self.budgets is not None
         if metered:  # approval never bypasses the budget: checked before policy and execution
             assert self.budgets is not None
-            if not self.budgets.can_spend(session, actor, self.now()):
-                raise BudgetExceeded(
-                    actor,
-                    self.budgets.spent(session, actor, self.now()),
-                    self.budgets.limits[actor],
-                )
+            # The cost is known up front, so a call that would overshoot never starts.
+            self.budgets.preflight(session, actor, cost, self.now())
         decision: Decision = Allow("ungated")
         if tool.side_effect in GATED or tool.inner:
             action = Action(
@@ -129,9 +127,18 @@ class ToolRegistry:
         if "actor" in args:
             raise ValueError("`actor` is set by the kernel, never by the caller")
         extra = {"actor": actor} if tool.wants_actor else {}
-        output = tool.fn(session=session, **extra, **args)
-        if metered:
+        charged = None
+        if metered:  # reserve under the role's lock (held to commit), so no race overshoots
             assert self.budgets is not None
-            self.budgets.charge(session, actor, cost, "tool", name, self.now())
+            charged = self.budgets.charge(session, actor, cost, "tool", name, self.now())
+        try:
+            output = tool.fn(session=session, **extra, **args)
+        except Exception:
+            if charged is not None and self.budgets is not None:
+                # A failed call is not charged. If the refund itself fails, the transaction
+                # is failing anyway and its rollback drops the charge.
+                with contextlib.suppress(SQLAlchemyError):
+                    self.budgets.refund(session, charged)
+            raise
         record(session, actor, "tool_call", name, args=args)
         return CallResult(decision, output)

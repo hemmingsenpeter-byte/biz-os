@@ -34,7 +34,7 @@ def _no_live_network():  # type: ignore[no-untyped-def]
 def pg_server():  # type: ignore[no-untyped-def]
     import pgserver
 
-    return pgserver.get_server(tempfile.mkdtemp(prefix="bizpg-"), cleanup_mode="stop")
+    return pgserver.get_server(tempfile.mkdtemp(prefix="bizpg-"), cleanup_mode="delete")
 
 
 def sa_url(srv, database: str) -> str:  # type: ignore[no-untyped-def]

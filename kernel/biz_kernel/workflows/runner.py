@@ -8,6 +8,7 @@ must also be idempotent (each tool call gets a stable idempotency key).
 from __future__ import annotations
 
 import asyncio
+import functools
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from biz_kernel import db
 from biz_kernel.audit.log import record
+from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
@@ -80,6 +82,10 @@ class RunnerContext:
     evidence: EvidenceHook
     roles: dict[str, RoleSpec] = field(default_factory=dict)
     approval_poll_seconds: float = 3600.0
+    budgets: BudgetBook | None = None
+
+
+BUDGET_RESUME = "budget-resume:"  # wake-up reason that resumes a budget-stopped run
 
 
 _CTX: RunnerContext | None = None
@@ -173,11 +179,12 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
             state["steps"][step["id"]] = {"output": {"skipped": True}}
             continue
         if kind == "tool":
-            res = _tool_step(run_id, role, step, state)
+            res = _budgeted(run_id, role, functools.partial(_tool_step, run_id, role, step, state))
             while res["status"] == "staged":
                 if _await_decision(run_id, res["op_id"]) != "approved":
                     return _end(run_id, "rejected")
-                res = _execute_staged(run_id, role, step["id"], res["op_id"])
+                stage = functools.partial(_execute_staged, run_id, role, step["id"], res["op_id"])
+                res = _budgeted(run_id, role, stage)
             state["steps"][step["id"]] = {"output": res["output"]}
         elif kind == "approve":
             op_id = _approval_step(run_id, role, step, state)
@@ -195,6 +202,56 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
         else:
             raise ValueError(f"unknown step kind {kind}")
     return _end(run_id, "done")
+
+
+def _budgeted(run_id: str, role: str, step: Any) -> Any:
+    """Run a step; if the role's budget stops it, park the run until the budget allows.
+
+    The run is marked budget_stopped (not left "running") and a heartbeat wake-up is
+    queued. The heartbeat keeps that wake-up pending while the role is stopped; once the
+    limit is raised it sends the resume message and the step is tried again.
+    """
+    while True:
+        try:
+            return step()
+        except BudgetExceeded:
+            _budget_stop(run_id, role)
+        DBOS.recv(topic="budget", timeout_seconds=ctx().approval_poll_seconds)
+        _set_waiting(run_id, None)  # back to running
+
+
+def resume_budget_stopped(reasons: list[str], client: Any | None = None) -> list[str]:
+    """Wake every budget-stopped run named in these wake-up reasons. Returns their ids."""
+    client = client or globals().get("_CLIENT")
+    woken = []
+    for reason in reasons:
+        if reason.startswith(BUDGET_RESUME):
+            run_id = reason[len(BUDGET_RESUME) :]
+            if client is not None:
+                client.send(run_id, "resume", topic="budget")
+            else:
+                DBOS.send(run_id, "resume", topic="budget")
+            woken.append(run_id)
+    return woken
+
+
+@DBOS.step(name="biz.sop.budget_stop")
+def _budget_stop(run_id: str, role: str) -> None:
+    from sqlalchemy import select
+
+    from biz_kernel.heartbeats.models import Wakeup
+    from biz_kernel.heartbeats.service import enqueue
+
+    reason = f"{BUDGET_RESUME}{run_id}"
+    with db.session_scope() as s:
+        run = s.get(SopRun, run_id)
+        assert run is not None
+        if run.status != "budget_stopped":
+            run.status = "budget_stopped"
+            record(s, role, "sop.budget_stopped", run.sop, run_id=run_id)
+        pending = s.scalar(select(Wakeup).where(Wakeup.role == role, Wakeup.status == "pending"))
+        if pending is None or reason not in pending.reasons:
+            enqueue(s, role, reason, db.utcnow())
 
 
 def _picklable(fn: Any) -> Any:

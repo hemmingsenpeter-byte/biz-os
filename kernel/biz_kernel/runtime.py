@@ -108,6 +108,7 @@ class Runtime:
 
     def run_role(self, role: str, reasons: list[str]) -> None:
         """Called by the heartbeat: start the SOPs triggered by each coalesced packet."""
+        runner.resume_budget_stopped(reasons)  # the heartbeat only gets here once affordable
         for reason in reasons:
             if reason.startswith(PACKET_REASON):
                 packet_id, packet_type = reason[len(PACKET_REASON) :].split(":", 1)
@@ -264,6 +265,7 @@ def build_runtime(
             gate=gate,
             evidence=KernelEvidence(rules),
             approval_poll_seconds=approval_poll_seconds,
+            budgets=rt.budgets,
             roles={
                 name: runner.RoleSpec(
                     name=name,

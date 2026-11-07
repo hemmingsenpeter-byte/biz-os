@@ -9,6 +9,9 @@ authority:
 limits:
   max_amount: { default: 0 }   # no money actions at M0
   over_limit: deny
+  # owner to set before money actions go live (M6): a business-wide total per local day
+  # max_daily: { default: 0 }
+  day_timezone: Pacific/Auckland
 hard_rules:
   deny_tools: []
   deny_decision_types: []

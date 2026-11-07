@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from sqlalchemy.orm import Session
 
 from biz_kernel.approvals import autonomy
+from biz_kernel.db import utcnow
+from biz_kernel.policy import spend
 from biz_kernel.policy.types import (
     GATED,
     Action,
@@ -45,6 +50,27 @@ def _money(value: Any, what: str) -> float:
     return number
 
 
+def limit_problems(limits: dict[str, Any]) -> list[str]:
+    """Config problems in `limits` (biz doctor); at runtime each one is a Deny."""
+    out = []
+    for name in ("max_amount", "max_daily"):
+        per = limits.get(name)
+        values = per if isinstance(per, dict) else {} if per is None else {"": per}
+        for key, value in values.items():
+            try:
+                _money(value, "limit")
+            except BadMoney as exc:
+                out.append(f"limits.{name}{'.' + key if key else ''}: {exc}")
+    tz = limits.get("day_timezone", "UTC")
+    try:
+        ZoneInfo(tz)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        out.append(f"limits.day_timezone {tz!r} is not a known time zone")
+    if limits.get("over_limit", "approval") not in ("approval", "deny"):
+        out.append("limits.over_limit must be approval or deny")
+    return out
+
+
 class PolicyEngine:
     """config keys: limits, authority, hard_rules, autonomy (see docs/SPEC.md)."""
 
@@ -55,6 +81,7 @@ class PolicyEngine:
         self.hard_rules: dict[str, Any] = cfg.get("hard_rules") or {}
         self.autonomy: dict[str, int] = cfg.get("autonomy") or {}
         self.registry = registry
+        self.now: Callable[[], datetime] = utcnow
 
     @classmethod
     def from_yaml(cls, path: str | Path, registry: ToolRegistry | None = None) -> PolicyEngine:
@@ -76,6 +103,36 @@ class PolicyEngine:
                     return _money(per[key], "limit")
             return None
         return _money(per, "limit") if per is not None else None
+
+    def _daily(self, session: Session, action: Action) -> tuple[float, Decimal] | None:
+        """(daily limit, spent so far today) or None. Raises BadMoney for an unusable limit.
+
+        `limits.max_daily` is keyed like max_amount. A tool or decision-type key counts only
+        that key's spend; `default` (or a bare number) counts every money action.
+        """
+        per = self.limits.get("max_daily")
+        if per is None:
+            return None
+        narrow: dict[str, str | None] = {}
+        if isinstance(per, dict):
+            if action.tool in per:
+                raw, narrow = per[action.tool], {"tool": action.tool}
+            elif action.decision_type and action.decision_type in per:
+                raw, narrow = per[action.decision_type], {"decision_type": action.decision_type}
+            elif "default" in per:
+                raw = per["default"]
+            else:
+                return None
+        else:
+            raw = per
+        limit = _money(raw, "daily limit")
+        tz = self.limits.get("day_timezone", "UTC")
+        try:
+            ZoneInfo(tz)
+        except (TypeError, ValueError, ZoneInfoNotFoundError):
+            raise BadMoney(f"day_timezone {tz!r} is not a known time zone") from None
+        spend.lock(session)  # held to commit, so the check and the ledger insert can't race
+        return limit, spend.spent_today(session, self.now(), tz, **narrow)
 
     def _hard_deny(self, action: Action) -> Deny | None:
         if action.tool in (self.hard_rules.get("deny_tools") or []):
@@ -135,6 +192,17 @@ class PolicyEngine:
                 over_limit = NeedsApproval(
                     approver, f"amount {action.amount} is over the limit {limit}"
                 )
+            try:
+                daily = self._daily(session, action)
+            except BadMoney as exc:
+                return Deny(str(exc))
+            if daily is not None and amount is not None:
+                day_limit, spent = daily
+                if float(spent) + amount > day_limit:
+                    why = f"amount {action.amount} takes today's total {spent} over {day_limit}"
+                    if self.limits.get("over_limit", "approval") == "deny":
+                        return Deny(why)
+                    over_limit = over_limit or NeedsApproval(approver, why)
         lvl = self._level(session, action)
         if lvl <= 2:
             return NeedsApproval(approver, f"autonomy level {lvl} requires approval")

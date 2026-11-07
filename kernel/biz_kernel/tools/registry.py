@@ -6,6 +6,7 @@ import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Protocol
 
 import jsonschema
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 from biz_kernel import db
 from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook
+from biz_kernel.policy import spend
 from biz_kernel.policy.types import GATED, Action, Allow, Decision, SideEffect
 
 
@@ -141,4 +143,23 @@ class ToolRegistry:
                     self.budgets.refund(session, charged)
             raise
         record(session, actor, "tool_call", name, args=args)
+        if self.moves_money(name) and args.get("amount") is not None:
+            # Feeds limits.max_daily. Policy already refused an unusable amount.
+            spend.add(
+                session,
+                actor=actor,
+                tool=name,
+                decision_type=decision_type,
+                amount=Decimal(str(args["amount"])),
+                now=self.now(),
+            )
         return CallResult(decision, output)
+
+    def moves_money(self, name: str, depth: int = 0) -> bool:
+        """The tool, or any tool it wraps, is a money action."""
+        tool = self.tools.get(name)
+        if tool is None or depth > 8:
+            return False
+        return tool.side_effect == SideEffect.MONEY or any(
+            self.moves_money(i, depth + 1) for i in tool.inner
+        )

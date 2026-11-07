@@ -111,6 +111,10 @@ def doctor_cmd(
             report(True, f"heartbeat cadence {cadence} for role {r}")
         except ValueError:
             report(False, f"heartbeat cadence {cadence!r} for role {r} does not parse")
+    from biz_kernel.policy.engine import limit_problems
+
+    problems = limit_problems(manifest.policy.get("limits") or {})
+    report(not problems, "money limits are usable" + "".join(f"\n  {p}" for p in problems))
     if failed:
         raise typer.Exit(1)
 

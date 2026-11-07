@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from biz_kernel.approvals import autonomy
 from biz_kernel.policy.engine import PolicyEngine
 from biz_kernel.policy.types import Action, Allow, Deny, NeedsApproval, SideEffect
@@ -28,7 +30,7 @@ def test_authority_and_levels(session):
 
 
 def test_money_limit(session):
-    cfg = {"autonomy": {"default": 3}, "limits": {"max_amount": {"default": 100}}}
+    cfg: dict[str, Any] = {"autonomy": {"default": 3}, "limits": {"max_amount": {"default": 100}}}
     pol = PolicyEngine(cfg)
     m = SideEffect.MONEY
     assert isinstance(pol.check(session, act("p", m, amount=50)), Allow)

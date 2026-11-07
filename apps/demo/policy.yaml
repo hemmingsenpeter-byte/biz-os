@@ -7,6 +7,7 @@ authority:
   default: demo_owner
 limits:
   max_amount: { default: 500 }
+  max_daily: { default: 2000 }   # running total per local day, every role's money actions
   over_limit: deny
 hard_rules:
   deny_tools: []

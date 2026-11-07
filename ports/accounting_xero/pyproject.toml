@@ -1,12 +1,11 @@
 [project]
 name = "biz-port-accounting-xero"
 version = "1.0.0"
-description = "Xero accounting adapter: contacts, draft invoices and bills, payments"
+description = "Xero accounting adapter (REST over httpx): contacts, draft invoices and bills, payments"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "biz-kernel",
     "httpx>=0.27",
-    "xero-python>=15.3.0",
 ]
 
 [tool.uv.sources]

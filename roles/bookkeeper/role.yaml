@@ -1,0 +1,21 @@
+role: bookkeeper
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", capabilities: [invoicing] }
+mission: Invoice every reached milestone promptly and exactly as agreed, with the owner approving what is posted.
+goals: [invoice_turnaround_hours]
+heartbeat: { cadence: 30m, triggers: [milestone.reached] }
+budget_usd_month: 5
+topics:
+  - name: milestone_invoicing
+    sop: sops/milestone_invoicing.yaml
+    tools: [invoicing.milestone_invoice, invoicing.invoice_post, invoicing.invoice_read]
+sources: [business, "job:*", "role:bookkeeper"]
+consumes: [milestone.reached]
+publishes: [invoice.issued, escalation.raised]
+evidence:
+  milestone_invoicing: ["approval.granted", "packet:invoice.issued"]
+autonomy_defaults: { invoice_posting: 2 }
+model_tier: {}
+escalate_when:
+  - invoice_not_ready
+slots: []

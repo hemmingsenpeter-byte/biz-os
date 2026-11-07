@@ -97,3 +97,12 @@ def test_twilio_adapter_passes_contract_suite() -> None:
 def test_m365_adapter_passes_mail_and_calendar_suites() -> None:
     asyncio.run(suite.check_mail_port(_m365()))
     asyncio.run(suite.check_calendar_port(_m365()))
+
+
+def test_xero_adapter_passes_accounting_suite() -> None:
+    import httpx
+    from biz_port_accounting_xero import XeroAccounting
+    from biz_port_accounting_xero.testing import FakeXero
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(FakeXero()))
+    asyncio.run(suite.check_accounting_port(XeroAccounting("id", "secret", http=http)))

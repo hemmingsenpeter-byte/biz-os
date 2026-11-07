@@ -1,0 +1,212 @@
+"""M6 (first slice): milestone reached -> invoice drafted -> owner approves -> posted as a
+draft to accounting -> invoice.issued. Runs against apps/demo and apps/hive with every port
+faked."""
+
+from __future__ import annotations
+
+import time
+import uuid
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+import pytest
+from biz_kernel import db
+from biz_kernel.approvals.models import StagedOperation
+from biz_kernel.models_registry import import_all_models
+from biz_kernel.packets.bus import Packet
+from biz_kernel.records.models import Job, Party, Person, Task
+from biz_kernel.runtime import build_runtime
+from biz_kernel.workflows.gate import decide
+from biz_kernel.workflows.models import SopRun
+from biz_port_fakes import (
+    FakeAccounting,
+    FakeCalendar,
+    FakeMail,
+    FakeModel,
+    FakeSign,
+    FakeSpeech,
+    FakeStorage,
+    FakeTelephony,
+)
+from dbos import DBOS
+from sqlalchemy import create_engine, make_url, select
+
+ROOT = Path(__file__).parents[2]
+
+
+def _wait(pred, timeout: float = 30.0):  # type: ignore[no-untyped-def]
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        value = pred()
+        if value:
+            return value
+        time.sleep(0.1)
+    raise AssertionError("timed out waiting")
+
+
+@pytest.fixture(params=["demo", "hive"])
+def rt(fresh_db: str, monkeypatch, request):  # type: ignore[no-untyped-def]
+    import biz_cap_invoicing.models  # noqa: F401
+
+    eng = create_engine(fresh_db)
+    import_all_models()
+    db.Base.metadata.create_all(eng)
+    db.configure(fresh_db)
+    url = make_url(fresh_db)
+    sys_url = url.set(database=f"{url.database}_sys").render_as_string(hide_password=False)
+
+    def no_real_ports(name: str):  # type: ignore[no-untyped-def]
+        raise AssertionError(f"port {name} was not overridden with a fake")
+
+    monkeypatch.setattr("biz_kernel.runtime.resolve_port", no_real_ports)
+    ports = {
+        "mail": FakeMail(),
+        "telephony": FakeTelephony(),
+        "calendar": FakeCalendar(),
+        "model_local": FakeModel(),
+        "model_cloud": FakeModel(),
+        "storage": FakeStorage(),
+        "sign": FakeSign(),
+        "speech": FakeSpeech(),
+        "accounting": FakeAccounting(),
+    }
+    runtime = build_runtime(
+        ROOT / "apps" / request.param, ROOT, ports=ports, approval_poll_seconds=1
+    )
+    DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
+    DBOS.launch()
+    yield runtime
+    DBOS.destroy(destroy_registry=False)
+    eng.dispose()
+
+
+def _seed(rt: Any) -> uuid.UUID:
+    with db.session_scope() as s:
+        party = Party(kind="organisation", name="Client Co")
+        s.add(party)
+        s.flush()
+        s.add(Person(party_id=party.id, full_name="Pat", email="pat@example.com"))
+        job = Job(
+            kind="project",
+            stage="won",
+            client_party_id=party.id,
+            value_amount=Decimal("20000"),
+            currency="NZD",
+        )
+        s.add(job)
+        s.flush()
+        rt.registry.get("invoicing.stages_set").fn(
+            session=s,
+            job_id=str(job.id),
+            stages=[{"name": "Deposit", "pct": 25}, {"name": "Completion", "pct": 75}],
+        )
+        return job.id
+
+
+def _milestone(rt: Any, job_id: uuid.UUID, name: str) -> uuid.UUID:
+    with db.session_scope() as s:
+        return rt.bus.publish(
+            s,
+            type="milestone.reached",
+            from_part="test",
+            summary=f"Milestone reached: {name}",
+            payload={"milestone_id": str(uuid.uuid4()), "job_id": str(job_id), "name": name},
+            job_id=job_id,
+        ).id
+
+
+def _run(packet_id: uuid.UUID) -> SopRun:
+    def find() -> SopRun | None:
+        with db.session_scope() as s:
+            run = s.get(SopRun, f"bookkeeper:milestone_invoicing:{packet_id}")
+            if run is not None:
+                s.expunge(run)
+            return run
+
+    return _wait(find)
+
+
+def _packets(type_: str) -> list[Packet]:
+    with db.session_scope() as s:
+        rows = list(s.scalars(select(Packet).where(Packet.type == type_)))
+        s.expunge_all()
+        return rows
+
+
+def _waiting_op(run: SopRun) -> StagedOperation:
+    def waiting():  # type: ignore[no-untyped-def]
+        with db.session_scope() as s:
+            r = s.get(SopRun, run.id)
+            if r is None or r.status != "waiting" or not r.waiting_op_id:
+                return None
+            op = s.get(StagedOperation, uuid.UUID(r.waiting_op_id))
+            s.expunge(op)
+            return op
+
+    return _wait(waiting)
+
+
+def test_milestone_is_invoiced_after_approval(rt: Any) -> None:
+    acct: FakeAccounting = rt.ports["accounting"]
+    job_id = _seed(rt)
+    packet_id = _milestone(rt, job_id, "Deposit")
+    assert "bookkeeper" in rt.tick()
+    run = _run(packet_id)
+    op = _waiting_op(run)
+    assert op.tool == "invoicing.invoice_post" and op.inputs["amount"] == "5000.00"
+    assert acct.invoices == {}, "nothing is posted before the owner approves"
+    decide(op.id, op.approver, approve=True, version=op.version)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    assert len(acct.invoices) == 1
+    issued = _packets("invoice.issued")
+    assert len(issued) == 1 and issued[0].payload["total_minor"] == 500000
+    assert issued[0].payload["currency"] == "NZD"
+    with db.session_scope() as s:
+        assert s.get(Task, run.task_id).status == "done"
+
+
+def test_unknown_stage_escalates_and_posts_nothing(rt: Any) -> None:
+    acct: FakeAccounting = rt.ports["accounting"]
+    job_id = _seed(rt)
+    packet_id = _milestone(rt, job_id, "Handover")
+    assert "bookkeeper" in rt.tick()
+    run = _run(packet_id)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "escalated"
+    assert acct.invoices == {} and _packets("invoice.issued") == []
+    esc = _packets("escalation.raised")
+    assert len(esc) == 1 and esc[0].payload["raised_by"] == "bookkeeper"
+    with db.session_scope() as s:
+        assert s.get(Task, run.task_id).status == "open"
+
+
+def test_payment_is_reconciled_to_the_invoice_once(rt: Any) -> None:
+    from biz_cap_invoicing.models import Invoice
+    from biz_kernel.contracts.ports import Payment
+
+    acct: FakeAccounting = rt.ports["accounting"]
+    job_id = _seed(rt)
+    packet_id = _milestone(rt, job_id, "Deposit")
+    rt.tick()
+    run = _run(packet_id)
+    op = _waiting_op(run)
+    decide(op.id, op.approver, approve=True, version=op.version)
+    DBOS.retrieve_workflow(run.id).get_result()
+    posted = next(iter(acct.invoices.values()))
+    acct.payments.append(
+        Payment(
+            ref=posted.model_copy(update={"id": "pay-1"}),
+            amount=Decimal("5000.00"),
+            currency="NZD",
+            paid_at=db.utcnow(),
+            invoice_ref=posted,
+        )
+    )
+    assert rt.poll() == 1
+    assert rt.poll() == 0  # the same payment is never counted twice
+    received = _packets("payment.received")
+    assert len(received) == 1 and received[0].payload["amount_minor"] == 500000
+    with db.session_scope() as s:
+        inv = s.scalars(select(Invoice)).one()
+        assert received[0].payload["invoice_id"] == str(inv.id)
+        assert inv.status == "paid" and inv.paid == Decimal("5000.00")

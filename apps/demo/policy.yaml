@@ -19,6 +19,7 @@ autonomy:            # ladder level per decision type: 1 draft, 2 recommend, 3 a
   missed_call_text_back: 3   # fixed template, act and report: this proves the path in the demo
   meeting_offer_sending: 2
   meeting_booking: 2
+  invoice_posting: 2          # the owner approves every invoice before it is posted
 comms:               # deterministic send gate (capabilities/comms)
   banned_phrases: []    # case-insensitive phrases that block a message
   link_domains: []      # allowed link hosts in replies; empty = no links allowed
@@ -33,4 +34,5 @@ budgets_usd_month:
   demo_clerk: 10
   receptionist: 5
   estimator: 40
+  bookkeeper: 5
 high_stakes: []

@@ -1,0 +1,28 @@
+name: milestone_invoicing
+trigger: milestone.reached
+goal_key: invoice_turnaround_hours
+task: { kind: milestone_invoicing, title: "Invoice milestone: {{packet.summary}}" }
+steps:
+  - id: draft
+    kind: tool
+    tool: invoicing.milestone_invoice
+    args:
+      job_id: "{{packet.payload.job_id}}"
+      milestone_id: "{{packet.payload.milestone_id}}"
+      name: "{{packet.payload.name}}"
+  - id: post   # external: staged for the owner, who sees the exact amount
+    kind: tool
+    tool: invoicing.invoice_post
+    decision_type: invoice_posting
+    args:
+      invoice_id: "{{steps.draft.output.invoice_id}}"
+      amount: "{{steps.draft.output.amount}}"
+  - id: issued
+    kind: publish
+    packet: invoice.issued
+    summary: "Invoice {{steps.post.output.reference}} posted: {{packet.summary}}"
+    payload:
+      invoice_id: "{{steps.post.output.invoice_id}}"
+      party_id: "{{steps.post.output.party_id}}"
+      total_minor: "{{steps.post.output.total_minor}}"
+      currency: "{{steps.post.output.currency}}"

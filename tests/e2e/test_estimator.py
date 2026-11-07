@@ -120,9 +120,14 @@ def rt(fresh_db: str, monkeypatch, app_name: str):  # type: ignore[no-untyped-de
 
 
 def _generic(name: str):  # type: ignore[no-untyped-def]
-    from biz_port_fakes import FakeCalendar, FakeMail, FakeTelephony
+    from biz_port_fakes import FakeAccounting, FakeCalendar, FakeMail, FakeTelephony
 
-    return {"mail": FakeMail, "telephony": FakeTelephony, "calendar": FakeCalendar}[name]()
+    return {
+        "mail": FakeMail,
+        "telephony": FakeTelephony,
+        "calendar": FakeCalendar,
+        "accounting": FakeAccounting,
+    }[name]()
 
 
 def _publish(rt, type_: str, payload: dict, job_id: uuid.UUID, summary: str) -> uuid.UUID:  # type: ignore[no-untyped-def]

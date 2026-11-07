@@ -1,6 +1,6 @@
 name: demo
 kernel: "1.x"
-capabilities: [demo_desk, intake, booking, comms, quoting, documents, voice_capture]
+capabilities: [demo_desk, intake, booking, comms, quoting, documents, voice_capture, invoicing]
 ports:
   mail: fake_mail
   telephony: fake_telephony
@@ -10,7 +10,8 @@ ports:
   storage: fake_storage
   sign: fake_sign
   speech: fake_speech
-roles: [demo_clerk, receptionist, estimator]
+  accounting: fake_accounting
+roles: [demo_clerk, receptionist, estimator, bookkeeper]
 industries: [demo_trade]
 policy: ./policy.yaml
 goals: ./goals.yaml

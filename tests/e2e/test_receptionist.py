@@ -23,6 +23,7 @@ from biz_kernel.runtime import build_runtime, capability_routes
 from biz_kernel.workflows.gate import decide
 from biz_kernel.workflows.models import SopRun
 from biz_port_fakes import (
+    FakeAccounting,
     FakeCalendar,
     FakeMail,
     FakeModel,
@@ -131,6 +132,7 @@ def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
         "storage": FakeStorage(),
         "sign": FakeSign(),
         "speech": FakeSpeech(),
+        "accounting": FakeAccounting(),
     }
     rt = build_runtime(ROOT / "apps" / app, ROOT, ports=ports, approval_poll_seconds=1)
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})

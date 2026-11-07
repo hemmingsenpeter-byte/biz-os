@@ -1,0 +1,13 @@
+name: no_payment_stage
+input:
+  packet:
+    type: milestone.reached
+    summary: "Milestone reached: handover"
+    payload:
+      milestone_id: 0190f0e0-0000-7000-8000-0000000000c3
+      job_id: 0190f0e0-0000-7000-8000-0000000000c2
+      name: Not a stage
+expect:
+  packets:
+    - type: escalation.raised
+  run_status: escalated

@@ -9,6 +9,7 @@ from biz_kernel.memory.service import curate
 from biz_kernel.models_registry import import_all_models
 from biz_kernel.runtime import build_runtime
 from biz_port_fakes import (
+    FakeAccounting,
     FakeCalendar,
     FakeMail,
     FakeModel,
@@ -39,6 +40,7 @@ def test_seed_and_recall(fresh_db: str, app: str, role: str) -> None:
         "storage": FakeStorage(),
         "sign": FakeSign(),
         "speech": FakeSpeech(),
+        "accounting": FakeAccounting(),
     }
     rt = build_runtime(ROOT / "apps" / app, ROOT, ports=fakes)
     assert rt.seed_memory() > 0

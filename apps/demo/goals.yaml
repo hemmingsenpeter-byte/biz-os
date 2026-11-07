@@ -5,3 +5,4 @@ goals:
   - { key: quote_turnaround_hours, name: Quote turnaround, unit: hours, target: 48, direction: down }
   - { key: estimate_accuracy_pct, name: Estimate accuracy, unit: percent, target: 90, direction: up }
   - { key: win_rate_pct, name: Win rate, unit: percent, target: 30, direction: up }
+  - { key: invoice_turnaround_hours, name: Invoice turnaround, unit: hours, target: 24, direction: down }

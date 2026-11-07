@@ -15,7 +15,7 @@ import jsonschema
 from sqlalchemy.orm import Session
 
 from biz_kernel.audit.log import record
-from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
+from biz_kernel.budgets.service import BudgetBook
 from biz_kernel.models import usage as usage_mod
 
 Tier = Literal["local", "cloud"]
@@ -122,7 +122,14 @@ class Router:
         def cloud_allowed() -> bool:
             if self.cloud is None:
                 return False
-            if metered and not book.can_spend(session, role, now):  # type: ignore[arg-type]
+            # Estimate the next call from this task's costliest call this month, so a call
+            # that would take the role over its limit is never started.
+            if metered and not book.can_afford(
+                session,  # type: ignore[arg-type]
+                role,  # type: ignore[arg-type]
+                book.estimate(session, role, task, now),  # type: ignore[arg-type]
+                now,
+            ):
                 result.flagged = True  # rule 5: stay local, owner reviews
                 return False
             return True
@@ -136,10 +143,10 @@ class Router:
                 used.cost_usd = Decimal(0)
             result.usage = result.usage + used
             result.attempts += 1
-            if metered:
-                try:
-                    book.charge(session, role, used.cost_usd, "model", task, now)  # type: ignore[arg-type]
-                except BudgetExceeded:
+            if metered and used.cost_usd > 0:  # free (local) calls leave no ledger row
+                # The call has returned, so its cost is real: always record it.
+                book.charge(session, role, used.cost_usd, "model", task, now, incurred=True)  # type: ignore[arg-type]
+                if not book.can_spend(session, role, now):  # type: ignore[arg-type]
                     result.flagged = True
             return out
 

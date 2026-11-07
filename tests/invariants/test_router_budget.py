@@ -31,12 +31,13 @@ def test_router_budget(session):
         asyncio.run(router.generate("big", "s", [], SCHEMA, session=session, role="clerk", now=T0))
         for _ in range(5)
     ]
-    assert [r.tier for r in results] == ["cloud", "cloud", "cloud", "local", "local"]
-    assert len(cloud.calls) == 3  # 4 + 4 + 4 reaches 12 >= 10, then it stops
-    assert [r.flagged for r in results] == [False, False, False, True, True]
-    assert not book.can_spend(session, "clerk", T0)
+    assert [r.tier for r in results] == ["cloud", "cloud", "local", "local", "local"]
+    # 4 + 4 = 8; the next call is estimated at 4 (its last cost) and would overshoot 10
+    assert len(cloud.calls) == 2
+    assert [r.flagged for r in results] == [False, False, True, True, True]
+    assert book.spent(session, "clerk", T0) == 8  # spend stops at or before the limit
     n = session.scalar(select(func.count()).select_from(CostEvent))
-    assert n == 3  # paid calls are recorded; a stopped role records nothing more
+    assert n == 2  # paid calls are recorded; nothing more once the next would overshoot
 
 
 def test_no_cloud_retry_once_budget_is_spent(session):

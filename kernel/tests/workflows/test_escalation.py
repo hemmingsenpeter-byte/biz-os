@@ -61,3 +61,12 @@ def test_missing_or_bad_confidence_fails_closed(output: object) -> None:
 def test_confidence_is_only_read_from_draft_steps() -> None:
     conds = parse([{"confidence_below": 0.7}], known_signals=set())
     assert check(conds, kind="tool", output={"rows": 3}) is None
+
+
+def test_signal_matches_any_step_kind() -> None:
+    conds = parse(["some_signal"], known_signals={"some_signal"})
+    assert check(conds, kind="tool", output={"signals": ["some_signal"]})
+    assert check(conds, kind="draft", output={"signals": ["some_signal"]})
+    assert check(conds, kind="tool", output={"signals": []}) is None
+    assert check(conds, kind="tool", output={"x": 1}) is None
+    assert check(conds, kind="tool", output=None) is None

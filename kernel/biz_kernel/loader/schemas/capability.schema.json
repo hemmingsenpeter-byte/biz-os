@@ -81,6 +81,12 @@
       "items": {
         "type": "string"
       }
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": false

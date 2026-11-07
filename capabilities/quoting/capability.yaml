@@ -14,3 +14,4 @@ tools:
 publishes: [scope.approved, estimate.ready, proposal.ready, variation.priced]
 consumes: [brief.confirmed, survey.completed, variation.raised]
 screens: []
+signals: [margin_below_policy, unknown_trade_item]

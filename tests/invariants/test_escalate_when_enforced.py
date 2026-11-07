@@ -10,17 +10,24 @@ from pathlib import Path
 
 import pytest
 import yaml
-from biz_kernel.workflows.escalation import PENDING_SIGNALS, check, parse
+from biz_kernel.workflows.escalation import check, parse
 
 ROOT = Path(__file__).resolve().parents[2]
 ROLES = sorted(p.parent for p in (ROOT / "roles").glob("*/role.yaml"))
+
+
+def _signals() -> set[str]:
+    out: set[str] = set()
+    for p in (ROOT / "capabilities").glob("*/capability.yaml"):
+        out |= set(yaml.safe_load(p.read_text()).get("signals", []))
+    return out
 
 
 @pytest.mark.parametrize("role_dir", ROLES, ids=lambda p: p.name)
 def test_every_declared_condition_is_enforced(role_dir: Path) -> None:
     role = yaml.safe_load((role_dir / "role.yaml").read_text())
     declared = role.get("escalate_when", [])
-    conds = parse(declared, known_signals=PENDING_SIGNALS)
+    conds = parse(declared, known_signals=_signals())
     assert len(conds) == len(declared)
     for c in conds:
         if c.name == "confidence_below":
@@ -29,7 +36,9 @@ def test_every_declared_condition_is_enforced(role_dir: Path) -> None:
             assert check((c,), kind="draft", output={})  # fail closed
             assert check((c,), kind="draft", output={"confidence": 1.0}) is None
         else:
-            assert c.name in PENDING_SIGNALS  # declared, not yet enforced (loader warns)
+            assert c.name in _signals()
+            assert check((c,), kind="tool", output={"signals": [c.name]})
+            assert check((c,), kind="tool", output={"signals": []}) is None
 
 
 @pytest.mark.parametrize("role_dir", ROLES, ids=lambda p: p.name)

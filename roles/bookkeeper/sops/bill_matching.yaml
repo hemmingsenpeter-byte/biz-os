@@ -1,0 +1,23 @@
+name: bill_matching
+trigger: bill.received
+goal_key: bill_match_rate_pct
+task: { kind: bill_matching, title: "Match bill: {{packet.summary}}" }
+steps:
+  - id: match
+    kind: tool
+    tool: payables.bill_match
+    args: { bill_id: "{{packet.payload.bill_id}}" }
+  - id: post   # external: staged for the owner, who sees the exact amount
+    kind: tool
+    tool: payables.bill_post
+    decision_type: bill_posting
+    args:
+      bill_id: "{{steps.match.output.bill_id}}"
+      amount: "{{steps.match.output.amount}}"
+  - id: matched
+    kind: publish
+    packet: bill.matched
+    summary: "Bill {{steps.post.output.number}} matched and posted: {{packet.summary}}"
+    payload:
+      bill_id: "{{steps.post.output.bill_id}}"
+      po_id: "{{steps.post.output.po_id}}"

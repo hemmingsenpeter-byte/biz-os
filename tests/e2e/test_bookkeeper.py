@@ -210,3 +210,75 @@ def test_payment_is_reconciled_to_the_invoice_once(rt: Any) -> None:
         inv = s.scalars(select(Invoice)).one()
         assert received[0].payload["invoice_id"] == str(inv.id)
         assert inv.status == "paid" and inv.paid == Decimal("5000.00")
+
+
+def _bill_received(rt: Any, total: str) -> uuid.UUID:
+    with db.session_scope() as s:
+        supplier = Party(kind="organisation", name="Supplier Ltd")
+        s.add(supplier)
+        s.flush()
+        sid = str(supplier.id)
+        reg = rt.registry
+        reg.get("payables.po_record").fn(
+            session=s,
+            po_id=str(uuid.uuid4()),
+            supplier_party_id=sid,
+            number="PO-7",
+            total="1200",
+            currency="NZD",
+        )
+        bill = reg.get("payables.bill_record").fn(
+            session=s,
+            supplier_party_id=sid,
+            number="S-1",
+            total=total,
+            currency="NZD",
+            po_number="PO-7",
+        )
+        return rt.bus.publish(
+            s,
+            type="bill.received",
+            from_part="test",
+            summary="Bill S-1 from Supplier Ltd",
+            payload={
+                "bill_id": bill["bill_id"],
+                "supplier_party_id": sid,
+                "total_minor": bill["total_minor"],
+                "currency": "NZD",
+            },
+        ).id
+
+
+def _bill_run(packet_id: uuid.UUID) -> SopRun:
+    def find() -> SopRun | None:
+        with db.session_scope() as s:
+            run = s.get(SopRun, f"bookkeeper:bill_matching:{packet_id}")
+            if run is not None:
+                s.expunge(run)
+            return run
+
+    return _wait(find)
+
+
+def test_matched_bill_is_posted_after_approval(rt: Any) -> None:
+    acct: FakeAccounting = rt.ports["accounting"]
+    packet_id = _bill_received(rt, "1200.00")
+    assert "bookkeeper" in rt.tick()
+    run = _bill_run(packet_id)
+    op = _waiting_op(run)
+    assert op.tool == "payables.bill_post" and op.inputs["amount"] == "1200.00"
+    assert acct.bills == {}
+    decide(op.id, op.approver, approve=True, version=op.version)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    assert len(acct.bills) == 1 and len(_packets("bill.matched")) == 1
+
+
+def test_bill_over_its_po_escalates(rt: Any) -> None:
+    acct: FakeAccounting = rt.ports["accounting"]
+    packet_id = _bill_received(rt, "1500.00")
+    assert "bookkeeper" in rt.tick()
+    run = _bill_run(packet_id)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "escalated"
+    assert acct.bills == {} and _packets("bill.matched") == []
+    esc = _packets("escalation.raised")
+    assert len(esc) == 1 and "bill_mismatch" in esc[0].payload["reason"]

@@ -1,0 +1,14 @@
+name: bill_mismatch
+input:
+  packet:
+    type: bill.received
+    summary: "Bill received: over the order"
+    payload:
+      bill_id: 0190f0e0-0000-7000-8000-0000000000d3
+      supplier_party_id: 0190f0e0-0000-7000-8000-0000000000d2
+      total_minor: 999900
+      currency: NZD
+expect:
+  packets:
+    - type: escalation.raised
+  run_status: escalated

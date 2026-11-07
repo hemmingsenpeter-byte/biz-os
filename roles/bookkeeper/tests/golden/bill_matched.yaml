@@ -1,0 +1,14 @@
+name: bill_matched
+input:
+  packet:
+    type: bill.received
+    summary: "Bill received: materials"
+    payload:
+      bill_id: 0190f0e0-0000-7000-8000-0000000000d1
+      supplier_party_id: 0190f0e0-0000-7000-8000-0000000000d2
+      total_minor: 120000
+      currency: NZD
+expect:
+  packets_after_approval:
+    - type: bill.matched
+  evidence: ["approval.granted", "packet:bill.matched"]

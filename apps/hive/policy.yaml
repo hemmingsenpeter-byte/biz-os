@@ -24,6 +24,7 @@ autonomy:
   meeting_offer_sending: 2
   meeting_booking: 2
   invoice_posting: 2       # the owner approves every invoice before it is posted to Xero
+  bill_posting: 2             # the owner approves every bill before it is posted
 comms:               # deterministic send gate (capabilities/comms)
   banned_phrases: []    # case-insensitive phrases that block a message
   link_domains: []      # add the business's own domain
@@ -40,3 +41,5 @@ budgets_usd_month:
   estimator: 40
   bookkeeper: 5
 high_stakes: [scope_writing, pricing, large_proposals, lease_reading, weekly_planner]
+payables:
+  match_tolerance_pct: 0   # how far a bill may exceed its PO before it is a mismatch

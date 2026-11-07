@@ -32,7 +32,7 @@ BREAKS = [
     lambda t: t.replace("mail: fake_mail", "mail: no_such_port"),
     lambda t: t.replace(
         "capabilities: [demo_desk, intake, booking, comms, quoting, documents, voice_capture, "
-        "invoicing]",
+        "invoicing, payables]",
         "capabilities: [nope]",
     ),
 ]

@@ -178,7 +178,11 @@ def test_missed_call_text_back_exactly_once(live: Live) -> None:
 def test_email_triaged_routed_and_meeting_offered(live: Live) -> None:
     live.model.script(
         {"category": "enquiry", "summary": "Wants a quote for an office", "confidence": 0.9},
-        {"subject": "Meeting times", "body": "We can meet Tuesday 10:00 UTC or Wednesday."},
+        {
+            "subject": "Meeting times",
+            "body": "We can meet Tuesday 10:00 UTC or Wednesday.",
+            "confidence": 0.9,
+        },
     )
     live.mail.inject_inbound(
         InboundMessage(
@@ -277,7 +281,7 @@ def _qualify_and_offer(live: Live, body: str, opt_out: bool = False) -> SopRun:
     """Triage a mail enquiry, then start book_meeting with the model drafting `body`."""
     live.model.script(
         {"category": "enquiry", "summary": "Quote", "confidence": 0.9},
-        {"subject": "Meeting times", "body": body},
+        {"subject": "Meeting times", "body": body, "confidence": 0.9},
     )
     live.mail.inject_inbound(
         InboundMessage(
@@ -323,7 +327,7 @@ def _offer_sent(live: Live) -> tuple[str, str]:
     """Run enquiry -> triage -> offer through to a sent offer. Returns (outbox id, subject)."""
     live.model.script(
         {"category": "enquiry", "summary": "Quote", "confidence": 0.9},
-        {"subject": "Meeting times", "body": "Pick one of the times below."},
+        {"subject": "Meeting times", "body": "Pick one of the times below.", "confidence": 0.9},
     )
     live.mail.inject_inbound(
         InboundMessage(

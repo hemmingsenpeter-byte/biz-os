@@ -23,7 +23,8 @@ The owner asked for these decisions to be made for them. Each one is below, with
   - **Bank details change only by verified call-back.** `bank_change_request` records the change as pending, with the phone number from our own records, never one from the request. `bank_change_confirm` applies it only when the number called matches. It is a money action with no amount, so policy sends it to the owner at every autonomy level, and an invariant test bars every role pack from listing it. Payment runs include only suppliers with verified bank details.
   - **Cash:** `cash.forecast` is pure arithmetic over what it is given: 13 Monday-started weeks, overdue items in week 0, a `later` total, other currencies listed rather than converted, and `cash_below_floor` when the floor is breached. `invoicing.receivables` and `payables.due` are new read tools that feed it, so no capability reads another's tables.
   - **Owner bank-change routes** (under `/v1`, owner only): `POST /payables/bank_changes` records the request and returns the number on record; `POST .../{id}/confirm` (the number called must match) stages the confirmation in the approval queue; `POST .../{id}/apply` runs it once it is approved. The approval queue only wakes SOP runs, so the apply step is what runs a standalone approved operation.
-  - **Bookkeeper role** (both apps): `milestone_invoicing` and `bill_matching`. It may not touch bank changes.
+  - **Debtor sequence:** a poller publishes the new **`invoice.overdue` packet** (a new schema) once per reminder step, at `invoicing.reminder_days` past due (default 7, 14 and 30). The bookkeeper's `debtor_reminder` drafts a plain reminder (`invoicing.reminder_draft`, no model) and sends it through comms' gate. The owner approves each one (`debtor_reminder_sending: 2`). With no contact email it escalates (`no_contact_email`). Payments are polled before reminders, so an invoice paid since the last poll isn't chased.
+  - **Bookkeeper role** (both apps): `milestone_invoicing`, `bill_matching` and `debtor_reminder`. It may not touch bank changes.
   - Migrations `0014`-`0016` were empty stubs that were never deployed, so they were filled in place rather than adding new revisions.
 - **Checks:** full `pytest` green, `ruff` clean, `uv run mypy .` clean, `biz doctor` passes for demo and HIVE. Nothing pushed.
 
@@ -32,7 +33,7 @@ The owner asked for these decisions to be made for them. Each one is below, with
 - **HIVE's Xero:** create a custom connection and set `BIZ_XERO_*`. Confirm the sales (200) and purchases (300) account codes. Tax uses each account's default; `LineItem.tax_rate` is not sent.
 - **HIVE `limits.max_daily`** (commented out) and a cash floor.
 - **M6 acceptance, not done yet:**
-  - Debtor sequences (reminders) need a new packet or trigger for overdue invoices, and they send mail. Not built.
+  - Reminder wording is a fixed, plain template in the capability; adjust it if HIVE wants its own voice.
   - The cash forecast does not reconcile with Xero yet: the opening bank balance needs a new `AccountingPort` method (a port interface change). For now the opening balance is passed in.
   - No SOP runs the forecast yet (no trigger packet; `brief.daily` is M8).
   - POs reach payables only through `payables.po_record`: `po.issued` has no PO number, so procurement (M7) should call the tool or the schema needs a `number`.

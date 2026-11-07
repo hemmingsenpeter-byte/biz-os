@@ -1,9 +1,9 @@
 role: bookkeeper
 version: 1.0.0
-requires: { kernel: ">=1.0,<2", capabilities: [invoicing, payables] }
+requires: { kernel: ">=1.0,<2", capabilities: [invoicing, payables, comms] }
 mission: Invoice every reached milestone and match every supplier bill to its order, exactly and promptly, with the owner approving what is posted.
-goals: [invoice_turnaround_hours, bill_match_rate_pct]
-heartbeat: { cadence: 30m, triggers: [milestone.reached, bill.received] }
+goals: [invoice_turnaround_hours, bill_match_rate_pct, debtor_days]
+heartbeat: { cadence: 30m, triggers: [milestone.reached, bill.received, invoice.overdue] }
 budget_usd_month: 5
 topics:
   - name: milestone_invoicing
@@ -12,15 +12,20 @@ topics:
   - name: bill_matching
     sop: sops/bill_matching.yaml
     tools: [payables.bill_match, payables.bill_post]
+  - name: debtor_reminder
+    sop: sops/debtor_reminder.yaml
+    tools: [invoicing.reminder_draft, comms.draft, comms.queue, comms.send]
 sources: [business, "job:*", "role:bookkeeper"]
-consumes: [milestone.reached, bill.received]
-publishes: [invoice.issued, bill.matched, escalation.raised]
+consumes: [milestone.reached, bill.received, invoice.overdue]
+publishes: [invoice.issued, bill.matched, message.sent, escalation.raised]
 evidence:
   milestone_invoicing: ["approval.granted", "packet:invoice.issued"]
   bill_matching: ["approval.granted", "packet:bill.matched"]
-autonomy_defaults: { invoice_posting: 2, bill_posting: 2 }
+  debtor_reminder: ["packet:message.sent"]
+autonomy_defaults: { invoice_posting: 2, bill_posting: 2, debtor_reminder_sending: 2 }
 model_tier: {}
 escalate_when:
   - invoice_not_ready
   - bill_mismatch
+  - no_contact_email
 slots: []

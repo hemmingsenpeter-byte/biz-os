@@ -1,0 +1,45 @@
+name: debtor_reminder
+trigger: invoice.overdue
+goal_key: debtor_days
+task: { kind: debtor_reminder, title: "Chase overdue invoice: {{packet.summary}}" }
+steps:
+  - id: letter
+    kind: tool
+    tool: invoicing.reminder_draft
+    args:
+      invoice_id: "{{packet.payload.invoice_id}}"
+      reminder: "{{packet.payload.reminder}}"
+  - id: outbox
+    kind: tool
+    tool: comms.draft
+    args:
+      channel: mail
+      to: "{{steps.letter.output.to}}"
+      subject: "{{steps.letter.output.subject}}"
+      body: "{{steps.letter.output.body}}"
+      party_id: "{{steps.letter.output.party_id}}"
+      expected_to: "{{steps.letter.output.to}}"
+  - id: gate
+    kind: tool
+    tool: comms.queue
+    args: { message_id: "{{steps.outbox.output.message_id}}" }
+  - id: send   # external: the owner approves the exact message before it goes
+    kind: tool
+    when: "{{steps.gate.output.status}} == queued"
+    tool: comms.send
+    decision_type: debtor_reminder_sending
+    args:
+      message_id: "{{steps.outbox.output.message_id}}"
+      to: "{{steps.outbox.output.to}}"
+      subject: "{{steps.outbox.output.subject}}"
+      body: "{{steps.outbox.output.body}}"
+  - id: done
+    kind: publish
+    when: "{{steps.send.output.status}} == sent"
+    packet: message.sent
+    summary: "Payment reminder sent to {{steps.letter.output.to}}"
+    payload:
+      message_id: "{{steps.send.output.message_id}}"
+      channel: mail
+      to: "{{steps.letter.output.to}}"
+      body: "{{steps.send.output.body}}"

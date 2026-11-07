@@ -47,7 +47,13 @@ def _wait(pred, timeout: float = 30.0):  # type: ignore[no-untyped-def]
 
 @pytest.fixture(params=["demo", "hive"])
 def rt(fresh_db: str, monkeypatch, request):  # type: ignore[no-untyped-def]
+    import biz_cap_booking.models  # noqa: F401
+    import biz_cap_comms.models  # noqa: F401
+    import biz_cap_documents.models  # noqa: F401
+    import biz_cap_intake.models  # noqa: F401
     import biz_cap_invoicing.models  # noqa: F401
+    import biz_cap_payables.models  # noqa: F401
+    import biz_cap_quoting.models  # noqa: F401
 
     eng = create_engine(fresh_db)
     import_all_models()
@@ -282,3 +288,40 @@ def test_bill_over_its_po_escalates(rt: Any) -> None:
     assert acct.bills == {} and _packets("bill.matched") == []
     esc = _packets("escalation.raised")
     assert len(esc) == 1 and "bill_mismatch" in esc[0].payload["reason"]
+
+
+def test_overdue_invoice_gets_one_approved_reminder_per_step(rt: Any) -> None:
+    from datetime import timedelta
+
+    from biz_cap_invoicing.models import Invoice
+
+    mail: FakeMail = rt.ports["mail"]
+    job_id = _seed(rt)
+    packet_id = _milestone(rt, job_id, "Deposit")
+    rt.tick()
+    run = _run(packet_id)
+    op = _waiting_op(run)
+    decide(op.id, op.approver, approve=True, version=op.version)
+    DBOS.retrieve_workflow(run.id).get_result()
+    assert rt.poll() == 0  # not due yet
+    with db.session_scope() as s:
+        s.scalars(select(Invoice)).one().due = db.utcnow() - timedelta(days=8)
+    assert "bookkeeper" in rt.tick()  # the poll inside publishes reminder 1
+    overdue = _packets("invoice.overdue")
+    assert len(overdue) == 1 and overdue[0].payload["reminder"] == 1
+
+    def reminder_run() -> SopRun | None:
+        with db.session_scope() as s:
+            r = s.get(SopRun, f"bookkeeper:debtor_reminder:{overdue[0].id}")
+            if r is not None:
+                s.expunge(r)
+            return r
+
+    run = _wait(reminder_run)
+    op = _waiting_op(run)
+    assert op.tool == "comms.send" and op.inputs["to"] == "pat@example.com"
+    assert "overdue" in op.inputs["subject"] and mail.sent == []
+    decide(op.id, op.approver, approve=True, version=op.version)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    assert len(mail.sent) == 1
+    assert rt.poll() == 0  # step 1 is done; step 2 waits until 14 days

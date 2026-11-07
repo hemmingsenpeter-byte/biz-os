@@ -6,8 +6,9 @@ tools:
   - { name: invoicing.milestone_invoice, side_effect: draft, description: "Draft the invoice for a reached milestone from its payment stage, once per milestone" }
   - { name: invoicing.invoice_post, side_effect: external, description: "Post a drafted invoice to the accounting system as a draft, once per idempotency key; the amount must match" }
   - { name: invoicing.receivables, side_effect: read, description: "Posted invoices still owed to us, with due dates and outstanding amounts" }
+  - { name: invoicing.reminder_draft, side_effect: draft, description: "Draft a payment reminder for an overdue invoice to the client's contact" }
   - { name: invoicing.invoice_read, side_effect: read, description: "Read an invoice and its lines" }
-publishes: [invoice.issued, payment.received]
+publishes: [invoice.issued, payment.received, invoice.overdue]
 consumes: [milestone.reached]
 screens: []
-signals: [invoice_not_ready]
+signals: [invoice_not_ready, no_contact_email]

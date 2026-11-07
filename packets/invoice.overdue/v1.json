@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "invoice.overdue/v1",
+  "type": "object",
+  "required": [
+    "invoice_id",
+    "party_id",
+    "days_overdue",
+    "reminder",
+    "outstanding_minor",
+    "currency"
+  ],
+  "properties": {
+    "invoice_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "party_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "days_overdue": {
+      "type": "integer"
+    },
+    "reminder": {
+      "type": "integer"
+    },
+    "outstanding_minor": {
+      "type": "integer"
+    },
+    "currency": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+name: debtor_reminder
+input:
+  packet:
+    type: invoice.overdue
+    summary: "Invoice INV-0000C1 is 8 days overdue (reminder 1)"
+    payload:
+      invoice_id: 0190f0e0-0000-7000-8000-0000000000c4
+      party_id: 0190f0e0-0000-7000-8000-0000000000c5
+      days_overdue: 8
+      reminder: 1
+      outstanding_minor: 500000
+      currency: NZD
+expect:
+  packets_after_approval:
+    - type: message.sent
+  evidence: ["packet:message.sent"]

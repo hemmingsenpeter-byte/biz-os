@@ -30,6 +30,7 @@ CAP = "invoicing"
 CENT = Decimal("0.01")
 HUNDRED = Decimal(100)
 NOT_READY = "invoice_not_ready"
+NO_CONTACT = "no_contact_email"
 _STR: dict[str, Any] = {"type": "string"}
 _UUID: dict[str, Any] = {"type": "string", "format": "uuid"}
 _NUM: dict[str, Any] = {"type": ["number", "string"]}
@@ -236,6 +237,35 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             ]
         }
 
+    def reminder_draft(session: Session, invoice_id: str, reminder: int) -> dict[str, Any]:
+        """A plain, deterministic payment reminder for the invoice's client contact."""
+        inv = session.get(Invoice, uuid.UUID(invoice_id))
+        if inv is None:
+            raise LookupError(f"invoice {invoice_id} not found")
+        email = session.scalar(
+            select(Person.email)
+            .where(Person.party_id == inv.party_id, Person.email.is_not(None))
+            .order_by(Person.id)
+            .limit(1)
+        )
+        if not email:
+            return {"invoice_id": invoice_id, "signals": [NO_CONTACT], "problems": ["no email"]}
+        owed = _money(inv.total - inv.paid)
+        due = inv.due.date().isoformat() if inv.due else "its due date"
+        lead = "A reminder" if reminder <= 1 else f"Reminder {reminder}"
+        return {
+            "invoice_id": invoice_id,
+            "party_id": str(inv.party_id),
+            "to": email,
+            "subject": f"{lead}: invoice {inv.reference} is overdue",
+            "body": (
+                f"Hello, invoice {inv.reference} for {owed} {inv.currency} was due on {due} "
+                "and is still unpaid. If you have already paid, thank you, and please ignore "
+                "this note. Otherwise, could you let us know when to expect payment?"
+            ),
+            "signals": [],
+        }
+
     def invoice_read(session: Session, invoice_id: str) -> dict[str, Any]:
         inv = session.get(Invoice, uuid.UUID(invoice_id))
         if inv is None:
@@ -287,6 +317,17 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             _obj({}),
             receivables,
             "Posted invoices still owed to us, with due dates and outstanding amounts",
+        ),
+        Tool(
+            "invoicing.reminder_draft",
+            CAP,
+            SideEffect.DRAFT,
+            _obj(
+                {"invoice_id": _UUID, "reminder": {"type": "integer", "minimum": 1}},
+                ["invoice_id", "reminder"],
+            ),
+            reminder_draft,
+            "Draft a payment reminder for an overdue invoice to the client's contact",
         ),
         Tool(
             "invoicing.invoice_read",

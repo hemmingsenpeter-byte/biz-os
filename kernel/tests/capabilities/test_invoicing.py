@@ -232,3 +232,22 @@ def test_receivables_list_posted_unpaid_with_due_dates(session: Session, stack: 
     )
     items = _call(reg, session, "invoicing.receivables")["items"]
     assert [(i["invoice_id"], i["amount"]) for i in items] == [(inv["invoice_id"], "3000.00")]
+
+
+def test_reminder_without_a_contact_email_escalates(session: Session, stack: Any) -> None:
+    reg, _ = stack
+    job = _job(session)
+    _stages(reg, session, job)
+    inv = _call(
+        reg,
+        session,
+        "invoicing.milestone_invoice",
+        job_id=job,
+        milestone_id=str(uuid.uuid4()),
+        name="Deposit",
+    )
+    out = _call(reg, session, "invoicing.reminder_draft", invoice_id=inv["invoice_id"], reminder=2)
+    assert out["to"] == "pat@example.com" and out["subject"].startswith("Reminder 2")
+    session.query(Person).update({"email": None})
+    out = _call(reg, session, "invoicing.reminder_draft", invoice_id=inv["invoice_id"], reminder=1)
+    assert out["signals"] == ["no_contact_email"] and "to" not in out

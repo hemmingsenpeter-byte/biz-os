@@ -43,6 +43,7 @@ class Invoice(Base):
     total: Mapped[Decimal] = mapped_column(MONEY)
     status: Mapped[str] = mapped_column(String(12), default="draft")  # draft | posted | paid
     paid: Mapped[Decimal] = mapped_column(MONEY, default=Decimal(0))
+    reminders_sent: Mapped[int] = mapped_column(Integer, default=0)
     idempotency_key: Mapped[str | None] = mapped_column(String(200), unique=True)
     system: Mapped[str | None] = mapped_column(String(40))
     external_id: Mapped[str | None] = mapped_column(String(120))

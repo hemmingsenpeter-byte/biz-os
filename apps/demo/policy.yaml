@@ -21,6 +21,7 @@ autonomy:            # ladder level per decision type: 1 draft, 2 recommend, 3 a
   meeting_booking: 2
   invoice_posting: 2          # the owner approves every invoice before it is posted
   bill_posting: 2             # the owner approves every bill before it is posted
+  debtor_reminder_sending: 2  # the owner approves every payment reminder
 comms:               # deterministic send gate (capabilities/comms)
   banned_phrases: []    # case-insensitive phrases that block a message
   link_domains: []      # allowed link hosts in replies; empty = no links allowed
@@ -29,6 +30,9 @@ quoting:
   target_margin_pct: 25
   max_discount_pct: 5
   currency: NZD
+invoicing:
+  payment_terms_days: 20
+  reminder_days: [7, 14, 30]   # days past due for each reminder
 intake:
   mail_lookback_hours: 24
 budgets_usd_month:

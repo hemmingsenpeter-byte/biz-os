@@ -48,6 +48,7 @@ def upgrade() -> None:
         sa.Column("total", MONEY, nullable=False),
         sa.Column("status", sa.String(12), nullable=False),
         sa.Column("paid", MONEY, nullable=False),
+        sa.Column("reminders_sent", sa.Integer(), nullable=False),
         sa.Column("idempotency_key", sa.String(200), nullable=True),
         sa.Column("system", sa.String(40), nullable=True),
         sa.Column("external_id", sa.String(120), nullable=True),

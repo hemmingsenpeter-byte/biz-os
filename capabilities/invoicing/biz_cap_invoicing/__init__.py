@@ -14,7 +14,9 @@ __all__ = ["Invoice", "ReceivedPayment", "Stage", "pollers", "register"]
 
 def pollers(rt: Any) -> list[Callable[[], int]]:
     """Hook: binds config (payment terms, lookback); pulls payments from accounting."""
+    from biz_cap_invoicing.overdue import poll_overdue
     from biz_cap_invoicing.payments import poll_payments
 
     config.bind(rt.manifest)
-    return [lambda: poll_payments(rt)]
+    # Payments first, so an invoice paid since the last poll gets no reminder.
+    return [lambda: poll_payments(rt), lambda: poll_overdue(rt)]

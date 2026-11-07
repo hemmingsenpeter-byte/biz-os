@@ -14,3 +14,4 @@ publishes: [bill.matched, payment_run.ready]
 consumes: [po.issued, bill.received]
 screens: []
 signals: [bill_mismatch, bank_change_requested]
+# Owner-only bank change routes: biz_cap_payables.owner_routes(rt) -> APIRouter, mounted under /v1

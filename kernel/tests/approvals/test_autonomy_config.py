@@ -66,3 +66,14 @@ def test_policy_yaml_bounds_stored_levels(session):
     autonomy.record_outcome(session, "r", "dt", good=False, default=3)  # 4 -> 3
     autonomy.record_outcome(session, "r", "dt", good=False, default=3)  # 3 -> 2
     assert pol._level(session, _action()) == 2
+
+
+def test_role_pack_defaults_only_tighten(session):
+    reg = ToolRegistry()
+    reg.register(Tool("demo.send", "demo", SideEffect.EXTERNAL, SCHEMA, lambda session, **k: None))
+    looser = PolicyEngine({"autonomy": {"default": 2}}, reg, role_defaults={"r": {"dt": 4}})
+    assert looser._level(session, _action()) == 2
+    stricter = PolicyEngine({"autonomy": {"default": 3}}, reg, role_defaults={"r": {"dt": 1}})
+    assert stricter._level(session, _action()) == 1
+    named = PolicyEngine({"autonomy": {"default": 3, "dt": 3}}, reg, role_defaults={"r": {"dt": 1}})
+    assert named._level(session, _action()) == 3  # policy.yaml names the key: it decides

@@ -291,3 +291,44 @@ def test_payment_run_only_includes_verified_suppliers(session: Session, stack: A
     assert len(run["bill_ids"]) == 1 and run["total_minor"] == 120000
     assert len(run["skipped"]) == 1 and "not verified" in run["skipped"][0]["why"]
     assert _call(reg, session, "payables.prepare_run", currency="NZD")["bill_ids"] == []  # once
+
+
+def test_owner_bank_change_routes(session: Session, stack: Any) -> None:
+    from types import SimpleNamespace
+
+    from biz_cap_payables import owner_routes
+    from biz_kernel.api.app import create_app
+    from biz_kernel.auth.deps import current_user, get_session
+    from fastapi.testclient import TestClient
+
+    reg, _ = stack
+    rt = SimpleNamespace(registry=reg, policy=PolicyEngine({"autonomy": {"default": 4}}, reg))
+    app = create_app()
+    app.include_router(owner_routes(rt), prefix="/v1")
+    app.dependency_overrides[get_session] = lambda: session
+    client = TestClient(app)
+    sup = _supplier(session)
+    body = {
+        "supplier_party_id": sup,
+        "account": "123456789",
+        "account_name": "S",
+        "source": "email",
+    }
+    assert client.post("/v1/payables/bank_changes", json=body).status_code == 401
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="s@x.org", role="staff")
+    assert client.post("/v1/payables/bank_changes", json=body).status_code == 403
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="o@x.org", role="owner")
+    change = client.post("/v1/payables/bank_changes", json=body).json()
+    base = f"/v1/payables/bank_changes/{change['change_id']}"
+    bad = client.post(f"{base}/confirm", json={"called_number": "+64 9 999 9999"})
+    assert bad.status_code == 422
+    staged_out = client.post(
+        f"{base}/confirm", json={"called_number": change["callback_phone"]}
+    ).json()
+    assert staged_out["status"] == "pending"  # even at autonomy 4
+    assert client.post(f"{base}/apply").status_code == 409  # not approved yet
+    assert session.get(BankAccount, uuid.UUID(sup)) is None
+    staged.approve(session, uuid.UUID(staged_out["op_id"]), "owner", 1)
+    assert client.post(f"{base}/apply").json()["status"] == "applied"
+    assert client.post(f"{base}/apply").json()["replayed"] is True
+    assert session.get(BankAccount, uuid.UUID(sup)) is not None

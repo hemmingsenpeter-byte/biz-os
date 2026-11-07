@@ -13,6 +13,7 @@ The owner asked for these decisions to be made for them. Each one is below, with
 - **mypy** (`f8fce1d`). `explicit_package_bases` plus an exclude list fixes the duplicate `conftest`; with that, only 14 test typing errors were left (not 66), and they are fixed. `uv run mypy .` is clean and CI now runs it.
 - **The confidence field on the receptionist's drafts stays required.** `confidence_below` fails closed on a missing value anyway, so requiring it only makes the failure visible earlier.
 - **Infinite and text money limits stay refused**, and the 2-not-3 cloud calls test stays: both are the fail-closed behaviour.
+- **`autonomy_defaults` in role.yaml is now read, but it can only tighten.** For a key `policy.yaml` doesn't name, the level is the lower of the composition's `default` and the pack's own default, so a role pack can never raise trust. A key `policy.yaml` names is decided by the file. Every current pack declares 2, the same as the apps' default, so nothing changes today.
 - **Worktrees:** all four removed (the signals branch is merged). About 1.3 GB freed.
 - **M6 started, built on fakes, nothing live.**
   - **Xero adapter uses Xero's REST API over httpx, not xero-python** — this departs from CLAUDE.md's reuse list, like M365 did with msgraph-sdk. xero-python is synchronous (urllib3), our ports are async, and httpx is mocked the same way as every other port. The dependency is removed. Invoices and bills are created as **DRAFT only**, with a durable ledger (`port_xero_posts`, migration `0014`) plus Xero's `Idempotency-Key`. A create that may have reached Xero is reconciled by reference before any retry; a "sending" row under 2 minutes old is treated as in flight. It uses a Xero custom connection (client credentials); see `deploy/.env.example`.
@@ -20,6 +21,7 @@ The owner asked for these decisions to be made for them. Each one is below, with
   - **Payables:** bills match a PO by number, or by supplier and total when there is no number, within `payables.match_tolerance_pct` (0 in both apps); a mismatch escalates. Matched bills post to Xero as drafts after approval.
   - **Bank details change only by verified call-back.** `bank_change_request` records the change as pending, with the phone number from our own records, never one from the request. `bank_change_confirm` applies it only when the number called matches. It is a money action with no amount, so policy sends it to the owner at every autonomy level, and an invariant test bars every role pack from listing it. Payment runs include only suppliers with verified bank details.
   - **Cash:** `cash.forecast` is pure arithmetic over what it is given: 13 Monday-started weeks, overdue items in week 0, a `later` total, other currencies listed rather than converted, and `cash_below_floor` when the floor is breached. `invoicing.receivables` and `payables.due` are new read tools that feed it, so no capability reads another's tables.
+  - **Owner bank-change routes** (under `/v1`, owner only): `POST /payables/bank_changes` records the request and returns the number on record; `POST .../{id}/confirm` (the number called must match) stages the confirmation in the approval queue; `POST .../{id}/apply` runs it once it is approved. The approval queue only wakes SOP runs, so the apply step is what runs a standalone approved operation.
   - **Bookkeeper role** (both apps): `milestone_invoicing` and `bill_matching`. It may not touch bank changes.
   - Migrations `0014`-`0016` were empty stubs that were never deployed, so they were filled in place rather than adding new revisions.
 - **Checks:** full `pytest` green, `ruff` clean, `uv run mypy .` clean, `biz doctor` passes for demo and HIVE. Nothing pushed.
@@ -33,8 +35,8 @@ The owner asked for these decisions to be made for them. Each one is below, with
   - The cash forecast does not reconcile with Xero yet: the opening bank balance needs a new `AccountingPort` method (a port interface change). For now the opening balance is passed in.
   - No SOP runs the forecast yet (no trigger packet; `brief.daily` is M8).
   - POs reach payables only through `payables.po_record`: `po.issued` has no PO number, so procurement (M7) should call the tool or the schema needs a `number`.
-  - No owner screen or route stages `bank_change_confirm` yet. The tool and its policy gate are ready.
-- **Still open from before:** `autonomy_defaults` in role.yaml is never read. A raised budget that still can't cover the next call wakes and stops on every heartbeat.
+  - The owner routes for bank changes exist, but there is no web screen for them yet.
+- **Still open from before:** a raised budget that still can't cover the next call wakes and stops on every heartbeat.
 
 ## 2026-11-07: kernel review fixes (before M6 money code)
 

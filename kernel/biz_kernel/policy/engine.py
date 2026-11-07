@@ -74,8 +74,15 @@ def limit_problems(limits: dict[str, Any]) -> list[str]:
 class PolicyEngine:
     """config keys: limits, authority, hard_rules, autonomy (see docs/SPEC.md)."""
 
-    def __init__(self, config: dict[str, Any] | None = None, registry: ToolRegistry | None = None):
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        registry: ToolRegistry | None = None,
+        role_defaults: dict[str, dict[str, int]] | None = None,
+    ):
         cfg = config or {}
+        # role.yaml autonomy_defaults, per role. They can only tighten: see _level.
+        self.role_defaults: dict[str, dict[str, int]] = role_defaults or {}
         self.limits: dict[str, Any] = cfg.get("limits") or {}
         self.authority: dict[str, str] = cfg.get("authority") or {}
         self.hard_rules: dict[str, Any] = cfg.get("hard_rules") or {}
@@ -163,7 +170,12 @@ class PolicyEngine:
                 levels.append(stored)
         if levels:
             return min(levels)
-        return int(self.autonomy.get("default", DEFAULT_LEVEL))
+        default = int(self.autonomy.get("default", DEFAULT_LEVEL))
+        # A role pack's own default for a key policy.yaml doesn't name may only be stricter:
+        # a pack can never raise trust above the composition's default.
+        own = self.role_defaults.get(action.actor) or {}
+        packed = [int(own[k]) for k in (action.tool, action.decision_type) if k and k in own]
+        return min([default, *packed])
 
     def _own(self, session: Session, action: Action) -> Decision:
         # Order matters: hard rules, then money limits (a deny limit applies at every

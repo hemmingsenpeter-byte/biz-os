@@ -229,7 +229,11 @@ def build_runtime(
     if missing:
         raise CompositionError(f"capabilities declared tools they did not register: {missing}")
 
-    policy = PolicyEngine(manifest.policy, registry)
+    policy = PolicyEngine(
+        manifest.policy,
+        registry,
+        role_defaults={n: dict(r.autonomy_defaults) for n, r in manifest.roles.items()},
+    )
     bus = Bus(manifest.registry)
     budgets = BudgetBook({r: manifest.role_budget(r) for r in manifest.roles})
     registry.budgets = budgets  # paid tool calls are checked and charged per role

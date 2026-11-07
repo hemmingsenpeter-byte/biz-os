@@ -1,5 +1,30 @@
 # Build log
 
+## 2026-11-07: kernel review fixes (before M6 money code)
+
+### Decisions made (check these)
+
+- **Bad money values are denied** (#1): an amount or a configured limit that is negative, NaN, ±inf, a string or a bool is a `Deny`, not an approval. That covers an infinite limit and a string limit like `"500"`. A draft tool that wraps a money tool used to come back as Allow; it now takes the strictest inner gate.
+- **Budgets can't overshoot** (#3): each charge takes a per-role advisory lock and checks the new amount. The registry runs a cost check before a paid tool, charges up front and refunds on failure. Before a cloud call, the router estimates the cost from that task's priciest call this month. Free local calls are no longer recorded. `test_router_budget` now expects 2 cloud calls, not 3.
+- **Budget-stopped runs** (#6) get the new run status `budget_stopped` instead of hanging in `running`. Their wake-up stays pending, and they resume once the limit is raised. `BudgetExceeded` now survives pickling, which DBOS needs.
+- **Approver edits keep the idempotency key** (#4). Every new version keeps the original key, and an edit still sends the run back to waiting.
+- **Approval links** (additive): approvals carry their run, task and job IDs. New read routes: `GET /v1/approvals/{id}` and `GET /v1/tasks/{id}`. No packet schema changed.
+- **Mail in production** (#8a): `api/main.py` now builds the runtime first and passes its mail port to `create_app`. Before this, magic-link login returned 503 in production.
+- **Evidence rules merge to the strictest** (#8b): rules are combined, not overwritten. Conflicting declarations fail `biz load` and `biz doctor`.
+- **Configured autonomy levels survive** (#7): the first approval used to write a level-1 row that overrode `policy.yaml`, which would have pinned a configured level 3 or 4 down to 1 (latent for HIVE). `autonomy_levels.level` is now nullable (migration `0018`).
+- **`escalate_when` is enforced** (#5, `d51d863`): `confidence_below: N` is checked on draft outputs, and missing or bad confidence escalates. A match ends the run as escalated with the task left open, through the existing stop-step path. The loader and doctor reject unknown conditions. A role with `confidence_below` must require `confidence` in every draft schema, so `book_meeting` and `handle_request` gained it. Signal conditions (the estimator's `margin_below_policy` and `unknown_trade_item`) load with a "declared but not yet enforced" warning.
+- **Test Postgres is deleted at exit** (`712eea0`): each `pytest` run had left a `bizpg-*` folder of 100-900 MB in TMPDIR. 258 of them (36 GB) filled the disk.
+- **Checks on the merge:** `pytest` and `ruff` pass, `mypy kernel/biz_kernel capabilities ports` is clean, and `biz doctor` passes for both apps.
+
+### Waiting on the owner
+
+- **#2: daily running totals for money limits.** A new policy concept, not built.
+- **Escalation signals** (branch `worktree-agent-ad3448cd501d446e5`, commit `49d17b2`, not merged): adds a `signals:` key in `capability.yaml`, quoting emitting signals, and a new `escalation.raised` packet that the kernel publishes. These are schema additions, so they need approval. Even once merged, the hook skips SOPs that already have a stop step or publish `escalation.raised`, which includes the estimator's. The estimator signals would still not fire until that is resolved.
+- **Stored vs configured autonomy:** an owner-set or promoted level in the DB still beats a later `policy.yaml` edit for the same key.
+- **`autonomy_defaults` in role.yaml** is never read anywhere.
+- **A raised budget that still can't cover the next call:** the run wakes and stops again on every heartbeat until it can.
+- **`uv run mypy .` fails** on the duplicate module `conftest` (root and `kernel/tests`); it did before this session too. Checking `tests/` as well shows 66 errors in 18 test files that already existed. Fixing it needs a mypy config change.
+
 ## 2026-11-06 to 11-07: M4-M5 review fixes, cloud fixes, merge
 
 ### Decisions made (check these)

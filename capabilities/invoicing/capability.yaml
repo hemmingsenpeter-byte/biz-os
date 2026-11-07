@@ -5,6 +5,7 @@ tools:
   - { name: invoicing.stages_set, side_effect: draft, description: "Set a job's payment stages (share of job value or fixed amount)" }
   - { name: invoicing.milestone_invoice, side_effect: draft, description: "Draft the invoice for a reached milestone from its payment stage, once per milestone" }
   - { name: invoicing.invoice_post, side_effect: external, description: "Post a drafted invoice to the accounting system as a draft, once per idempotency key; the amount must match" }
+  - { name: invoicing.receivables, side_effect: read, description: "Posted invoices still owed to us, with due dates and outstanding amounts" }
   - { name: invoicing.invoice_read, side_effect: read, description: "Read an invoice and its lines" }
 publishes: [invoice.issued, payment.received]
 consumes: [milestone.reached]

@@ -1,7 +1,7 @@
 # M2-M6: HIVE runs the receptionist, estimator and bookkeeper. demo_clerk/demo_desk (the M0 placeholder) are only in apps/demo.
 name: hive
 kernel: "1.x"
-capabilities: [intake, booking, comms, quoting, documents, voice_capture, invoicing, payables]
+capabilities: [intake, booking, comms, quoting, documents, voice_capture, invoicing, payables, cash]
 ports:
   mail: mail_m365
   telephony: telephony_twilio

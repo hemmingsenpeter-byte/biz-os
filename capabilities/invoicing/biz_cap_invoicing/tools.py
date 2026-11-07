@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
@@ -22,6 +23,7 @@ from biz_kernel.tools.registry import Tool, ToolRegistry
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from biz_cap_invoicing import config
 from biz_cap_invoicing.models import Invoice, Stage
 
 CAP = "invoicing"
@@ -76,6 +78,7 @@ def _view(inv: Invoice, **extra: Any) -> dict[str, Any]:
         "status": inv.status,
         "paid": str(_money(inv.paid)),
         "external_id": inv.external_id,
+        "due": inv.due.isoformat() if inv.due else None,
         "signals": [],
         **extra,
     }
@@ -161,6 +164,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             currency=str(job.currency),
             lines=[{"description": stage.name, "quantity": "1", "unit_amount": str(amount)}],
             total=amount,
+            due=utcnow() + timedelta(days=int(config.setting("payment_terms_days", 20))),
         )
         session.add(inv)
         session.flush()
@@ -203,6 +207,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                 )
                 for line in inv.lines
             ],
+            due=inv.due,
             idempotency_key=idempotency_key,  # the port posts once per key
         )
 
@@ -216,6 +221,20 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         session.flush()
         record(session, CAP, "invoicing.posted", str(inv.id), external_id=ref.id)
         return _view(inv, url=ref.url)
+
+    def receivables(session: Session) -> dict[str, Any]:
+        rows = session.scalars(select(Invoice).where(Invoice.status == "posted"))
+        return {
+            "items": [
+                {
+                    "invoice_id": str(i.id),
+                    "due": i.due.isoformat() if i.due else None,
+                    "amount": str(_money(i.total - i.paid)),
+                    "currency": i.currency,
+                }
+                for i in rows
+            ]
+        }
 
     def invoice_read(session: Session, invoice_id: str) -> dict[str, Any]:
         inv = session.get(Invoice, uuid.UUID(invoice_id))
@@ -260,6 +279,14 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             ),
             invoice_post,
             "Post a drafted invoice to the accounting system as a draft, once per key",
+        ),
+        Tool(
+            "invoicing.receivables",
+            CAP,
+            SideEffect.READ,
+            _obj({}),
+            receivables,
+            "Posted invoices still owed to us, with due dates and outstanding amounts",
         ),
         Tool(
             "invoicing.invoice_read",

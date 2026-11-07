@@ -8,6 +8,7 @@ tools:
   - { name: payables.bill_post, side_effect: external, description: "Post a matched bill to accounting as a draft, once per idempotency key; the amount must match" }
   - { name: payables.bank_change_request, side_effect: draft, description: "Record a requested supplier bank change as pending, with the number on record to call back" }
   - { name: payables.bank_change_confirm, side_effect: money, description: "Apply a bank change after a call-back to the supplier's number on record; always the owner's approval" }
+  - { name: payables.due, side_effect: read, description: "Posted bills we still owe, with due dates and amounts" }
   - { name: payables.prepare_run, side_effect: draft, description: "Gather posted bills of suppliers with verified bank details into a payment run" }
 publishes: [bill.matched, payment_run.ready]
 consumes: [po.issued, bill.received]

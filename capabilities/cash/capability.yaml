@@ -1,0 +1,9 @@
+name: cash
+version: 1.0.0
+requires: { kernel: ">=1.0,<2", ports: [] }
+tools:
+  - { name: cash.forecast, side_effect: read, description: "Week-by-week cash forecast from receivables and payables; flags a floor breach" }
+publishes: []
+consumes: []
+screens: []
+signals: [cash_below_floor]

@@ -46,6 +46,7 @@ class Invoice(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(200), unique=True)
     system: Mapped[str | None] = mapped_column(String(40))
     external_id: Mapped[str | None] = mapped_column(String(120))
+    due: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     posted_at: Mapped[datetime | None]
     note: Mapped[str | None] = mapped_column(Text)

@@ -210,3 +210,25 @@ def test_post_once_at_the_stated_amount(session: Session, stack: Any) -> None:
             idempotency_key="k2",
         )
     assert len(acct.contacts) == 1
+
+
+def test_receivables_list_posted_unpaid_with_due_dates(session: Session, stack: Any) -> None:
+    reg, _ = stack
+    job = _job(session)
+    _stages(reg, session, job)
+    mid = str(uuid.uuid4())
+    inv = _call(
+        reg, session, "invoicing.milestone_invoice", job_id=job, milestone_id=mid, name="Deposit"
+    )
+    assert inv["due"] is not None
+    assert _call(reg, session, "invoicing.receivables")["items"] == []  # drafts are not owed yet
+    _call(
+        reg,
+        session,
+        "invoicing.invoice_post",
+        invoice_id=inv["invoice_id"],
+        amount="3000",
+        idempotency_key="k",
+    )
+    items = _call(reg, session, "invoicing.receivables")["items"]
+    assert [(i["invoice_id"], i["amount"]) for i in items] == [(inv["invoice_id"], "3000.00")]

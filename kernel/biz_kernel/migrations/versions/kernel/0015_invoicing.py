@@ -51,6 +51,7 @@ def upgrade() -> None:
         sa.Column("idempotency_key", sa.String(200), nullable=True),
         sa.Column("system", sa.String(40), nullable=True),
         sa.Column("external_id", sa.String(120), nullable=True),
+        sa.Column("due", TZ, nullable=True),
         sa.Column("created_at", TZ, nullable=False),
         sa.Column("posted_at", TZ, nullable=True),
         sa.Column("note", sa.Text(), nullable=True),

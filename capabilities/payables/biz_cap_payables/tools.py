@@ -342,6 +342,20 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             ],
         }
 
+    def due(session: Session) -> dict[str, Any]:
+        rows = session.scalars(select(Bill).where(Bill.status.in_(("posted", "in_run"))))
+        return {
+            "items": [
+                {
+                    "bill_id": str(b.id),
+                    "due": b.due.isoformat() if b.due else None,
+                    "amount": str(b.total),
+                    "currency": b.currency,
+                }
+                for b in rows
+            ]
+        }
+
     line = _obj(
         {"description": _STR, "quantity": _NUM, "unit_amount": _NUM}, ["description", "unit_amount"]
     )
@@ -428,6 +442,14 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             ),
             bank_change_confirm,
             "Apply a bank change after a call-back to the supplier's number on record",
+        ),
+        Tool(
+            "payables.due",
+            CAP,
+            SideEffect.READ,
+            _obj({}),
+            due,
+            "Posted bills we still owe, with due dates and amounts",
         ),
         Tool(
             "payables.prepare_run",

@@ -21,6 +21,7 @@ from biz_kernel.audit.log import record
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
+from biz_kernel.workflows.escalation import Condition, check
 from biz_kernel.workflows.models import SopRun, SopStep
 from biz_kernel.workflows.templating import TemplateError, holds, render
 
@@ -70,6 +71,7 @@ class RoleSpec:
     allow_list: set[str]
     sops: dict[str, dict[str, Any]]  # sop name -> parsed SOP
     pack_dir: Path
+    escalate_when: tuple[Condition, ...] = ()
 
 
 @dataclass
@@ -167,6 +169,9 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     assert run_id is not None
     state = _begin(run_id, role, sop_name, packet_id)
     sop = ctx().roles[role].sops[sop_name]
+    # A SOP that already escalates itself (stop step or escalation packet) keeps control.
+    own = any(s["kind"] == "stop" or s.get("packet") == "escalation.raised" for s in sop["steps"])
+    conds = () if own else ctx().roles[role].escalate_when
     for step in sop["steps"]:
         kind = step["kind"]
         if step.get("when") and not _step_applies(step["when"], state):
@@ -179,6 +184,8 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
                     return _end(run_id, "rejected")
                 res = _execute_staged(run_id, role, step["id"], res["op_id"])
             state["steps"][step["id"]] = {"output": res["output"]}
+            if check(conds, kind=kind, output=res["output"]):
+                return _end(run_id, "escalated")
         elif kind == "approve":
             op_id = _approval_step(run_id, role, step, state)
             if _await_decision(run_id, op_id) != "approved":
@@ -186,7 +193,10 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
             _mark_approved(run_id, step["id"], op_id)
             state["steps"][step["id"]] = {"output": {"approved": True}}
         elif kind == "draft":
-            state["steps"][step["id"]] = {"output": _draft_step(run_id, role, step, state)}
+            out = _draft_step(run_id, role, step, state)
+            state["steps"][step["id"]] = {"output": out}
+            if check(conds, kind=kind, output=out):
+                return _end(run_id, "escalated")
         elif kind == "stop":
             # End the run without completing the task: it stays open for the owner.
             return _end(run_id, step.get("status", "escalated"))

@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 
 from biz_kernel.db import utcnow, uuid7
 from biz_kernel.packets.bus import SchemaRegistry
+from biz_kernel.workflows.escalation import CONFIDENCE, PENDING_SIGNALS, ConditionError, parse
 
 KERNEL_VERSION = "1.0.0"
 SCHEMA_DIR = Path(__file__).parent / "schemas"
@@ -117,6 +118,7 @@ class Manifest:
     policy: dict[str, Any]
     goals: dict[str, Any]
     registry: SchemaRegistry = field(repr=False, default_factory=SchemaRegistry)
+    warnings: list[str] = field(default_factory=list)
 
     def role_budget(self, role: str) -> float:
         budgets = self.policy.get("budgets_usd_month") or {}
@@ -285,6 +287,7 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
 
     caps: dict[str, CapabilityInfo] = {}
     tools: dict[str, tuple[str, str]] = {}
+    warnings: list[str] = []
     for c in comp["capabilities"]:
         d = _read(repo_root / "capabilities" / c / "capability.yaml", "capability", problems)
         if d is None:
@@ -364,6 +367,17 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
         for g in d["goals"]:
             if g not in goal_keys:
                 problems.append(f"{what}: goal {g} not in goals.yaml")
+        try:
+            conds = parse(d.get("escalate_when", []), known_signals=PENDING_SIGNALS)
+        except ConditionError as exc:
+            conds = ()
+            problems.append(f"{what}: escalate_when: {exc}")
+        warnings.extend(
+            f"{what}: escalate_when {c.name} is declared but not yet enforced"
+            for c in conds
+            if c.name != CONFIDENCE
+        )
+        wants_confidence = any(c.name == CONFIDENCE for c in conds)
         topics: list[TopicInfo] = []
         for t in d["topics"]:
             for tool in t["tools"]:
@@ -376,6 +390,14 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
             dts: list[str] = []
             if sop is not None:
                 _check_sop(sop, sop_path, t["tools"], d, tools, goal_keys, problems)
+                if wants_confidence:
+                    for st in sop["steps"]:
+                        req = st.get("schema", {}).get("required", [])
+                        if st["kind"] == "draft" and "confidence" not in req:
+                            problems.append(
+                                f"{sop_path}: step {st['id']}: role {r} declares escalate_when "
+                                "confidence_below, so every draft must require `confidence`"
+                            )
                 dts = [s["decision_type"] for s in sop["steps"] if "decision_type" in s]
             topics.append(TopicInfo(t["name"], sop_path, t["tools"], sop or {}, dts))
         if not (base / "tests" / "golden").is_dir():
@@ -425,6 +447,7 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
         policy,
         goals_doc,
         registry,
+        warnings,
     )
 
 

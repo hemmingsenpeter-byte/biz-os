@@ -90,6 +90,8 @@ def doctor_cmd(
         f"✓ composition {manifest.name} loads: {len(manifest.roles)} roles, "
         f"{len(manifest.capabilities)} capabilities, {len(manifest.packet_types)} packet types"
     )
+    for w in manifest.warnings:
+        typer.echo(f"! {w}")
     failed = False
 
     def report(ok: bool, msg: str) -> None:

@@ -30,6 +30,7 @@ from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.policy.engine import PolicyEngine
 from biz_kernel.tools.registry import ToolRegistry
 from biz_kernel.workflows import runner
+from biz_kernel.workflows.escalation import PENDING_SIGNALS, parse
 from biz_kernel.workflows.gate import KernelGate
 from biz_kernel.workflows.models import SopRun
 
@@ -270,6 +271,7 @@ def build_runtime(
                     allow_list=set(role.allow_list),
                     sops={t.sop.get("name", t.name): t.sop for t in role.topics},
                     pack_dir=role.path,
+                    escalate_when=parse(role.escalate_when, known_signals=PENDING_SIGNALS),
                 )
                 for name, role in manifest.roles.items()
             },

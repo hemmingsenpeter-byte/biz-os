@@ -46,7 +46,13 @@ def live(fresh_db: str, request):  # type: ignore[no-untyped-def]
     url = make_url(fresh_db)
     sys_url = url.set(database=f"{url.database}_sys").render_as_string(hide_password=False)
     mail, model = FakeMail(), FakeModel()
-    model.script({"subject": "Re: Opening hours", "body": "We are closed on public holidays."})
+    model.script(
+        {
+            "subject": "Re: Opening hours",
+            "body": "We are closed on public holidays.",
+            "confidence": 0.9,
+        }
+    )
     app, approver = request.param
     rt = build_runtime(
         ROOT / "apps" / app,
@@ -167,3 +173,38 @@ def test_stale_approval_is_never_acted_on(live) -> None:  # type: ignore[no-unty
     decide(op_id, approver, approve=True, version=2)
     assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
     assert len(mail.sent) == 1 and mail.sent[0].body == "Yes, two visitor spaces."
+
+
+def test_low_confidence_escalates_instead_of_sending(live) -> None:  # type: ignore[no-untyped-def]
+    rt, mail, model, _approver = live
+    model.responses.clear()  # drop the fixture's confident reply
+    model.script({"subject": "Re: Opening hours", "body": "Maybe?", "confidence": 0.3})
+    with db.session_scope() as s:
+        req = DemoRequest(sender="asker@example.com", subject="Hours?", body="Open?")
+        s.add(req)
+        s.flush()
+        packet = rt.bus.publish(
+            s,
+            type="service_request.received",
+            from_part="test",
+            summary="Hours?",
+            payload={
+                "request_id": str(req.id),
+                "channel": "desk",
+                "subject": req.subject,
+                "body": req.body,
+            },
+        )
+        packet_id = packet.id
+    assert rt.tick() == ["demo_clerk"]
+
+    def ended() -> SopRun | None:
+        with db.session_scope() as s:
+            run = s.scalar(select(SopRun).where(SopRun.packet_id == packet_id))
+            return run if run is not None and run.status != "running" else None
+
+    run = _wait(ended)
+    assert run.status == "escalated"
+    assert mail.sent == [] and run.waiting_op_id is None
+    with db.session_scope() as s:
+        assert s.get(Task, run.task_id).status == "open"

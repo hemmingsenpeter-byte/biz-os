@@ -92,7 +92,7 @@ def test_demo_clerk_end_to_end(live) -> None:  # type: ignore[no-untyped-def]
         )
         packet_id = packet.id
 
-    assert rt.tick() == ["demo_clerk"]  # the heartbeat wakes the role
+    assert "demo_clerk" in rt.tick()  # the heartbeat wakes the role (bookkeeper: cash review)
 
     def waiting() -> SopRun | None:
         with db.session_scope() as s:
@@ -201,7 +201,7 @@ def test_low_confidence_escalates_instead_of_sending(live) -> None:  # type: ign
             },
         )
         packet_id = packet.id
-    assert rt.tick() == ["demo_clerk"]
+    assert "demo_clerk" in rt.tick()
 
     def ended() -> SopRun | None:
         with db.session_scope() as s:

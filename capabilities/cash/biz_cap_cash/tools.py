@@ -142,7 +142,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                     "receivables": _ITEMS,
                     "payables": _ITEMS,
                     "weeks": {"type": "integer", "minimum": 1, "maximum": 52},
-                    "floor": _NUM,
+                    "floor": {"type": ["number", "string", "null"]},
                     "today": {"type": "string"},
                 },
             },

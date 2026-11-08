@@ -96,10 +96,16 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         po_id: str,
         supplier_party_id: str,
         number: str,
-        total: Any,
         currency: str,
+        total: Any = None,
+        total_minor: int | None = None,
         job_id: str | None = None,
     ) -> dict[str, Any]:
+        """`total` in major units, or `total_minor` as po.issued carries it; exactly one."""
+        if (total is None) == (total_minor is None):
+            raise ValueError("give exactly one of total and total_minor")
+        if total is None:
+            total = Decimal(int(total_minor or 0)) / 100
         po = session.get(PurchaseOrder, uuid.UUID(po_id))
         if po is None:
             po = PurchaseOrder(
@@ -368,12 +374,13 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                 {
                     "po_id": _UUID,
                     "supplier_party_id": _UUID,
-                    "number": _STR,
+                    "number": {"type": "string", "minLength": 1},
                     "total": _NUM,
+                    "total_minor": {"type": "integer", "minimum": 0},
                     "currency": _STR,
-                    "job_id": _UUID,
+                    "job_id": {"type": ["string", "null"], "format": "uuid"},
                 },
-                ["po_id", "supplier_party_id", "number", "total", "currency"],
+                ["po_id", "supplier_party_id", "number", "currency"],
             ),
             po_record,
             "Keep a copy of an issued purchase order for bill matching",

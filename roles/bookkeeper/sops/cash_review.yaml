@@ -1,0 +1,37 @@
+name: cash_review
+trigger: cash.review_due
+goal_key: debtor_days
+task: { kind: cash_review, title: "Weekly cash forecast: {{packet.summary}}" }
+steps:
+  - id: balance
+    kind: tool
+    tool: cash.bank_balance
+    args: {}
+  - id: owed_to_us
+    kind: tool
+    tool: invoicing.receivables
+    args: {}
+  - id: we_owe
+    kind: tool
+    tool: payables.due
+    args: {}
+  - id: forecast   # a floor breach carries cash_below_floor, which escalates to the owner
+    kind: tool
+    tool: cash.forecast
+    args:
+      opening_balance: "{{steps.balance.output.balance}}"
+      currency: "{{steps.balance.output.currency}}"
+      receivables: "{{steps.owed_to_us.output.items}}"
+      payables: "{{steps.we_owe.output.items}}"
+      floor: "{{packet.payload.floor}}"
+      today: "{{packet.payload.week_start}}"
+  - id: ready
+    kind: publish
+    packet: cash.forecast_ready
+    summary: "Cash low point {{steps.forecast.output.lowest.closing}} {{steps.forecast.output.currency}} in week of {{steps.forecast.output.lowest.week_start}}"
+    payload:
+      week_start: "{{packet.payload.week_start}}"
+      currency: "{{steps.forecast.output.currency}}"
+      opening_balance: "{{steps.balance.output.balance}}"
+      lowest_week_start: "{{steps.forecast.output.lowest.week_start}}"
+      lowest_closing: "{{steps.forecast.output.lowest.closing}}"

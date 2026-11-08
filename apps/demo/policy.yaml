@@ -33,6 +33,9 @@ quoting:
 invoicing:
   payment_terms_days: 20
   reminder_days: [7, 14, 30]   # days past due for each reminder
+  # reminder_template:   # optional wording; fields: {lead} {reference} {amount} {currency} {due} {reminder}
+  #   subject: "{lead}: invoice {reference} is overdue"
+  #   body: "..."
 intake:
   mail_lookback_hours: 24
 budgets_usd_month:
@@ -41,5 +44,7 @@ budgets_usd_month:
   estimator: 40
   bookkeeper: 5
 high_stakes: []
+cash:   # a weekly forecast runs from Monday (local week, limits.day_timezone)
+  floor: 0   # escalate to the owner when the forecast goes negative (base currency)
 payables:
   match_tolerance_pct: 0   # how far a bill may exceed its PO before it is a mismatch

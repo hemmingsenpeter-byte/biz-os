@@ -4,14 +4,20 @@
   "type": "object",
   "required": [
     "po_id",
+    "number",
     "supplier_party_id",
     "total_minor",
-    "currency"
+    "currency",
+    "job_id"
   ],
   "properties": {
     "po_id": {
       "type": "string",
       "format": "uuid"
+    },
+    "number": {
+      "type": "string",
+      "minLength": 1
     },
     "supplier_party_id": {
       "type": "string",
@@ -22,6 +28,10 @@
     },
     "currency": {
       "type": "string"
+    },
+    "job_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
     }
   }
 }

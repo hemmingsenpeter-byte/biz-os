@@ -1,5 +1,26 @@
 # Build log
 
+## 2026-11-09: M6 code close-out (block 1)
+
+The owner approved the schema changes below in advance ("approve all").
+
+### Decisions made (check these)
+
+- **`po.issued` now carries `number` and `job_id`** (both required; `job_id` may be null). Nothing published it yet, so v1 was changed in place. The bookkeeper's new `po_recording` SOP consumes it, calls `payables.po_record`, and publishes the new **`po.recorded`** packet as its evidence (a tool step can't record evidence; only a publish step can). Procurement (M7) only has to publish `po.issued`; it never calls payables directly. `payables.po_record` also takes `total_minor` (exactly one of `total` and `total_minor`) and a null `job_id`.
+- **Weekly cash forecast.** The cash capability has a poller that publishes the new **`cash.review_due`** packet once per local week (Monday-started, in `limits.day_timezone`), keyed by the week. It carries `cash.floor` from `policy.yaml` (null for none). The bookkeeper's new `cash_review` SOP reads the bank balance, receivables and payables, runs `cash.forecast`, and publishes the new **`cash.forecast_ready`** packet (the opening balance, the low point and its week). If the low point is under the floor, `cash_below_floor` (now in the bookkeeper's `escalate_when`) escalates to the owner instead. This doesn't wait for `brief.daily` (M8); the daily brief can read `cash.forecast_ready` later.
+- **Floors:** demo has `cash.floor: 0` (escalate when the forecast goes negative). HIVE's is commented out for the owner, so HIVE's forecast never escalates until it is set. `cash.forecast` now accepts a null `floor`.
+- **Reminder wording is per business.** It comes from `invoicing.reminder_template` (`subject` and `body`, either optional) with the fields `{lead} {reference} {amount} {currency} {due} {reminder}`. The current plain wording is the default. An unknown field, an attribute or index lookup, a format spec or empty text is refused, and both a bad template and a bad `cash.floor` fail when the runtime starts, not on the first send.
+- **Every heartbeat can now also wake the bookkeeper** for the week's cash review. The demo acceptance test checks that `demo_clerk` is among the woken roles rather than the only one, and the bookkeeper e2e fixture gives the fake bank a balance.
+- **Pushed** the 26 earlier commits to `origin/main`. The old `stash@{0}` (quoting work replaced by `fd480a9`) is **still there**: dropping it was blocked by the permission check, so the owner can run `git stash drop` themselves.
+- **Checks:** full `pytest` green, `ruff check` clean, `uv run mypy .` clean, and `biz doctor` passes for demo and HIVE. `ruff format --check` still flags `kernel/biz_kernel/api/routes_approvals.py`, which was already unformatted before this session and is untouched.
+
+### Waiting on the owner
+
+- HIVE `cash.floor` (with `limits.max_daily`, still commented out).
+- HIVE's own reminder wording, if the default is too plain.
+- The bank-change web screen still waits on the web shell (block 5).
+- Until HIVE's Xero is connected, the weekly `cash_review` run fails at `cash.bank_balance` on the Mac mini and, like any failed run, is retried on each heartbeat; set `BIZ_XERO_*` before deploying M6.
+
 ## 2026-11-07 (evening): owner's open decisions, then M6 money (invoicing, payables, cash)
 
 The owner asked for these decisions to be made for them. Each one is below, with the reason.

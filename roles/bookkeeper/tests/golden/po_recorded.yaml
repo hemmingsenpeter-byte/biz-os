@@ -1,0 +1,16 @@
+name: po_recording
+input:
+  packet:
+    type: po.issued
+    summary: "PO-12 issued to Supplier Ltd"
+    payload:
+      po_id: 0190f0e0-0000-7000-8000-0000000000e1
+      number: PO-12
+      supplier_party_id: 0190f0e0-0000-7000-8000-0000000000e2
+      total_minor: 120000
+      currency: NZD
+      job_id: null
+expect:
+  packets:
+    - type: po.recorded
+  evidence: ["packet:po.recorded"]

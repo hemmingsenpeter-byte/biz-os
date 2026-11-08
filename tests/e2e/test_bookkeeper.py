@@ -77,6 +77,8 @@ def rt(fresh_db: str, monkeypatch, request):  # type: ignore[no-untyped-def]
         "speech": FakeSpeech(),
         "accounting": FakeAccounting(),
     }
+    # Every tick also runs the weekly cash review; keep it above demo's floor by default.
+    ports["accounting"].balance = (Decimal("50000"), "NZD")
     runtime = build_runtime(
         ROOT / "apps" / request.param, ROOT, ports=ports, approval_poll_seconds=1
     )
@@ -325,3 +327,109 @@ def test_overdue_invoice_gets_one_approved_reminder_per_step(rt: Any) -> None:
     assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
     assert len(mail.sent) == 1
     assert rt.poll() == 0  # step 1 is done; step 2 waits until 14 days
+
+
+def _sop_run(sop: str, packet_id: uuid.UUID) -> SopRun:
+    def find() -> SopRun | None:
+        with db.session_scope() as s:
+            run = s.get(SopRun, f"bookkeeper:{sop}:{packet_id}")
+            if run is not None:
+                s.expunge(run)
+            return run
+
+    return _wait(find)
+
+
+def test_issued_po_is_kept_and_its_bill_matches(rt: Any) -> None:
+    acct: FakeAccounting = rt.ports["accounting"]
+    with db.session_scope() as s:
+        supplier = Party(kind="organisation", name="Supplier Ltd")
+        s.add(supplier)
+        s.flush()
+        sid = str(supplier.id)
+        po_id = rt.bus.publish(
+            s,
+            type="po.issued",
+            from_part="test",
+            summary="PO-12 issued to Supplier Ltd",
+            payload={
+                "po_id": str(uuid.uuid4()),
+                "number": "PO-12",
+                "supplier_party_id": sid,
+                "total_minor": 120000,
+                "currency": "NZD",
+                "job_id": None,
+            },
+        ).id
+    assert "bookkeeper" in rt.tick()
+    run = _sop_run("po_recording", po_id)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    assert [p.payload["number"] for p in _packets("po.recorded")] == ["PO-12"]
+    with db.session_scope() as s:
+        bill = rt.registry.get("payables.bill_record").fn(
+            session=s, supplier_party_id=sid, number="S-9", total="1200", currency="NZD"
+        )
+        matched = rt.registry.get("payables.bill_match").fn(session=s, bill_id=bill["bill_id"])
+    assert matched["status"] == "matched" and acct.bills == {}
+
+
+def _forecast_run(rt: Any) -> SopRun:
+    due = _wait(lambda: _packets("cash.review_due"))
+    assert len(due) == 1, "one review per local week"
+    return _sop_run("cash_review", due[0].id)
+
+
+def test_weekly_forecast_opens_at_the_bank_balance(rt: Any) -> None:
+    acct: FakeAccounting = rt.ports["accounting"]
+    acct.balance = (Decimal("8000"), "NZD")
+    assert "bookkeeper" in rt.tick()
+    assert rt.poll() == 0  # the same week is never asked twice
+    run = _forecast_run(rt)
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    ready = _packets("cash.forecast_ready")
+    assert len(ready) == 1 and ready[0].payload["opening_balance"] == "8000.00"
+    assert ready[0].payload["lowest_closing"] == "8000.00"
+    with db.session_scope() as s:
+        assert s.get(Task, run.task_id).status == "done"
+
+
+def test_forecast_below_the_floor_escalates(rt: Any, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from biz_cap_cash import config
+
+    monkeypatch.setattr(
+        config, "setting", lambda name, default: "1000" if name == "floor" else default
+    )
+    rt.ports["accounting"].balance = (Decimal("200"), "NZD")
+    rt.tick()
+    run = _forecast_run(rt)
+    assert _packets("cash.review_due")[0].payload["floor"] == "1000"
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "escalated"
+    esc = _packets("escalation.raised")
+    assert len(esc) == 1 and "cash_below_floor" in esc[0].payload["reason"]
+    assert _packets("cash.forecast_ready") == []
+
+
+def test_reminder_wording_comes_from_the_composition(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from biz_cap_invoicing import config
+    from biz_cap_invoicing.tools import reminder_template
+
+    def use(template: Any) -> None:
+        monkeypatch.setattr(
+            config, "setting", lambda n, d: template if n == "reminder_template" else d
+        )
+
+    use({"subject": "Kia ora: {reference} ({amount} {currency})"})
+    out = reminder_template()
+    assert out["subject"] == "Kia ora: {reference} ({amount} {currency})"
+    assert "{due}" in out["body"], "an unset part keeps the default wording"
+    for bad in (
+        {"subject": "{customer_name}"},
+        {"body": "{reference.__class__}"},
+        {"body": "{amount:>99}"},
+        {"body": "unclosed {reference"},
+        {"subject": ""},
+        {"footer": "x"},
+    ):
+        use(bad)
+        with pytest.raises(ValueError):
+            reminder_template()

@@ -7,7 +7,7 @@ from typing import Any
 
 from biz_cap_invoicing import config
 from biz_cap_invoicing.models import Invoice, ReceivedPayment, Stage
-from biz_cap_invoicing.tools import register
+from biz_cap_invoicing.tools import register, reminder_template
 
 __all__ = ["Invoice", "ReceivedPayment", "Stage", "pollers", "register"]
 
@@ -18,5 +18,6 @@ def pollers(rt: Any) -> list[Callable[[], int]]:
     from biz_cap_invoicing.payments import poll_payments
 
     config.bind(rt.manifest)
+    reminder_template()  # a bad template fails at start, not on the first reminder
     # Payments first, so an invoice paid since the last poll gets no reminder.
     return [lambda: poll_payments(rt), lambda: poll_overdue(rt)]

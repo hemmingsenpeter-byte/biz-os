@@ -1,0 +1,12 @@
+name: cash_review
+input:
+  packet:
+    type: cash.review_due
+    summary: "week of 2026-11-09"
+    payload:
+      week_start: "2026-11-09"
+      floor: "1000"
+expect:
+  packets:
+    - type: cash.forecast_ready
+  evidence: ["packet:cash.forecast_ready"]

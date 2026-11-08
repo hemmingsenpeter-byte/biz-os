@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cash.review_due/v1",
+  "type": "object",
+  "required": [
+    "week_start",
+    "floor"
+  ],
+  "properties": {
+    "week_start": {
+      "type": "string",
+      "format": "date"
+    },
+    "floor": {
+      "type": ["string", "null"]
+    }
+  }
+}

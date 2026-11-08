@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cash.forecast_ready/v1",
+  "type": "object",
+  "required": [
+    "week_start",
+    "currency",
+    "opening_balance",
+    "lowest_week_start",
+    "lowest_closing"
+  ],
+  "properties": {
+    "week_start": {
+      "type": "string",
+      "format": "date"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "opening_balance": {
+      "type": "string"
+    },
+    "lowest_week_start": {
+      "type": "string",
+      "format": "date"
+    },
+    "lowest_closing": {
+      "type": "string"
+    }
+  }
+}

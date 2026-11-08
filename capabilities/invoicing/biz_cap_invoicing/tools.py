@@ -11,6 +11,7 @@ import asyncio
 import uuid
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from string import Formatter
 from typing import Any
 
 from biz_kernel.audit.log import record
@@ -91,6 +92,40 @@ def _stage_amount(stage: Stage, job: Job) -> Decimal | None:
     if stage.pct is None or job.value_amount is None:
         return None
     return _money(Decimal(job.value_amount) * stage.pct / HUNDRED)
+
+
+REMINDER_FIELDS = frozenset({"lead", "reference", "amount", "currency", "due", "reminder"})
+DEFAULT_REMINDER = {
+    "subject": "{lead}: invoice {reference} is overdue",
+    "body": (
+        "Hello, invoice {reference} for {amount} {currency} was due on {due} "
+        "and is still unpaid. If you have already paid, thank you, and please ignore "
+        "this note. Otherwise, could you let us know when to expect payment?"
+    ),
+}
+
+
+def reminder_template() -> dict[str, str]:
+    """The composition's reminder wording (`invoicing.reminder_template`), checked strictly.
+
+    Only the plain fields in REMINDER_FIELDS may appear; anything else (an unknown name,
+    an attribute or index lookup, a format spec) is refused rather than sent half-filled.
+    """
+    raw = config.setting("reminder_template", None) or {}
+    if not isinstance(raw, dict) or set(raw) - {"subject", "body"}:
+        raise ValueError("invoicing.reminder_template takes only subject and body")
+    out = {**DEFAULT_REMINDER, **raw}
+    for part, text in out.items():
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"invoicing.reminder_template.{part} must be non-empty text")
+        try:
+            names = [(n, s, c) for _, n, s, c in Formatter().parse(text) if n is not None]
+        except ValueError as exc:
+            raise ValueError(f"invoicing.reminder_template.{part}: {exc}") from None
+        for name, spec, conv in names:
+            if name not in REMINDER_FIELDS or spec or conv:
+                raise ValueError(f"invoicing.reminder_template.{part}: unknown field {{{name}}}")
+    return out
 
 
 def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
@@ -250,19 +285,21 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         )
         if not email:
             return {"invoice_id": invoice_id, "signals": [NO_CONTACT], "problems": ["no email"]}
-        owed = _money(inv.total - inv.paid)
-        due = inv.due.date().isoformat() if inv.due else "its due date"
-        lead = "A reminder" if reminder <= 1 else f"Reminder {reminder}"
+        fields = {
+            "lead": "A reminder" if reminder <= 1 else f"Reminder {reminder}",
+            "reference": inv.reference,
+            "amount": str(_money(inv.total - inv.paid)),
+            "currency": inv.currency,
+            "due": inv.due.date().isoformat() if inv.due else "its due date",
+            "reminder": str(reminder),
+        }
+        template = reminder_template()
         return {
             "invoice_id": invoice_id,
             "party_id": str(inv.party_id),
             "to": email,
-            "subject": f"{lead}: invoice {inv.reference} is overdue",
-            "body": (
-                f"Hello, invoice {inv.reference} for {owed} {inv.currency} was due on {due} "
-                "and is still unpaid. If you have already paid, thank you, and please ignore "
-                "this note. Otherwise, could you let us know when to expect payment?"
-            ),
+            "subject": template["subject"].format_map(fields),
+            "body": template["body"].format_map(fields),
             "signals": [],
         }
 

@@ -4,7 +4,7 @@ requires: { kernel: ">=1.0,<2", ports: [accounting] }
 tools:
   - { name: cash.bank_balance, side_effect: read, description: "Bank balance from the accounting system, to open the forecast with" }
   - { name: cash.forecast, side_effect: read, description: "Week-by-week cash forecast from receivables and payables; flags a floor breach" }
-publishes: []
+publishes: [cash.review_due]   # weekly, in the business's local week (cash.floor sets the floor)
 consumes: []
 screens: []
 signals: [cash_below_floor]

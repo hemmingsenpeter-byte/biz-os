@@ -1,0 +1,22 @@
+name: po_recording
+trigger: po.issued
+goal_key: bill_match_rate_pct
+task: { kind: po_recording, title: "Keep PO for bill matching: {{packet.summary}}" }
+steps:
+  - id: record
+    kind: tool
+    tool: payables.po_record
+    args:
+      po_id: "{{packet.payload.po_id}}"
+      number: "{{packet.payload.number}}"
+      supplier_party_id: "{{packet.payload.supplier_party_id}}"
+      total_minor: "{{packet.payload.total_minor}}"
+      currency: "{{packet.payload.currency}}"
+      job_id: "{{packet.payload.job_id}}"
+  - id: recorded
+    kind: publish
+    packet: po.recorded
+    summary: "PO {{steps.record.output.number}} kept for bill matching"
+    payload:
+      po_id: "{{steps.record.output.po_id}}"
+      number: "{{steps.record.output.number}}"

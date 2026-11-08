@@ -25,7 +25,7 @@ Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. 
 | M3 Comms | Built: outbox, deterministic gate, idempotent sends with reconcile, permanent opt-outs. The receptionist sends through it. Customer replies (matched by a subject token) drive owner-approved bookings |
 | M4 Voice capture and documents | Built: voice notes become transcripts, notes and tasks; Jinja templates render to versioned PDFs; DocuSeal signature webhooks. PDF rendering needs Pango (Linux/CI) |
 | M5 Quoting, Estimator, fit-out pack | Built and wired into `apps/demo` and `apps/hive`, with end-to-end tests. Margins come only from the price book. The re-estimate of 5 past HIVE jobs within 10% needs real data |
-| M6 Money | In progress: Xero port, invoicing, payables, cash and the bookkeeper role, against fakes |
+| M6 Money | Code complete against fakes: Xero port, milestone invoicing, debtor reminders, PO intake and bill matching, a weekly 13-week cash forecast with a floor alert, and the bookkeeper role. Live acceptance against Xero not yet run |
 
 ## How a role runs
 

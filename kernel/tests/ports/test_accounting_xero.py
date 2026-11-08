@@ -101,3 +101,9 @@ def test_payments_parse_xero_dates_and_skip_unauthorised() -> None:
     assert out[0].invoice_ref is not None and out[0].invoice_ref.id == "i1"
     get = [r for r in fake.requests if r.url.path.endswith("/Payments")][0]
     assert "If-Modified-Since" in get.headers
+
+
+def test_bank_balance_sums_account_rows_not_the_total() -> None:
+    fake = FakeXero()
+    fake.bank_rows = [("Cheque", "1000.50"), ("Savings", "2500.00")]
+    assert asyncio.run(_xero(fake).bank_balance()) == (Decimal("3500.50"), "NZD")

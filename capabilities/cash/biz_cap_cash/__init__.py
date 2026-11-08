@@ -1,4 +1,4 @@
-"""cash: a 13-week cash forecast from receivables and payables."""
+"""cash: a 13-week cash forecast from the bank balance, receivables and payables."""
 
 from __future__ import annotations
 

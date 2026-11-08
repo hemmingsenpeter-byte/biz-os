@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 
 import jsonschema
@@ -95,6 +96,7 @@ class FakeAccounting:
         self.invoices: dict[str, ExternalRef] = {}
         self.bills: dict[str, ExternalRef] = {}
         self.payments: list[Payment] = []
+        self.balance: tuple[Decimal, str] = (Decimal(0), "NZD")
 
     async def upsert_contact(self, party: Party) -> ExternalRef:
         ref = self.contacts.setdefault(party.id, ExternalRef(system="fake", id=f"c-{party.id}"))
@@ -114,6 +116,9 @@ class FakeAccounting:
 
     async def list_payments(self, since: datetime) -> list[Payment]:
         return [p for p in self.payments if p.paid_at > since]
+
+    async def bank_balance(self) -> tuple[Decimal, str]:
+        return self.balance
 
 
 class FakeSign:

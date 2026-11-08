@@ -8,6 +8,7 @@ the horizon is totalled as `later`. Items in another currency are listed, not co
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
@@ -105,8 +106,26 @@ def forecast(
 
 
 def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
+    accounting = ports["accounting"]
+
     def forecast_tool(session: Session, **args: Any) -> dict[str, Any]:
         return forecast(**args)
+
+    def bank_balance(session: Session) -> dict[str, Any]:
+        """The accounting system's bank balance: the forecast's opening balance."""
+        amount, currency = asyncio.run(accounting.bank_balance())
+        return {"balance": str(_dec(amount, "balance", signed=True)), "currency": currency}
+
+    registry.register(
+        Tool(
+            "cash.bank_balance",
+            CAP,
+            SideEffect.READ,
+            {"type": "object", "additionalProperties": False, "properties": {}},
+            bank_balance,
+            "Bank balance from the accounting system, to open the forecast with",
+        )
+    )
 
     registry.register(
         Tool(

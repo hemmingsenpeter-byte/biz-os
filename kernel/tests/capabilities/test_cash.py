@@ -50,3 +50,18 @@ def test_horizon_currency_and_floor() -> None:
 def test_bad_amounts_are_refused(bad: object) -> None:
     with pytest.raises(ValueError):
         forecast(1, "NZD", [{"amount": bad, "currency": "NZD"}], [], today=TODAY)
+
+
+def test_forecast_opens_at_the_accounting_bank_balance() -> None:
+    from biz_cap_cash import register
+    from biz_kernel.tools.registry import ToolRegistry
+    from biz_port_fakes import FakeAccounting
+
+    acct = FakeAccounting()
+    acct.balance = (Decimal("4321.10"), "NZD")
+    reg = ToolRegistry()
+    register(reg, {"accounting": acct})
+    bal = reg.get("cash.bank_balance").fn(session=None)
+    assert bal == {"balance": "4321.10", "currency": "NZD"}
+    out = forecast(bal["balance"], bal["currency"], [], [], today=TODAY)
+    assert out["weeks"][0]["closing"] == "4321.10"  # reconciles with the books at week 0

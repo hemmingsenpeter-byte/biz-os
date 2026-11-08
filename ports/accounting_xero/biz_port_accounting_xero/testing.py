@@ -18,6 +18,7 @@ class FakeXero:
         self.contacts: list[dict[str, Any]] = []
         self.invoices: list[dict[str, Any]] = []
         self.payments: list[dict[str, Any]] = []
+        self.bank_rows: list[tuple[str, str]] = [("Cheque", "1000.00")]  # (account, closing)
         self.requests: list[httpx.Request] = []
         self.by_key: dict[str, dict[str, Any]] = {}
         self.fail_next_post: Exception | None = None  # raised after the invoice is stored
@@ -57,6 +58,19 @@ class FakeXero:
                 exc, self.fail_next_post = self.fail_next_post, None
                 raise exc
             return httpx.Response(200, json={"Invoices": [row]})
+        if path.endswith("/Organisation"):
+            return httpx.Response(200, json={"Organisations": [{"BaseCurrency": "NZD"}]})
+        if path.endswith("/Reports/BankSummary"):
+            rows = [
+                {"RowType": "Row", "Cells": [{"Value": name}, {"Value": "0"}, {"Value": bal}]}
+                for name, bal in self.bank_rows
+            ]
+            total = sum(float(b) for _, b in self.bank_rows)
+            rows.append(
+                {"RowType": "SummaryRow", "Cells": [{"Value": "Total"}, {"Value": str(total)}]}
+            )
+            report = {"Rows": [{"RowType": "Header"}, {"RowType": "Section", "Rows": rows}]}
+            return httpx.Response(200, json={"Reports": [report]})
         if path.endswith("/Payments"):
             return httpx.Response(200, json={"Payments": self.payments})
         return httpx.Response(404)

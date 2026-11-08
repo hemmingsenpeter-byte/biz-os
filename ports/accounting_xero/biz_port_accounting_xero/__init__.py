@@ -264,6 +264,21 @@ class XeroAccounting:
             )
         return out
 
+    async def bank_balance(self) -> tuple[Decimal, str]:
+        """Sum of closing balances from Xero's Bank Summary report, in the base currency."""
+        org = (await self._get("/Organisation")).get("Organisations") or [{}]
+        currency = str(org[0].get("BaseCurrency") or "NZD")
+        report = (await self._get("/Reports/BankSummary")).get("Reports") or [{}]
+        total = Decimal(0)
+        for section in report[0].get("Rows") or []:
+            for row in section.get("Rows") or []:
+                if row.get("RowType") != "Row":
+                    continue  # SummaryRow repeats the total
+                cells = row.get("Cells") or []
+                if cells:
+                    total += Decimal(str(cells[-1].get("Value") or 0))
+        return total, currency
+
     # -- draft creation, exactly once
     def _ledger_key(self, kind: str, draft: InvoiceDraft | BillDraft) -> str:
         raw = draft.idempotency_key or f"ref:{draft.reference}"

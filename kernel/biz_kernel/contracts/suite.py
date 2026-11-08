@@ -92,6 +92,9 @@ async def check_accounting_port(port: AccountingPort) -> None:
     assert isinstance(payments, list) and all(isinstance(p, Payment) for p in payments)
     future = await port.list_payments(datetime.now(UTC) + timedelta(days=365))
     assert future == [], "nothing paid in the future"
+    amount, currency = await port.bank_balance()
+    assert isinstance(amount, Decimal) and amount.is_finite()
+    assert isinstance(currency, str) and len(currency) == 3
 
 
 async def check_sign_port(port: SignPort, sample_webhook: Any | None = None) -> None:

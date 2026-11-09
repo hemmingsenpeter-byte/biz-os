@@ -19,7 +19,14 @@ from email.utils import format_datetime
 from typing import Any, Protocol
 
 import httpx
-from biz_kernel.contracts.ports import BillDraft, ExternalRef, InvoiceDraft, Party, Payment
+from biz_kernel.contracts.ports import (
+    BillDraft,
+    ExternalRef,
+    InvoiceDraft,
+    Party,
+    Payment,
+    PostedDocument,
+)
 from biz_kernel.db import engine as _db_engine
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
@@ -147,6 +154,19 @@ def _xero_date(value: Any) -> datetime:
     return datetime.fromisoformat(str(value)).replace(tzinfo=UTC)
 
 
+def _posted(row: dict[str, Any]) -> PostedDocument:
+    """A Xero invoice row as a PostedDocument, with Xero's own tax and tax-inclusive total."""
+
+    def amount(name: str) -> Decimal | None:
+        value = row.get(name)
+        return None if value is None else Decimal(str(value))
+
+    tax, total = amount("TotalTax"), amount("Total")
+    if tax is None or total is None:  # both or neither
+        tax = total = None
+    return PostedDocument(system="xero", id=str(row["InvoiceID"]), tax=tax, total=total)
+
+
 class XeroAccounting:
     def __init__(
         self,
@@ -233,10 +253,10 @@ class XeroAccounting:
             raise XeroFailed(f"contact {resp.status_code}: {resp.text[:200]}")
         return ExternalRef(system="xero", id=resp.json()["Contacts"][0]["ContactID"])
 
-    async def create_invoice(self, inv: InvoiceDraft) -> ExternalRef:
+    async def create_invoice(self, inv: InvoiceDraft) -> PostedDocument:
         return await self._create("ACCREC", inv, self.sales_account)
 
-    async def create_bill(self, bill: BillDraft) -> ExternalRef:
+    async def create_bill(self, bill: BillDraft) -> PostedDocument:
         return await self._create("ACCPAY", bill, self.purchases_account)
 
     async def list_payments(self, since: datetime) -> list[Payment]:
@@ -292,33 +312,45 @@ class XeroAccounting:
 
     async def _create(
         self, kind: str, draft: InvoiceDraft | BillDraft, account: str
-    ) -> ExternalRef:
+    ) -> PostedDocument:
         key = self._ledger_key(kind, draft)
         prior = self.ledger.get(key)
         if prior is None and self.ledger.claim(key):
             return await self._post(kind, key, draft, account)
         prior = self.ledger.get(key)
         if prior is not None and prior["status"] == "sent":
-            return ExternalRef(system="xero", id=prior["provider_id"])
+            return await self._read(str(prior["provider_id"]))
         if prior is not None and datetime.now(UTC) - prior["at"] < IN_FLIGHT:
             raise XeroUncertain("a create for this key is in flight")
         # Crashed mid-call: reconcile against Xero before any retry (same Idempotency-Key).
         existing = await self._find(kind, draft.reference)
         if existing is not None:
-            self.ledger.put(key, existing)
-            return ExternalRef(system="xero", id=existing)
+            self.ledger.put(key, existing.id)
+            return existing
         return await self._post(kind, key, draft, account)
 
-    async def _find(self, kind: str, reference: str) -> str | None:
+    async def _read(self, invoice_id: str) -> PostedDocument:
+        """A document we already created, with Xero's figures as they are now.
+
+        If Xero can't be reached the id is still returned, without figures: a repeat of a
+        finished create must not fail just because the lookup did.
+        """
+        try:
+            rows = (await self._get(f"/Invoices/{invoice_id}")).get("Invoices") or []
+        except (XeroFailed, httpx.HTTPError):
+            rows = []
+        return _posted(rows[0]) if rows else PostedDocument(system="xero", id=invoice_id)
+
+    async def _find(self, kind: str, reference: str) -> PostedDocument | None:
         field = "Reference" if kind == "ACCREC" else "InvoiceNumber"
         where = f"Type=={_quote(kind)} AND {field}=={_quote(reference)}"
         found = (await self._get("/Invoices", params={"where": where})).get("Invoices") or []
         live = [i for i in found if i.get("Status") not in ("DELETED", "VOIDED")]
-        return str(live[0]["InvoiceID"]) if live else None
+        return _posted(live[0]) if live else None
 
     async def _post(
         self, kind: str, key: str, draft: InvoiceDraft | BillDraft, account: str
-    ) -> ExternalRef:
+    ) -> PostedDocument:
         contact = await self.upsert_contact(draft.party)
         body: dict[str, Any] = {
             "Type": kind,
@@ -366,7 +398,7 @@ class XeroAccounting:
             errors = [e.get("Message") for e in created.get("ValidationErrors") or []]
             raise XeroFailed(f"{resp.status_code}: {errors or resp.text[:200]}")
         self.ledger.put(key, str(created["InvoiceID"]))
-        return ExternalRef(system="xero", id=str(created["InvoiceID"]))
+        return _posted(created)
 
 
 def create() -> XeroAccounting:

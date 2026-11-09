@@ -104,6 +104,29 @@ def test_payments_parse_xero_dates_and_skip_unauthorised() -> None:
     assert "If-Modified-Since" in get.headers
 
 
+def test_posting_returns_xeros_own_tax_and_total() -> None:
+    fake = FakeXero()
+    fake.tax_rate = Decimal("0.125")  # whatever the Xero account charges, not our estimate
+    x = _xero(fake)
+    posted = asyncio.run(x.create_invoice(_draft()))
+    assert (posted.tax, posted.total) == (Decimal("625.00"), Decimal("5625.00"))
+    # A repeat is answered from the ledger, and still carries Xero's figures.
+    again = asyncio.run(x.create_invoice(_draft()))
+    assert again == posted and len(fake.invoices) == 1
+
+
+def test_a_reconciled_create_carries_xeros_figures() -> None:
+    fake, ledger = FakeXero(), MemoryLedger()
+    x = _xero(fake, ledger)
+    fake.fail_next_post = httpx.ReadTimeout("lost the response")
+    with pytest.raises(XeroUncertain):
+        asyncio.run(x.create_invoice(_draft()))
+    ledger._data["ACCREC:k1"]["at"] -= timedelta(minutes=5)  # no longer in flight
+    posted = asyncio.run(x.create_invoice(_draft()))
+    assert len(fake.invoices) == 1
+    assert (posted.tax, posted.total) == (Decimal("750.00"), Decimal("5750.00"))
+
+
 def test_only_money_received_on_sales_invoices_counts_as_a_payment() -> None:
     """Xero's /Payments also lists what we paid suppliers, and credit-note, prepayment
     and overpayment entries. None of those is a customer paying an invoice."""

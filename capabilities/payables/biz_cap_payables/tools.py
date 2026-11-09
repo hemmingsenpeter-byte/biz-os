@@ -246,8 +246,19 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         ref = asyncio.run(accounting.create_bill(draft))
         bill.status, bill.idempotency_key = "posted", idempotency_key
         bill.system, bill.external_id = ref.system, ref.id
+        recorded = _dec(bill.tax or 0, "tax")
+        if ref.tax is not None:  # the accounting system's own figure replaces what we recorded
+            bill.tax = _dec(ref.tax, "tax")
         session.flush()
-        record(session, CAP, "payables.bill_posted", str(bill.id), external_id=ref.id)
+        record(
+            session,
+            CAP,
+            "payables.bill_posted",
+            str(bill.id),
+            external_id=ref.id,
+            tax=str(bill.tax),
+            tax_recorded=str(recorded),
+        )
         return _bill_view(bill)
 
     def bank_change_request(

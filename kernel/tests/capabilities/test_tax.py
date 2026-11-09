@@ -41,6 +41,7 @@ def stack() -> Any:
     inv_config.bind(manifest)
     pay_config.bind(manifest)
     reg, acct = ToolRegistry(), Recording()
+    acct.tax_rate_pct = Decimal(15)
     register_invoicing(reg, {"accounting": acct})
     register_payables(reg, {"accounting": acct})
     yield reg, acct
@@ -185,3 +186,78 @@ def test_no_tax_configured_changes_nothing(session: Session) -> None:
     register_invoicing(reg, {"accounting": FakeAccounting()})
     out = _invoice(reg, session)
     assert (out["amount"], out["tax"], out["gross"]) == ("3000.00", "0.00", "3000.00")
+
+
+def test_tax_is_read_back_from_accounting_when_posted(session: Session, stack: Any) -> None:
+    """Our rate is only the estimate before posting; the accounting system's figure wins."""
+    reg, acct = stack
+    acct.tax_rate_pct = Decimal("12.5")
+    out = _invoice(reg, session)
+    assert out["tax"] == "450.00"  # estimated at our 15%
+    posted = _call(
+        reg,
+        session,
+        "invoicing.invoice_post",
+        invoice_id=out["invoice_id"],
+        amount="3000.00",
+        idempotency_key="k1",
+    )
+    assert (posted["amount"], posted["tax"], posted["gross"]) == ("3000.00", "375.00", "3375.00")
+    (item,) = _call(reg, session, "invoicing.receivables")["items"]
+    assert item["amount"] == "3375.00"
+
+
+def test_bill_tax_is_read_back_from_accounting_when_posted(session: Session, stack: Any) -> None:
+    from biz_cap_payables.models import Bill
+
+    reg, acct = stack
+    acct.tax_rate_pct = Decimal("12.5")
+    supplier = Party(kind="organisation", name="Supplier Ltd")
+    session.add(supplier)
+    session.flush()
+    out = _call(
+        reg,
+        session,
+        "payables.bill_record",
+        supplier_party_id=str(supplier.id),
+        number="B-1",
+        total="1000",
+        currency="NZD",
+    )
+    bill = session.get(Bill, uuid.UUID(out["bill_id"]))
+    assert bill is not None
+    bill.status = "matched"
+    session.flush()
+    posted = _call(
+        reg,
+        session,
+        "payables.bill_post",
+        bill_id=out["bill_id"],
+        amount="1000",
+        idempotency_key="b1",
+    )
+    assert (posted["tax"], posted["gross"]) == ("125.00", "1125.00")
+
+
+def test_an_accounting_system_that_reports_no_tax_keeps_the_estimate(session: Session) -> None:
+    class Silent(FakeAccounting):
+        async def create_invoice(self, inv: Any) -> Any:
+            doc = await super().create_invoice(inv)
+            return doc.model_copy(update={"tax": None, "total": None})
+
+    inv_config.bind(SimpleNamespace(policy={"tax": {"rate_pct": 15}}))
+    try:
+        reg = ToolRegistry()
+        register_invoicing(reg, {"accounting": Silent()})
+        out = _invoice(reg, session)
+        posted = _call(
+            reg,
+            session,
+            "invoicing.invoice_post",
+            invoice_id=out["invoice_id"],
+            amount="3000.00",
+            idempotency_key="k1",
+        )
+        assert posted["tax"] == "450.00"
+    finally:
+        inv_config.bind(None)

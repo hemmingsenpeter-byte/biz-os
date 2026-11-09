@@ -27,6 +27,7 @@ from biz_kernel.contracts.ports import (
     OutboundMessage,
     Party,
     Payment,
+    PostedDocument,
     SendResult,
     Signer,
     SignEvent,
@@ -85,9 +86,16 @@ async def check_accounting_port(port: AccountingPort) -> None:
     lines = [LineItem(description="Item", unit_amount=Decimal("10.00"))]
     inv = InvoiceDraft(party=party, reference="R1", lines=lines, idempotency_key="inv-1")
     ref = await port.create_invoice(inv)
-    assert isinstance(ref, ExternalRef) and ref.id
+    assert isinstance(ref, PostedDocument) and ref.id
+    assert await port.create_invoice(inv) == ref, "a repeat returns the same document and figures"
     bill = BillDraft(party=party, reference="B1", lines=lines, idempotency_key="bill-1")
-    assert isinstance(await port.create_bill(bill), ExternalRef)
+    posted_bill = await port.create_bill(bill)
+    assert isinstance(posted_bill, PostedDocument)
+    for doc in (ref, posted_bill):
+        # The system's own tax and tax-inclusive total, or None for both if it cannot say.
+        assert (doc.tax is None) == (doc.total is None)
+        if doc.tax is not None and doc.total is not None:
+            assert doc.tax >= 0 and doc.total == Decimal("10.00") + doc.tax
     payments = await port.list_payments(EPOCH)
     assert isinstance(payments, list) and all(isinstance(p, Payment) for p in payments)
     future = await port.list_payments(datetime.now(UTC) + timedelta(days=365))

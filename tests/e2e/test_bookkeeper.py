@@ -79,6 +79,7 @@ def rt(fresh_db: str, monkeypatch, request):  # type: ignore[no-untyped-def]
     }
     # Every tick also runs the weekly cash review; keep it above demo's floor by default.
     ports["accounting"].balance = (Decimal("50000"), "NZD")
+    ports["accounting"].tax_rate_pct = Decimal(15)  # it adds the tax; we read it back
     runtime = build_runtime(
         ROOT / "apps" / request.param, ROOT, ports=ports, approval_poll_seconds=1
     )

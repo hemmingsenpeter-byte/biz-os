@@ -257,8 +257,19 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         ref = asyncio.run(post())
         inv.status, inv.posted_at = "posted", utcnow()
         inv.idempotency_key, inv.system, inv.external_id = idempotency_key, ref.system, ref.id
+        estimate = _money(inv.tax)
+        if ref.tax is not None:  # the accounting system's own figure replaces our estimate
+            inv.tax = _money(ref.tax)
         session.flush()
-        record(session, CAP, "invoicing.posted", str(inv.id), external_id=ref.id)
+        record(
+            session,
+            CAP,
+            "invoicing.posted",
+            str(inv.id),
+            external_id=ref.id,
+            tax=str(inv.tax),
+            tax_estimate=str(estimate),
+        )
         return _view(inv, url=ref.url)
 
     def receivables(session: Session) -> dict[str, Any]:

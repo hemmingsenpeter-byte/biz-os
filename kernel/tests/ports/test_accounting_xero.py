@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import httpx
 import pytest
@@ -101,6 +102,38 @@ def test_payments_parse_xero_dates_and_skip_unauthorised() -> None:
     assert out[0].invoice_ref is not None and out[0].invoice_ref.id == "i1"
     get = [r for r in fake.requests if r.url.path.endswith("/Payments")][0]
     assert "If-Modified-Since" in get.headers
+
+
+def test_only_money_received_on_sales_invoices_counts_as_a_payment() -> None:
+    """Xero's /Payments also lists what we paid suppliers, and credit-note, prepayment
+    and overpayment entries. None of those is a customer paying an invoice."""
+    fake = FakeXero()
+    x = _xero(fake)
+    paid = datetime(2026, 11, 1, tzinfo=UTC)
+    stamp = f"/Date({int(paid.timestamp() * 1000)}+0000)/"
+
+    def row(pid: str, kind: str | None, inv_type: str | None) -> dict[str, Any]:
+        invoice = {"InvoiceID": f"i-{pid}", "CurrencyCode": "NZD"}
+        if inv_type:
+            invoice["Type"] = inv_type
+        out = {
+            "PaymentID": pid,
+            "Amount": 10,
+            "Date": stamp,
+            "Status": "AUTHORISED",
+            "Invoice": invoice,
+        }
+        return {**out, "PaymentType": kind} if kind else out
+
+    fake.payments = [
+        row("in", "ACCRECPAYMENT", "ACCREC"),
+        row("out", "ACCPAYPAYMENT", "ACCPAY"),  # we paid a supplier
+        row("credit", "ARCREDITPAYMENT", None),
+        row("prepay", "ARPREPAYMENTPAYMENT", None),
+        row("bill-untyped", None, "ACCPAY"),
+    ]
+    out = asyncio.run(x.list_payments(paid - timedelta(days=1)))
+    assert [p.ref.id for p in out] == ["in"]
 
 
 def test_bank_balance_sums_account_rows_not_the_total() -> None:

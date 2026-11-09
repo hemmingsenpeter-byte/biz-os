@@ -39,6 +39,7 @@ __all__ = [
 API = "https://api.xero.com/api.xro/2.0"
 TOKEN_URL = "https://identity.xero.com/connect/token"
 SCOPES = "accounting.transactions accounting.contacts"
+RECEIVED, SALES = "ACCRECPAYMENT", "ACCREC"  # Xero's PaymentType and invoice Type for money in
 IN_FLIGHT = timedelta(minutes=2)  # a younger "sending" row belongs to a live call
 
 
@@ -245,10 +246,14 @@ class XeroAccounting:
         for p in data.get("Payments") or []:
             if p.get("Status") != "AUTHORISED":
                 continue
+            invoice = p.get("Invoice") or {}
+            # Only money received on a sales invoice. /Payments also lists what we paid
+            # suppliers (ACCPAYPAYMENT) and credit-note, prepayment and overpayment entries.
+            if p.get("PaymentType", RECEIVED) != RECEIVED or invoice.get("Type", SALES) != SALES:
+                continue
             paid_at = _xero_date(p["Date"])
             if paid_at <= since:
                 continue
-            invoice = p.get("Invoice") or {}
             out.append(
                 Payment(
                     ref=ExternalRef(system="xero", id=p["PaymentID"]),

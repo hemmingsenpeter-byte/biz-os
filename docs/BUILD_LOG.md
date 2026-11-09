@@ -12,11 +12,13 @@ A review of M0 to M6 found four defects, each reproduced first. The owner said t
 - **A refused cloud draft still counts against the budget.** The draft step rolled back the session the router had written its cost rows into, so paid calls that failed validation left no trace. It now commits the cost before it raises.
 - **One opt-out list.** comms owns it and publishes the new read tool **`comms.is_suppressed`**. Intake checks it before `text_back` and `reply`, and records every stop it takes through `comms.opt_out`. Intake keeps its own rows too, so it still works in a composition without comms. No packet schema or port interface changed.
 - **Xero payments are money in only.** `list_payments` keeps `ACCRECPAYMENT` rows on `ACCREC` invoices; supplier payments and credit-note, prepayment and overpayment rows are skipped.
-- **Checks:** full `pytest` green (551), `ruff check`, `ruff format --check` and `uv run mypy .` clean, `biz doctor` passes for demo and HIVE.
+- **Checks:** full `pytest` green (561), `ruff check`, `ruff format --check` and `uv run mypy .` clean, `biz doctor` passes for demo and HIVE.
+
+- **Tax: stored amounts are tax-exclusive (the owner's decision), and the tax sits beside them.** New `tax.rate_pct` in `policy.yaml` (default 0; **15 in both apps, check HIVE's**). Invoices and bills gain a `tax` amount (migration `0020`). Posting to Xero is unchanged: exclusive lines, Xero adds the tax. What is *owed* now includes it: an invoice is `paid` only at amount plus tax, and reminders, `invoice.overdue`'s `outstanding_minor`, `invoicing.receivables`, `payables.due`, the payment-run total and so the cash forecast all use the tax-inclusive figure. The approval for posting, `invoice.issued`'s `total_minor` and PO matching stay tax-exclusive. `payables.bill_record` takes an optional `tax` for a supplier whose tax differs (0 for one that charges none). A bad rate fails when the runtime starts. No packet schema or port interface changed.
 
 ### Waiting on the owner
 
-- **Tax.** Invoices and bills post to Xero with amounts *exclusive* of tax, so Xero adds GST on top while our stored totals, reminders, "paid" check and cash forecast use the ex-GST figure. Decide whether stored amounts are tax-inclusive or exclusive before connecting HIVE's Xero.
+- **HIVE's tax rate** is set to 15 in `apps/hive/policy.yaml`; confirm it, and that Xero's sales and purchases accounts default to the same rate. The tax is worked out from this rate, not read back from Xero, so a different rate in Xero would make the two disagree.
 - A failed run has no "try again" button yet: after the alert, the owner can only act by hand.
 - Phone numbers are normalised differently by intake (country code added) and comms (punctuation stripped), so a comms opt-out typed in national format does not match intake's international form.
 

@@ -19,5 +19,6 @@ def pollers(rt: Any) -> list[Callable[[], int]]:
 
     config.bind(rt.manifest)
     reminder_template()  # a bad template fails at start, not on the first reminder
+    config.tax_rate()  # so does a bad tax rate
     # Payments first, so an invoice paid since the last poll gets no reminder.
     return [lambda: poll_payments(rt), lambda: poll_overdue(rt)]

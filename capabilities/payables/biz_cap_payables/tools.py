@@ -78,8 +78,10 @@ def _bill_view(b: Bill, **extra: Any) -> dict[str, Any]:
         "supplier_party_id": str(b.supplier_party_id),
         "number": b.number,
         "po_id": str(b.po_id) if b.po_id else None,
-        "amount": str(b.total),
+        "amount": str(b.total),  # tax-exclusive: what is posted and matched to the PO
         "total_minor": _minor(b.total),
+        "tax": str(_dec(b.tax or 0, "tax")),
+        "gross": str(_dec(b.gross, "gross")),  # what we pay
         "currency": b.currency,
         "status": b.status,
         "problems": list(b.problems or []),
@@ -129,7 +131,10 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         po_number: str | None = None,
         lines: list[dict[str, Any]] | None = None,
         due: str | None = None,
+        tax: Any = None,
     ) -> dict[str, Any]:
+        """`total` is tax-exclusive. `tax` is the tax on the bill; left out, it is worked
+        out from the business's rate (state 0 for a supplier that charges none)."""
         supplier = uuid.UUID(supplier_party_id)
         existing = session.scalar(
             select(Bill).where(Bill.supplier_party_id == supplier, Bill.number == number.strip())
@@ -151,6 +156,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             po_number=po_number.strip() if po_number else None,
             lines=clean,
             total=amount,
+            tax=config.tax_on(amount) if tax is None else _dec(tax, "tax"),
             currency=currency,
             due=datetime.fromisoformat(due) if due else None,
         )
@@ -335,7 +341,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         for b in included:
             b.status = "in_run"
         session.flush()
-        total = sum((b.total for b in included), Decimal(0))
+        total = sum((b.gross for b in included), Decimal(0))  # with tax: what is paid
         record(session, CAP, "payables.run_prepared", str(run_id), bills=len(included))
         return {
             "run_id": str(run_id),
@@ -355,7 +361,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                 {
                     "bill_id": str(b.id),
                     "due": b.due.isoformat() if b.due else None,
-                    "amount": str(b.total),
+                    "amount": str(_dec(b.gross, "gross")),  # with tax
                     "currency": b.currency,
                 }
                 for b in rows
@@ -398,6 +404,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                     "po_number": _STR,
                     "lines": {"type": "array", "items": line},
                     "due": _STR,
+                    "tax": _NUM,
                 },
                 ["supplier_party_id", "number", "total", "currency"],
             ),

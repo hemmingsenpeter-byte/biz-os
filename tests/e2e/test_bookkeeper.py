@@ -201,15 +201,19 @@ def test_payment_is_reconciled_to_the_invoice_once(rt: Any) -> None:
     decide(op.id, op.approver, approve=True, version=op.version)
     DBOS.retrieve_workflow(run.id).get_result()
     posted = next(iter(acct.invoices.values()))
-    acct.payments.append(
-        Payment(
-            ref=posted.model_copy(update={"id": "pay-1"}),
-            amount=Decimal("5000.00"),
-            currency="NZD",
-            paid_at=db.utcnow(),
-            invoice_ref=posted,
+
+    def pay(ref: str, amount: str) -> None:
+        acct.payments.append(
+            Payment(
+                ref=posted.model_copy(update={"id": ref}),
+                amount=Decimal(amount),
+                currency="NZD",
+                paid_at=db.utcnow(),
+                invoice_ref=posted,
+            )
         )
-    )
+
+    pay("pay-1", "5000.00")  # the tax-exclusive amount: 15% tax is still owed
     assert rt.poll() == 1
     assert rt.poll() == 0  # the same payment is never counted twice
     received = _packets("payment.received")
@@ -217,7 +221,13 @@ def test_payment_is_reconciled_to_the_invoice_once(rt: Any) -> None:
     with db.session_scope() as s:
         inv = s.scalars(select(Invoice)).one()
         assert received[0].payload["invoice_id"] == str(inv.id)
-        assert inv.status == "paid" and inv.paid == Decimal("5000.00")
+        assert inv.tax == Decimal("750.00")
+        assert inv.status == "posted" and inv.owed == Decimal("750.00")
+    pay("pay-2", "750.00")
+    assert rt.poll() == 1
+    with db.session_scope() as s:
+        inv = s.scalars(select(Invoice)).one()
+        assert inv.status == "paid" and inv.paid == Decimal("5750.00")
 
 
 def _bill_received(rt: Any, total: str) -> uuid.UUID:

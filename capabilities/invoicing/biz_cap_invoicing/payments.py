@@ -3,7 +3,7 @@
 Every poll looks back a fixed window (`invoicing.payment_lookback_days`, default 35) rather
 than from a cursor, because a payment can be entered with an earlier date than the last
 one seen. The external payment id dedupes. A payment against one of our posted invoices
-adds to its paid total; at or past the total the invoice becomes `paid`.
+adds to its paid total; at or past the tax-inclusive total the invoice becomes `paid`.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def poll_payments(rt: Any) -> int:
                     }
                     if inv is not None:
                         inv.paid = Decimal(inv.paid) + Decimal(p.amount)
-                        if inv.paid >= inv.total:
+                        if inv.settled:  # the tax-inclusive total, not the posted amount
                             inv.status = "paid"
                         payload["invoice_id"] = str(inv.id)
                     rt.bus.publish(

@@ -47,7 +47,7 @@ def poll_overdue(rt: Any) -> int:
                     "party_id": str(inv.party_id),
                     "days_overdue": days,
                     "reminder": step,
-                    "outstanding_minor": _minor(inv.total - inv.paid),
+                    "outstanding_minor": _minor(inv.owed),  # with tax
                     "currency": inv.currency,
                 },
                 job_id=inv.job_id,

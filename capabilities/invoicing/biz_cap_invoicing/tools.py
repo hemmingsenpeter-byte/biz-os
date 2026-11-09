@@ -75,8 +75,10 @@ def _view(inv: Invoice, **extra: Any) -> dict[str, Any]:
         "stage": inv.stage,
         "reference": inv.reference,
         "currency": inv.currency,
-        "amount": str(_money(inv.total)),
+        "amount": str(_money(inv.total)),  # tax-exclusive: what is posted
         "total_minor": _minor(inv.total),
+        "tax": str(_money(inv.tax)),
+        "gross": str(_money(inv.gross)),  # what the client pays
         "status": inv.status,
         "paid": str(_money(inv.paid)),
         "external_id": inv.external_id,
@@ -200,6 +202,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             currency=str(job.currency),
             lines=[{"description": stage.name, "quantity": "1", "unit_amount": str(amount)}],
             total=amount,
+            tax=config.tax_on(amount),
             due=utcnow() + timedelta(days=int(config.setting("payment_terms_days", 20))),
         )
         session.add(inv)
@@ -265,7 +268,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
                 {
                     "invoice_id": str(i.id),
                     "due": i.due.isoformat() if i.due else None,
-                    "amount": str(_money(i.total - i.paid)),
+                    "amount": str(_money(i.owed)),  # with tax
                     "currency": i.currency,
                 }
                 for i in rows
@@ -288,7 +291,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         fields = {
             "lead": "A reminder" if reminder <= 1 else f"Reminder {reminder}",
             "reference": inv.reference,
-            "amount": str(_money(inv.total - inv.paid)),
+            "amount": str(_money(inv.owed)),  # with tax
             "currency": inv.currency,
             "due": inv.due.date().isoformat() if inv.due else "its due date",
             "reminder": str(reminder),

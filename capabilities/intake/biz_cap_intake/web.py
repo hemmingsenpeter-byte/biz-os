@@ -151,6 +151,7 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
             sender=event.from_number,
             body=event.body or "",
             provider_id=event.provider_id,
+            registry=getattr(rt, "registry", None),
         )
         return {
             "status": "duplicate" if got.duplicate else "accepted",
@@ -176,6 +177,7 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
             subject=body.subject or (f"Form from {body.name}" if body.name else "Form enquiry"),
             body=body.message,
             provider_id=f"form:{digest}",
+            registry=getattr(rt, "registry", None),
         )
         return {"status": "accepted", "enquiry_id": str(got.enquiry.id)}
 
@@ -286,6 +288,7 @@ def poll_mail(rt: Any) -> int:
                         subject=str(m.subject or "")[: service.MAX_SUBJECT],
                         body=str(m.body or "")[: service.MAX_BODY],
                         provider_id=str(m.provider_id)[: service.MAX_PROVIDER_ID],
+                        registry=getattr(rt, "registry", None),
                     )
             except Exception:
                 log.exception("mail message %r skipped", str(m.provider_id)[:80])

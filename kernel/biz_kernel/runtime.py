@@ -207,6 +207,7 @@ def build_runtime(
     repo_root: Path,
     ports: dict[str, Any] | None = None,
     approval_poll_seconds: float = 3600.0,
+    retry_seconds: float = 60.0,
 ) -> Runtime:
     manifest = load_composition(app_dir, repo_root)
     overrides = ports or {}
@@ -270,6 +271,7 @@ def build_runtime(
             gate=gate,
             evidence=KernelEvidence(rules),
             approval_poll_seconds=approval_poll_seconds,
+            retry_seconds=retry_seconds,
             budgets=rt.budgets,
             roles={
                 name: runner.RoleSpec(

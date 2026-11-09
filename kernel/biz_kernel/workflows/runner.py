@@ -549,17 +549,32 @@ def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, A
     inputs = render(step.get("inputs", {}), state)
     # Drafting gets no tools, and every input is untrusted data.
     task = step.get("task", f"{role}.{state.get('sop', step['id'])}")
-    with db.session_scope() as s:
-        result = asyncio.run(
-            c.router.generate(
-                task, system, [], step["schema"], untrusted=[_as_text(inputs)], session=s, role=role
-            )
-        )
+    result = _generate(role, task, system, step["schema"], _as_text(inputs))
     with db.session_scope() as s:
         if _ledger(s, run_id, step["id"]) is None:
             _save(s, run_id, step["id"], result.output)
             record(s, role, "draft", task, run_id=run_id, tier=result.tier)
     return result.output
+
+
+def _generate(role: str, task: str, system: str, schema: dict[str, Any], text: str) -> Any:
+    """One routed model call. What it cost is committed even when the draft is refused.
+
+    The router writes its cost rows into the session it is given. A paid call whose output
+    fails validation is still real spend, so the session commits before the failure is
+    raised; rolling it back would hide the spend from the role's budget.
+    """
+    failure: Exception | None = None
+    with db.session_scope() as s:
+        try:
+            return asyncio.run(
+                ctx().router.generate(
+                    task, system, [], schema, untrusted=[text], session=s, role=role
+                )
+            )
+        except Exception as exc:
+            failure = exc
+    raise failure
 
 
 @DBOS.step(name="biz.sop.publish")

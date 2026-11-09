@@ -1,5 +1,34 @@
 # Build log
 
+## 2026-11-09: review fixes (CI, failed runs, lost spend, opt-outs, Xero payments)
+
+A review of M0 to M6 found four defects, each reproduced first. The owner said to fix them in this order.
+
+### Decisions made (check these)
+
+- **CI is green again.** `routes_approvals.py` was the one file `ruff format --check` flagged; that step had failed the last two pushes to `main`.
+- **A SOP run never dies silently.** A step that raised used to leave the DBOS workflow in `ERROR` and the run `running` for good, with no alert and no retry. Now a passing fault (a provider being down) is retried after 1 minute, 10 minutes and 1 hour (`MAX_ATTEMPTS = 4`). A refusal, a bad input or missing evidence is not retried. A run that cannot go on ends as **`failed`**, raises one **`sop.failed`** alert, and leaves its task open. This replaces the old behaviour where a gate-blocked message ended the run with an `EvidenceMissing` error: it now ends `failed` with the alert.
+- **A decision made before the run started waiting is seen at once**, not after the poll timeout (up to an hour).
+- **A refused cloud draft still counts against the budget.** The draft step rolled back the session the router had written its cost rows into, so paid calls that failed validation left no trace. It now commits the cost before it raises.
+- **One opt-out list.** comms owns it and publishes the new read tool **`comms.is_suppressed`**. Intake checks it before `text_back` and `reply`, and records every stop it takes through `comms.opt_out`. Intake keeps its own rows too, so it still works in a composition without comms. No packet schema or port interface changed.
+- **Xero payments are money in only.** `list_payments` keeps `ACCRECPAYMENT` rows on `ACCREC` invoices; supplier payments and credit-note, prepayment and overpayment rows are skipped.
+- **Checks:** full `pytest` green (551), `ruff check`, `ruff format --check` and `uv run mypy .` clean, `biz doctor` passes for demo and HIVE.
+
+### Waiting on the owner
+
+- **Tax.** Invoices and bills post to Xero with amounts *exclusive* of tax, so Xero adds GST on top while our stored totals, reminders, "paid" check and cash forecast use the ex-GST figure. Decide whether stored amounts are tax-inclusive or exclusive before connecting HIVE's Xero.
+- A failed run has no "try again" button yet: after the alert, the owner can only act by hand.
+- Phone numbers are normalised differently by intake (country code added) and comms (punctuation stripped), so a comms opt-out typed in national format does not match intake's international form.
+
+### Still open from the review (not fixed here)
+
+- Nothing calls `comms.reconcile`, and M365 cannot report "not sent", so an uncertain send stays uncertain.
+- A signed-PDF download that fails leaves the signature at `signed_pending_copy`.
+- A mail message skipped by `poll_mail` is lost once the cursor moves on.
+- No alerter is wired: alerts are only readable at `GET /v1/health/alerts`.
+- Approval edits are not checked against the tool's schema.
+- M5 and M6 have no entry points outside tests (jobs, stages, bills, milestones).
+
 ## 2026-11-09: M6 code close-out (block 1)
 
 The owner approved the schema changes below in advance ("approve all").

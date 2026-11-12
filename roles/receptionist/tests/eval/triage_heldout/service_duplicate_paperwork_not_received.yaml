@@ -1,0 +1,20 @@
+name: service_duplicate_paperwork_not_received
+tags: [duplicate]
+why: "A customer resends a request for paperwork promised after a visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "ingrid.solberg@example.com",
+        "subject": "Sending again - certificate",
+        "body": "I am not sure my earlier message went through as I have had no acknowledgement, so\nhere it is again.\n\nFollowing your visit on the 5th, the completion certificate you promised has not\narrived. Please could you send it? I need it for my insurer.\n\nIngrid Solberg"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

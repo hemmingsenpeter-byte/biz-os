@@ -30,6 +30,8 @@ quoting:
   target_margin_pct: 25
   max_discount_pct: 5
   currency: NZD
+tax:
+  rate_pct: 15   # the demo business charges 15% on top of its amounts
 invoicing:
   payment_terms_days: 20
   reminder_days: [7, 14, 30]   # days past due for each reminder
@@ -48,3 +50,8 @@ cash:   # a weekly forecast runs from Monday (local week, limits.day_timezone)
   floor: 0   # escalate to the owner when the forecast goes negative (base currency)
 payables:
   match_tolerance_pct: 0   # how far a bill may exceed its PO before it is a mismatch
+metrics:   # time saved = tasks completed x baseline minutes, minus review time
+  # Invented values for the demo. A real business must time its owner on the work first.
+  baseline_minutes:
+    default: 12   # minutes the owner took per task, by task kind (default covers the rest)
+  review_minutes_per_approval: 2

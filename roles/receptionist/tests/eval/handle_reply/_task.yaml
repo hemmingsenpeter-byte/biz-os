@@ -1,0 +1,9 @@
+schema_version: 1
+dataset: receptionist-handle-reply-tuning
+dataset_version: "1.0.0"
+task: receptionist.handle_reply
+decision_type: reply_drafting
+split: tuning
+provenance: synthetic
+owner_reviewed: false
+threshold: 0.1

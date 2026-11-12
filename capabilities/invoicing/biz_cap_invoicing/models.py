@@ -40,7 +40,8 @@ class Invoice(Base):
     reference: Mapped[str] = mapped_column(String(120))
     currency: Mapped[str] = mapped_column(String(3))
     lines: Mapped[list[Any]] = mapped_column(JSONB, default=list)
-    total: Mapped[Decimal] = mapped_column(MONEY)
+    total: Mapped[Decimal] = mapped_column(MONEY)  # tax-exclusive, as posted
+    tax: Mapped[Decimal] = mapped_column(MONEY, default=Decimal(0), server_default="0")
     status: Mapped[str] = mapped_column(String(12), default="draft")  # draft | posted | paid
     paid: Mapped[Decimal] = mapped_column(MONEY, default=Decimal(0))
     reminders_sent: Mapped[int] = mapped_column(Integer, default=0)
@@ -51,6 +52,19 @@ class Invoice(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     posted_at: Mapped[datetime | None]
     note: Mapped[str | None] = mapped_column(Text)
+
+    @property
+    def gross(self) -> Decimal:
+        """What the client is asked to pay: the amount plus its tax."""
+        return Decimal(self.total) + Decimal(self.tax or 0)
+
+    @property
+    def owed(self) -> Decimal:
+        return max(self.gross - Decimal(self.paid or 0), Decimal(0))
+
+    @property
+    def settled(self) -> bool:
+        return Decimal(self.paid or 0) >= self.gross
 
 
 class ReceivedPayment(Base):

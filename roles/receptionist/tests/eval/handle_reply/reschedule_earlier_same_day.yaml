@@ -1,0 +1,25 @@
+name: reschedule_earlier_same_day
+tags: [routine]
+why: "The day is fine but the offered time is refused; the customer asks for an earlier one."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "Wednesday is fine but 4pm is too late for me. Do you have anything before lunch?"
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-01-13T16:00:00+00:00",
+          "end": "2027-01-13T16:30:00+00:00",
+          "label": "Wed 13 Jan 2027 16:00 UTC"
+        }
+      ]
+    }
+expected: { intent: reschedule, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from biz_kernel import db
 from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook
+from biz_kernel.control import service as control
 from biz_kernel.policy import spend
 from biz_kernel.policy.types import GATED, Action, Allow, Decision, SideEffect
 
@@ -98,6 +99,9 @@ class ToolRegistry:
             raise NotAllowed(f"{actor} may not call {name}")
         tool = self.get(name)
         jsonschema.validate(args, tool.schema)
+        if (tool.side_effect in GATED or tool.inner) and control.is_paused(session):
+            # The kill switch outranks everything, including an approval being replayed.
+            raise control.Paused(name)
         cost = tool.cost_for(args)
         metered = cost > 0 and self.budgets is not None
         if metered:  # approval never bypasses the budget: checked before policy and execution
@@ -134,6 +138,8 @@ class ToolRegistry:
             assert self.budgets is not None
             charged = self.budgets.charge(session, actor, cost, "tool", name, self.now())
         try:
+            if tool.side_effect in GATED or tool.inner:
+                control.admit(session, name)
             output = tool.fn(session=session, **extra, **args)
         except Exception:
             if charged is not None and self.budgets is not None:

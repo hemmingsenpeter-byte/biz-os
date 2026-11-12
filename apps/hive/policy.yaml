@@ -35,6 +35,8 @@ quoting:
   target_margin_pct: 25
   max_discount_pct: 5
   currency: NZD
+tax:
+  rate_pct: 15   # GST: amounts are stored and posted GST-exclusive; what is owed includes it
 invoicing:
   payment_terms_days: 20
   reminder_days: [7, 14, 30]   # days past due for each reminder
@@ -53,3 +55,10 @@ cash:   # a weekly forecast runs from Monday (local week, limits.day_timezone)
   # floor: 0
 payables:
   match_tolerance_pct: 0   # how far a bill may exceed its PO before it is a mismatch
+# metrics:   # time saved = tasks completed x baseline minutes, minus review time
+#   # owner to set: these numbers must come from timing the owner on about 20 real tasks
+#   # before the roles take the work over. Until then time saved shows "not measured".
+#   baseline_minutes:
+#     default: 0        # minutes the owner took per task
+#     # <task kind>: 0  # optional, per task kind
+#   review_minutes_per_approval: 0   # minutes the owner spends checking one proposal

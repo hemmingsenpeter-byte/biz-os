@@ -11,6 +11,7 @@ tools:
   - { name: comms.match_reply, side_effect: read, description: "Find the sent mail a [ref:] reply token belongs to; matches only when the sender is the address it was sent to" }
   - { name: comms.resolve_reply, side_effect: draft, description: "Validate a model's reading of a customer reply: the slot must be one offered (and free) with enough confidence, else escalate" }
   - { name: comms.opt_out, side_effect: draft, description: "Record a permanent, channel-agnostic suppression" }
+  - { name: comms.is_suppressed, side_effect: read, description: "Whether an address or number (or its party) has opted out; other capabilities ask before they send" }
 publishes: [message.queued, message.sent, reply.received, optout.recorded]
 consumes: []
 screens: []

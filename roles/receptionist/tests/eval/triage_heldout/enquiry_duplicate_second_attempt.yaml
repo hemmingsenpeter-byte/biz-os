@@ -1,0 +1,20 @@
+name: enquiry_duplicate_second_attempt
+tags: [duplicate]
+why: "A prospect chases an unanswered request for a quote; still a prospect."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "theo.grant@example.com",
+        "subject": "Second attempt",
+        "body": "Second attempt. I left a voicemail on Friday and sent a message through your site at\nthe weekend. We are still looking for someone to quote for a job at our shop before\nthe end of the month. If you are too busy just say so and I will look elsewhere.\n\nTheo Grant"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

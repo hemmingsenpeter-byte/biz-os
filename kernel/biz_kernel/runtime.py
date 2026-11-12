@@ -160,6 +160,14 @@ class Runtime:
 
         self.follow.register("sop_waiting_on_decided_op", decided_but_waiting, resume)
 
+        def parked(session: Session) -> list[str]:
+            """Runs the kill switch parked. The sweep only runs once it is off again."""
+            return list(session.scalars(select(SopRun.id).where(SopRun.status == "paused")))
+
+        self.follow.register(
+            "sop_parked_by_pause", parked, lambda session, run_id: runner.resume_paused([run_id])
+        )
+
 
 def capability_routes(rt: Runtime, hook: str = "routes") -> list[tuple[str, Any]]:
     """(name, APIRouter) per loaded capability defining `hook(rt)`.
@@ -207,6 +215,7 @@ def build_runtime(
     repo_root: Path,
     ports: dict[str, Any] | None = None,
     approval_poll_seconds: float = 3600.0,
+    retry_seconds: float = 60.0,
 ) -> Runtime:
     manifest = load_composition(app_dir, repo_root)
     overrides = ports or {}
@@ -270,6 +279,7 @@ def build_runtime(
             gate=gate,
             evidence=KernelEvidence(rules),
             approval_poll_seconds=approval_poll_seconds,
+            retry_seconds=retry_seconds,
             budgets=rt.budgets,
             roles={
                 name: runner.RoleSpec(

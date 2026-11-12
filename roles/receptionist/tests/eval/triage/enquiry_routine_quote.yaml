@@ -1,0 +1,20 @@
+name: enquiry_routine_quote
+tags: [routine]
+why: "A new prospect asks for a quote or a visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "dana.whitlock@example.com",
+        "subject": "Quote for regular upkeep",
+        "body": "Hello,\n\nWe have recently moved into new premises and are looking for someone to take on the\nregular upkeep. There are around twelve rooms over two floors.\n\nCould you send a quote, or let me know when someone could come and have a look?\n\nThanks,\nDana Whitlock"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

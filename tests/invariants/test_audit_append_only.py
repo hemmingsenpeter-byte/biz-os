@@ -4,7 +4,7 @@ import pytest
 from biz_kernel.audit.log import APPEND_ONLY_TABLES, record
 from biz_kernel.models_registry import import_all_models
 from biz_kernel.packets.bus import Packet
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
 import_all_models()  # every module appends its tables before we parametrize
@@ -39,6 +39,21 @@ def _row(session, table: str):
             HashEmbedder(768),
         )
         return session.execute(text("SELECT id FROM memory_writes LIMIT 1")).scalar()
+    if table == "control_pauses":
+        from biz_kernel import control
+        from biz_kernel.control.models import PauseEvent
+
+        control.pause(session, "tester")
+        return session.scalar(select(PauseEvent.id))
+    if table == "approval_corrections":
+        from biz_kernel.approvals import staged
+        from biz_kernel.approvals.models import Correction
+        from biz_kernel.policy.types import Action, SideEffect
+
+        action = Action(actor="r", tool="t.send", side_effect=SideEffect.EXTERNAL, inputs={"a": 1})
+        op = staged.stage(session, action, "owner")
+        staged.edit(session, op.id, {"a": 2}, by="owner", severity="factual", version=op.version)
+        return session.scalar(select(Correction.id))
     return session.execute(text(f"SELECT id FROM {table} LIMIT 1")).scalar()
 
 

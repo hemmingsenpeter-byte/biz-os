@@ -1,0 +1,19 @@
+name: spam_portuguese_phishing
+tags: [phishing, non_english]
+why: "Portuguese: claims unauthorised access to 'your account' and asks the reader to confirm details at a link within 12 hours."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "seguranca@example.net",
+        "subject": "Acesso n\u00e3o autorizado",
+        "body": "Prezado cliente,\n\nDetectamos um acesso n\u00e3o autorizado \u00e0 sua conta. Para evitar o bloqueio, confirme os\nseus dados em http://seguranca-conta.example.net nas pr\u00f3ximas 12 horas.\n\nEquipe de Seguran\u00e7a"
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

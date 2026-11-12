@@ -1,0 +1,19 @@
+name: other_student_questionnaire
+tags: [routine]
+why: "A student asks for help with research: a personal request, none of the four named kinds."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "k.mensah@example.org",
+        "subject": "Help with my dissertation",
+        "body": "Hi, I am a final-year student researching how small businesses find new staff. Would\nyou be willing to fill in a ten-minute questionnaire? All answers are anonymous.\n\nKofi Mensah"
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

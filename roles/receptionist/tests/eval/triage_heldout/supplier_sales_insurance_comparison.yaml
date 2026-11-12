@@ -1,0 +1,19 @@
+name: supplier_sales_insurance_comparison
+tags: [sales]
+why: "A broker offers the business a service."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "j.whitcombe@example.net",
+        "subject": "Your business cover",
+        "body": "Good morning,\n\nI am a local broker specialising in cover for small firms. If your renewal is coming\nup, I would be glad to run a no-obligation comparison for you. It usually takes ten\nminutes on the phone. When would be a good time to call?\n\nJeremy Whitcombe"
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

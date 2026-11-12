@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal
 
 import jsonschema
@@ -18,6 +18,7 @@ from biz_kernel.contracts.ports import (
     OutboundMessage,
     Party,
     Payment,
+    PostedDocument,
     SendResult,
     Signer,
     SignEvent,
@@ -93,26 +94,32 @@ class FakeTelephony(_Sender):
 class FakeAccounting:
     def __init__(self) -> None:
         self.contacts: dict[uuid.UUID, ExternalRef] = {}
-        self.invoices: dict[str, ExternalRef] = {}
-        self.bills: dict[str, ExternalRef] = {}
+        self.invoices: dict[str, PostedDocument] = {}
+        self.bills: dict[str, PostedDocument] = {}
         self.payments: list[Payment] = []
         self.balance: tuple[Decimal, str] = (Decimal(0), "NZD")
+        self.tax_rate_pct = Decimal(0)  # the tax this system adds to what is posted
+
+    def _posted(self, ref: str, draft: InvoiceDraft | BillDraft) -> PostedDocument:
+        net = sum((line.quantity * line.unit_amount for line in draft.lines), Decimal(0))
+        tax = (net * self.tax_rate_pct / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return PostedDocument(system="fake", id=ref, tax=tax, total=net + tax)
 
     async def upsert_contact(self, party: Party) -> ExternalRef:
         ref = self.contacts.setdefault(party.id, ExternalRef(system="fake", id=f"c-{party.id}"))
         return ref
 
-    async def create_invoice(self, inv: InvoiceDraft) -> ExternalRef:
+    async def create_invoice(self, inv: InvoiceDraft) -> PostedDocument:
         key = inv.idempotency_key or inv.reference
-        return self.invoices.setdefault(
-            key, ExternalRef(system="fake", id=f"inv-{len(self.invoices) + 1}")
-        )
+        if key not in self.invoices:
+            self.invoices[key] = self._posted(f"inv-{len(self.invoices) + 1}", inv)
+        return self.invoices[key]
 
-    async def create_bill(self, bill: BillDraft) -> ExternalRef:
+    async def create_bill(self, bill: BillDraft) -> PostedDocument:
         key = bill.idempotency_key or bill.reference
-        return self.bills.setdefault(
-            key, ExternalRef(system="fake", id=f"bill-{len(self.bills) + 1}")
-        )
+        if key not in self.bills:
+            self.bills[key] = self._posted(f"bill-{len(self.bills) + 1}", bill)
+        return self.bills[key]
 
     async def list_payments(self, since: datetime) -> list[Payment]:
         return [p for p in self.payments if p.paid_at > since]

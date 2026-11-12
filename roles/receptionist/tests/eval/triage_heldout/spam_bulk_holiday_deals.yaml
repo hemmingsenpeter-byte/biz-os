@@ -1,0 +1,19 @@
+name: spam_bulk_holiday_deals
+tags: [spam]
+why: "A bulk holiday promotion with nothing to do with the business."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "deals@example.net",
+        "subject": "This week's top cruise deals",
+        "body": "Set sail for less!\n\nThis week's top deals on holiday cruises are here. Book now and save big on\nMediterranean sailings, with free drinks packages on selected dates. View all offers\non our website before they are gone.\n\nYou are receiving this email because you signed up for offers from one of our partners."
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

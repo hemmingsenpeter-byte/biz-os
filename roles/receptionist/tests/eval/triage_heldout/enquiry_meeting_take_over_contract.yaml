@@ -1,0 +1,20 @@
+name: enquiry_meeting_take_over_contract
+tags: [routine]
+why: "A prospect whose current contractor is retiring asks to meet about taking over."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "harriet.osei@example.org",
+        "subject": "Looking for a new contractor from January",
+        "body": "Good afternoon,\n\nI manage a small block of six flats. The contractor we have used for years is retiring\nand I would like to meet to discuss whether you could take over from the new year. I\nam free most mornings.\n\nRegards,\nHarriet Osei"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

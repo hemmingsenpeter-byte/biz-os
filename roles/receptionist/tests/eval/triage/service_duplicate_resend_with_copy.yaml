@@ -1,0 +1,20 @@
+name: service_duplicate_resend_with_copy
+tags: [duplicate, forwarded]
+why: "A customer resends an unanswered request for a return visit; still a request for a fix."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "w.brennan@example.org",
+        "subject": "RESEND: return visit needed",
+        "body": "Resending as I had no answer to my email of last Thursday. Copy below.\n\n> Hello, the replacement part you put in for us in the spring has come loose.\n> Could you book a return visit to secure it? Any weekday after 3pm suits.\n> Regards, Wendy Brennan"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

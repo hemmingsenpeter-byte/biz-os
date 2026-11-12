@@ -1,0 +1,20 @@
+name: service_repeat_complaint_still_waiting
+tags: [repeat_complaint, short]
+why: "A customer's fourth chaser about a job that was not put right."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "sms",
+        "from": "+12025550175",
+        "subject": "",
+        "body": "Still waiting. Fourth message now. The job you did in May is still not right and nobody has come back as promised."
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

@@ -1,0 +1,19 @@
+name: spam_phishing_mailbox_full
+tags: [phishing]
+why: "A credential-phishing notice."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "helpdesk@example.net",
+        "subject": "Action required: mailbox almost full",
+        "body": "Your mailbox storage is 98% full. To avoid suspension of your account, verify your\nlogin within 24 hours:\n\nhttp://mail-verify.example.net/login\n\nIT Helpdesk"
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

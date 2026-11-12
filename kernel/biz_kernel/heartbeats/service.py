@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from biz_kernel.budgets.service import BudgetBook
+from biz_kernel.control import service as control
 from biz_kernel.db import uuid7
 from biz_kernel.health.models import Schedule
 from biz_kernel.health.service import register_schedule, report_run
@@ -125,6 +126,8 @@ def run_heartbeat(
 ) -> list[str]:
     """Run due wake-ups (budget-checked), then the follow-through sweep. Returns roles run."""
     ran: list[str] = []
+    if control.is_paused(session):  # the kill switch: wake-ups stay pending, nothing resumes
+        return ran
     for w in claim_due(session, now):
         name = f"heartbeat:{w.role}"
         if session.scalar(select(Schedule.id).where(Schedule.name == name)) is None:

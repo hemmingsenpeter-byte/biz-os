@@ -1,0 +1,19 @@
+name: spam_trading_signals_scheme
+tags: [spam]
+why: "A get-rich-quick investment scheme."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "vip-signals@example.net",
+        "subject": "Double your money in 30 days",
+        "body": "Join our private trading signals group and double your money in 30 days. Our members\nnever lose. Only 20 places left - message us on the app today to secure yours."
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

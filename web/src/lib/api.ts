@@ -89,6 +89,80 @@ export type Activity = {
   at: string;
 };
 
+export type ControlState = {
+  paused: boolean;
+  by: string | null;
+  reason: string;
+  at: string | null;
+};
+export type Severity = "cosmetic" | "factual" | "policy";
+export type Correction = {
+  id: string;
+  at: string;
+  op_id: string;
+  actor: string;
+  tool: string;
+  decision_type: string | null;
+  from_version: number;
+  to_version: number;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  by: string;
+  reason: string;
+  severity: string | null;
+};
+export type DecisionTypeRow = {
+  role: string;
+  decision_type: string;
+  level: number | null;
+  proposals: number;
+  approved_unchanged: number;
+  approved_cosmetic: number;
+  approved_with_errors: number;
+  approved_unknown: number;
+  rejected: number;
+  pending: number;
+  approval_without_edit_rate: number | null;
+  error_free_rate: number | null;
+};
+export type Metrics = {
+  since: string;
+  until: string;
+  decision_types: DecisionTypeRow[];
+  serious_errors: number | null;
+  recorded_demotions: number;
+  tasks_completed: number;
+  cost_usd: number;
+  cost_per_task_usd: number | null;
+  time_saved_minutes: number | null;
+};
+
+// The API answers 409 with a detail starting "paused" while everything is paused.
+export const isPausedError = (error: unknown) =>
+  error instanceof ApiError &&
+  error.status === 409 &&
+  error.message.startsWith("paused");
+export const SEVERITIES: { value: Severity; label: string; hint: string }[] = [
+  {
+    value: "cosmetic",
+    label: "Wording or tone only",
+    hint: "The content was right. You only changed how it reads.",
+  },
+  {
+    value: "factual",
+    label: "A fact was wrong",
+    hint: "A name, date, amount or other detail was incorrect or missing.",
+  },
+  {
+    value: "policy",
+    label: "It broke one of our rules",
+    hint: "It offered or did something we don't allow.",
+  },
+];
+// The API records decisions by the owner under the name "owner".
+export const person = (name: string | null) =>
+  !name ? "someone" : name === "owner" ? "the owner" : name;
+
 export const readable = (text: string) =>
   text.replaceAll(/[._:-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 export function dateTime(value: string | null): string {

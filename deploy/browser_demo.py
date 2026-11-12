@@ -21,12 +21,17 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from urllib.request import urlopen
 
 import pgserver
+import yaml
 from biz_cap_demo_desk.models import DemoRequest
 from biz_kernel import db, migrations
 from biz_kernel.approvals.models import StagedOperation
+from biz_kernel.approvals.staged import digest
+from biz_kernel.auth import tokens
+from biz_kernel.auth.users import create_user
 from biz_kernel.loader import load_composition
 from biz_kernel.runtime import build_runtime
 from biz_kernel.workflows.models import SopRun
@@ -36,11 +41,65 @@ from dbos import DBOS
 from sqlalchemy import make_url, select
 
 ROOT = Path(__file__).resolve().parents[1]
+CASES = ("approve", "reject", "stale", "concurrent_edit")
 REPLY = {
     "subject": "Owner console acceptance",
     "body": "Exact approved text: <img src=x onerror=alert(1)> & thank you.",
     "confidence": 0.95,
 }
+
+
+def prepare_demo_app(directory: Path) -> Path:
+    """Use a real composition with no invented time baseline, without editing the repo."""
+    app_dir = directory / "demo"
+    shutil.copytree(ROOT / "apps/demo", app_dir)
+    policy_path = app_dir / "policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text())
+    if not isinstance(policy, dict):
+        raise RuntimeError("demo policy must be a mapping")
+    policy.pop("metrics", None)
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False))
+    return app_dir
+
+
+def seed_staff_and_legacy(origin: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Real credentials and a historical approved row with genuinely missing edit history."""
+    with db.session_scope() as session:
+        staff_user = create_user(session, "staff@example.invalid", "staff", "Browser Staff")
+        invite_query = urlencode({"invite": tokens.issue_invite(staff_user.id)})
+        staff = {
+            "email": staff_user.email,
+            "invite_url": f"{origin}/auth/register?{invite_query}",
+        }
+        inputs = {
+            "to": "legacy@example.invalid",
+            "subject": "Legacy imported approval",
+            "body": "Synthetic historical record; never linked to an executing workflow.",
+            "idempotency_key": f"browser-legacy-{uuid.uuid4()}",
+        }
+        checksum = digest(inputs)
+        operation = StagedOperation(
+            actor="legacy_fixture",
+            tool="demo_desk.send_reply",
+            decision_type="legacy_import",
+            inputs=inputs,
+            inputs_sha256=checksum,
+            version=2,
+            approver="owner",
+            status="approved",
+            approved_by="owner",
+            approved_version=2,
+            approved_sha256=checksum,
+            reason="Imported version 2 without a correction record; provenance is unknown.",
+        )
+        session.add(operation)
+        session.flush()
+        legacy = {
+            "id": str(operation.id),
+            "actor": operation.actor,
+            "decision_type": "legacy_import",
+        }
+    return staff, legacy
 
 
 class ObservedMail(FakeMail):
@@ -56,13 +115,14 @@ class ObservedMail(FakeMail):
 
 
 def seed() -> dict[str, Any]:
-    manifest = load_composition(ROOT / "apps/demo", ROOT)
+    app_dir = Path(os.environ["BIZ_APP_DIR"])
+    manifest = load_composition(app_dir, ROOT)
     if any(not name.startswith("fake_") for name in manifest.ports.values()):
         raise RuntimeError("browser acceptance requires entirely fake demo ports")
     rt = build_runtime(
-        ROOT / "apps/demo",
+        app_dir,
         ROOT,
-        ports={"mail": ObservedMail(), "model_local": FakeModel([REPLY] * 3)},
+        ports={"mail": ObservedMail(), "model_local": FakeModel([REPLY] * len(CASES))},
         approval_poll_seconds=1,
     )
     DBOS(
@@ -74,7 +134,7 @@ def seed() -> dict[str, Any]:
     )
     DBOS.launch()
     packets = {}
-    for case in ("approve", "reject", "stale"):
+    for case in CASES:
         with db.session_scope() as session:
             request = DemoRequest(
                 sender=f"{case}@example.invalid", subject=f"Browser {case}", body="Please reply."
@@ -111,10 +171,10 @@ def seed() -> dict[str, Any]:
                     "version": op.version,
                     "inputs": op.inputs,
                 }
-        if len(operations) == 3:
+        if len(operations) == len(CASES):
             return operations
         time.sleep(0.1)
-    raise TimeoutError("browser demo did not stage its three approval requests")
+    raise TimeoutError("browser demo did not stage its four approval requests")
 
 
 def stop_process(process: subprocess.Popen[Any]) -> None:
@@ -187,6 +247,7 @@ def main() -> None:
     processes: list[subprocess.Popen[Any]] = []
     with tempfile.TemporaryDirectory(prefix="biz-browser-") as temporary:
         directory = Path(temporary)
+        app_dir = prepare_demo_app(directory)
         server = pgserver.get_server(directory / "postgres", cleanup_mode="delete")
         try:
             base = make_url(
@@ -200,7 +261,7 @@ def main() -> None:
                 BIZ_SECRET_KEY=secrets.token_urlsafe(48),
                 BIZ_ORIGIN=origin,
                 BIZ_RP_ID="localhost",
-                BIZ_APP_DIR=str(ROOT / "apps/demo"),
+                BIZ_APP_DIR=str(app_dir),
                 BIZ_REPO_ROOT=str(ROOT),
                 BIZ_BROWSER_SENDS=str(directory / "sends.jsonl"),
                 BIZ_BROWSER_OPERATIONS=str(directory / "operations.json"),
@@ -216,7 +277,9 @@ def main() -> None:
                     "-m",
                     "biz_kernel.cli.main",
                     "owner-invite",
-                    "apps/demo",
+                    str(app_dir),
+                    "--repo-root",
+                    str(ROOT),
                     "--email",
                     "owner@example.invalid",
                     "--name",
@@ -229,6 +292,7 @@ def main() -> None:
                 text=True,
             )
             owner = json.loads(result.stdout)
+            staff, legacy_unknown = seed_staff_and_legacy(origin)
             runtime_process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--worker"],
                 cwd=ROOT,
@@ -248,6 +312,8 @@ def main() -> None:
                 json.dumps(
                     {
                         "owner": owner,
+                        "staff": staff,
+                        "legacy_unknown": legacy_unknown,
                         "operations": operations,
                         "sends": os.environ["BIZ_BROWSER_SENDS"],
                     }

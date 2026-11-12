@@ -1,0 +1,20 @@
+name: enquiry_mixed_language
+tags: [non_english]
+why: "Mixed Spanish and English: wants a quote for a job at home and asks when someone can come to see it."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "rosa.im@example.com",
+        "subject": "quote / presupuesto",
+        "body": "Hola, good morning. Necesito un quote for a job en mi casa, nothing urgent. \u00bfCu\u00e1ndo\npueden venir a verlo? Thanks, Rosa"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

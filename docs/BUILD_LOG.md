@@ -1,5 +1,114 @@
 # Build log
 
+## 2026-11-12: Claude branch integration and reliability review
+
+- Integrated `claude/zen-edison-rurxg7` (`b47f688`) with
+  `claude/nifty-lamport-ixolby` (`474c3c2`), preserving controls/corrections and the
+  older retry, alert, opt-out, budget, tax and payment fixes. M7–M9 stay frozen.
+- Pause transitions now serialize and use strictly increasing event timestamps.
+  Dispatch and approval mutations coordinate with transitions, after blocking
+  preflight. Pause acknowledgement waits for already admitted transactions;
+  queued actions cannot dispatch afterwards. Workflow contention rolls back
+  before parking, releasing budget and operation locks.
+  API transactions finish before the HTTP response, so a commit failure cannot
+  acknowledge a successful transition or correction.
+- Edits require the loaded version. Stale requests return 409 without overwriting
+  another correction; the console retains unsaved changes for explicit review.
+- Scorecard acceptance uses every proposal in its denominator. Missing or partial
+  historical edit provenance remains unknown. Serious errors are unmeasured;
+  demotion events are disclosed separately. No timed baseline means no time-saving
+  claim. These corrections supersede the measurement limitations recorded below.
+- Evaluations score complete passing cases, refuse missing/empty datasets and
+  unavailable tiers, enforce exact finite confidence minima, and record reproducible
+  dataset/prompt/backend metadata. Gates require outcome checks and held-out volume;
+  synthetic unreviewed fixtures cannot claim deployment readiness. Added CI checks
+  tying all 108 fixtures to production contracts; no actual model accuracy is claimed.
+- Reconciled the historical duplicate `0020` migrations into one canonical `0020`
+  plus schema-aware `0021`. Fresh and either existing layout preserve data; existing
+  combined layouts are supported. Incompatible definitions roll back. Tax-dropping
+  downgrade requires the explicit boolean `allow_data_loss=True`.
+- Browser acceptance now covers real staff pause/owner resume, two-tab correction
+  conflicts, and genuinely missing metric baselines/legacy history, using fake ports
+  and disposable services.
+
+Upgrade/API notes, exact acknowledgement semantics and remaining business gates:
+[Reliability integration](RELIABILITY_INTEGRATION.md).
+
+Validation: the combined Python suite passes **702 tests**. Ruff, formatting,
+mypy and both composition doctors pass. The production frontend build and real
+Chromium flow pass, including staff permissions, concurrent edits and genuinely
+unmeasured metrics. All model checks use fakes; real model/business gates remain
+unproven. Packaged API/worker/web acceptance is also exercised by PR CI.
+
+## 2026-11-12 (later): plan v2.1, kill switch, corrections, metrics
+
+PRs #1 (container packaging and smoke checks) and #2 (owner console) were merged to
+`main` at the owner's request; this work sits on top of them.
+
+### Decisions made (check these)
+
+- **`docs/PLAN.md` now sets the build order.** It is the owner's v2 plan reconciled with
+  the repo. SPEC milestones M7 to M9 are frozen until its Stage 2 gate passes.
+- **Kill switch** (`kernel/biz_kernel/control`, migration `0020`). One control pauses
+  every role. While paused: the heartbeat starts no role and wake-ups stay pending; a
+  running SOP parks before its next step (run status `paused`); no `external` or `money`
+  tool runs, not even one replaying an approval (`Paused` is raised, and the API answers
+  409); nothing can be approved. Rejecting and editing still work.
+  - **Inbound work is still collected while paused** (pollers and webhooks keep running),
+    because mail older than the look-back window would otherwise be lost. Nothing leaves.
+  - **Anyone signed in may pause; only the owner may resume.** `biz pause` and
+    `biz resume` do the same from the command line when the web app is down.
+  - Parked runs are woken by the first heartbeat after the resume, so a resume takes up
+    to one tick (60 seconds by default) to take effect.
+  - Missed-schedule alerts are not raised while paused.
+  - Pause events are append-only; the newest row is the state.
+- **Corrections** (`approval_corrections`, migration `0020`, append-only). An edit to a
+  proposal by anyone but the proposing role stores the draft, the edit, a reason and a
+  severity (`cosmetic`, `factual` or `policy`). `POST /v1/approvals/{id}/edit` takes the
+  optional `reason` and `severity`; `GET /v1/corrections` lists them. An untagged edit
+  counts as an error. A correction can't be re-tagged later.
+  - **Autonomy promotion is unchanged:** any edit still breaks the approved-unchanged
+    streak, including a cosmetic one. Letting cosmetic edits count toward promotion is a
+    policy change for the owner to decide.
+- **Metrics** (`kernel/biz_kernel/metrics`, `GET /v1/metrics`, `biz metrics <app>`). The
+  six measures in the plan, read-only. Unmeasured numbers are null, never 0. Weaker than
+  their definitions today: the level shown is the stored one, not the effective one;
+  tasks count as completed only through a finished SOP run; serious errors are the
+  demotions recorded in the audit log.
+  - Time saved needs `metrics.baseline_minutes` and `review_minutes_per_approval` in
+    `policy.yaml`. Demo has invented values; HIVE's is commented out.
+
+### Waiting on the owner
+
+- Time yourself on about 20 tasks and set HIVE's `metrics:` section.
+- Should cosmetic-only edits count toward autonomy promotion?
+- Still open from the plan: sender verification (a mail port change), hash-chained audit.
+
+- **Owner console** now has the kill switch on every page (a banner while paused, approve
+  disabled), an edit form that requires a reason and a severity, and a scorecard page
+  with recent corrections. The browser acceptance test covers all three against the real
+  API. Not checked against the real backend: the staff view of pause and resume (the
+  test seeds only an owner) and the "not measured yet" display (stubbed).
+- **Receptionist test set (synthetic).** `roles/receptionist/tests/eval/`: triage has 30
+  tuning cases and 57 held-out cases (18 injection attempts between them); `handle_reply`
+  has 21 tuning cases. Held-out cases are never used to tune prompts. No model has been
+  run against them yet, so there are no scores.
+  - Complaints, refunds and billing disputes are labelled `service_request`, because the
+    triage prompt has no category for them and `other` ends in `enquiry.declined`.
+
+### Waiting on the owner (added)
+
+- Confirm the `service_request` label for complaints and refunds, or add a category.
+- `POST /v1/approvals/{id}/edit` has no version check, so two people editing at once
+  overwrite each other. Adding an expected version is an API change.
+
+### Not done yet
+
+- Corrections do not yet become rule suggestions or test cases (Stage 2).
+- `biz eval` prints a mean partial score and has no "category X or low confidence"
+  check; the gate needs the share of cases passed.
+- `handle_reply` has no held-out split and `book_meeting` has no cases.
+
 ## 2026-11-12: owner console first slice
 
 - **A working Next.js owner console replaces the web placeholder.** It provides
@@ -87,6 +196,38 @@ bank-change screens remain future work.
 HIVE live integrations, the Mac mini deployment, owner web UI and backup acceptance
 remain open. Compose still needs the relevant provider environment variables and
 persistent storage configuration wired before enabling HIVE's real ports.
+## 2026-11-09: review fixes (CI, failed runs, lost spend, opt-outs, Xero payments)
+
+A review of M0 to M6 found four defects, each reproduced first. The owner said to fix them in this order.
+
+### Decisions made (check these)
+
+- **CI is green again.** `routes_approvals.py` was the one file `ruff format --check` flagged; that step had failed the last two pushes to `main`.
+- **A SOP run never dies silently.** A step that raised used to leave the DBOS workflow in `ERROR` and the run `running` for good, with no alert and no retry. Now a passing fault (a provider being down) is retried after 1 minute, 10 minutes and 1 hour (`MAX_ATTEMPTS = 4`). A refusal, a bad input or missing evidence is not retried. A run that cannot go on ends as **`failed`**, raises one **`sop.failed`** alert, and leaves its task open. This replaces the old behaviour where a gate-blocked message ended the run with an `EvidenceMissing` error: it now ends `failed` with the alert.
+- **A decision made before the run started waiting is seen at once**, not after the poll timeout (up to an hour).
+- **A refused cloud draft still counts against the budget.** The draft step rolled back the session the router had written its cost rows into, so paid calls that failed validation left no trace. It now commits the cost before it raises.
+- **One opt-out list.** comms owns it and publishes the new read tool **`comms.is_suppressed`**. Intake checks it before `text_back` and `reply`, and records every stop it takes through `comms.opt_out`. Intake keeps its own rows too, so it still works in a composition without comms. No packet schema or port interface changed.
+- **Xero payments are money in only.** `list_payments` keeps `ACCRECPAYMENT` rows on `ACCREC` invoices; supplier payments and credit-note, prepayment and overpayment rows are skipped.
+- **Checks:** full `pytest` green (566), `ruff check`, `ruff format --check` and `uv run mypy .` clean, `biz doctor` passes for demo and HIVE.
+
+- **Tax: stored amounts are tax-exclusive (the owner's decision), and the tax sits beside them.** New `tax.rate_pct` in `policy.yaml` (default 0; **15 in both apps, check HIVE's**). Invoices and bills gain a `tax` amount (migration `0020`). Posting to Xero is unchanged: exclusive lines, Xero adds the tax. What is *owed* now includes it: an invoice is `paid` only at amount plus tax, and reminders, `invoice.overdue`'s `outstanding_minor`, `invoicing.receivables`, `payables.due`, the payment-run total and so the cash forecast all use the tax-inclusive figure. The approval for posting, `invoice.issued`'s `total_minor` and PO matching stay tax-exclusive. `payables.bill_record` takes an optional `tax` for a supplier whose tax differs (0 for one that charges none). A bad rate fails when the runtime starts. No packet schema or port interface changed.
+
+- **Port interface change (approved by the owner): posting returns the accounting system's own figures.** `AccountingPort.create_invoice` and `create_bill` now return a **`PostedDocument`** (an `ExternalRef` plus `tax` and tax-inclusive `total`, both `None` if the system cannot say). The Xero adapter fills them from `TotalTax` and `Total`, on a fresh create, on a repeat (it reads the invoice back) and on a reconciled create. `invoice_post` and `bill_post` replace our figure with it, and the audit entry keeps both. So `tax.rate_pct` is only the estimate shown before posting; after posting, what is owed is Xero's number. The fake has a settable `tax_rate_pct`, and the contract suite checks the figures add up and a repeat returns the same ones.
+
+### Waiting on the owner
+
+- Nothing on tax: 15% is confirmed, and the tax is now read back from Xero (below).
+- A failed run has no "try again" button yet: after the alert, the owner can only act by hand.
+- Phone numbers are normalised differently by intake (country code added) and comms (punctuation stripped), so a comms opt-out typed in national format does not match intake's international form.
+
+### Still open from the review (not fixed here)
+
+- Nothing calls `comms.reconcile`, and M365 cannot report "not sent", so an uncertain send stays uncertain.
+- A signed-PDF download that fails leaves the signature at `signed_pending_copy`.
+- A mail message skipped by `poll_mail` is lost once the cursor moves on.
+- No alerter is wired: alerts are only readable at `GET /v1/health/alerts`.
+- Approval edits are not checked against the tool's schema.
+- M5 and M6 have no entry points outside tests (jobs, stages, bills, milestones).
 
 ## 2026-11-09: M6 code close-out (block 1)
 

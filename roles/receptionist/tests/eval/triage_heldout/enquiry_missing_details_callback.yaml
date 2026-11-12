@@ -1,0 +1,20 @@
+name: enquiry_missing_details_callback
+tags: [missing_details, short]
+why: "A newcomer wants work done and a call back; what work is not said, but it is a new prospect."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "noreen.whelan@example.com",
+        "subject": "Callback",
+        "body": "I am new to the area and was given your number. Please ring me about getting some\nwork done. Mornings are best."
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

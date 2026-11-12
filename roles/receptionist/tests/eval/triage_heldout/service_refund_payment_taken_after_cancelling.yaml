@@ -1,0 +1,20 @@
+name: service_refund_payment_taken_after_cancelling
+tags: [refund_money, repeat_complaint]
+why: "A customer who cancelled a booked job demands their payment back."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "omar.haddad@example.com",
+        "subject": "Money taken after I cancelled",
+        "body": "I cancelled the job well within your notice period and you still took the payment from\nmy account. I want the full amount back within seven days. This is the second time I\nhave asked.\n\nOmar Haddad"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

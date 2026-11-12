@@ -1,0 +1,20 @@
+name: service_broke_again_charge_dispute
+tags: [broke_again, refund_money]
+why: "A customer disputes a second charge and asks for the repair to be redone under guarantee."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "h.takahashi@example.com",
+        "subject": "Repair failed after six days",
+        "body": "You fixed it on the 3rd and it failed again on the 9th. Your technician now says this\nis a different fault and wants to charge me again. I am not paying twice for the same\nrepair. Please come back and put it right under the guarantee you gave me.\n\nHiro Takahashi"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

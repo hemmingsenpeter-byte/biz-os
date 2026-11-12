@@ -1,0 +1,11 @@
+schema_version: 1
+dataset: receptionist-triage-heldout
+dataset_version: "1.0.0"
+task: receptionist.triage
+decision_type: enquiry_classification
+split: heldout
+provenance: synthetic
+owner_reviewed: false
+required_pass_rate: 0.95
+min_cases: 50
+threshold: 0.1

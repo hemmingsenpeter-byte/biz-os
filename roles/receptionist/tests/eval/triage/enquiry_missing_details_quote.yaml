@@ -1,0 +1,20 @@
+name: enquiry_missing_details_quote
+tags: [missing_details, short]
+why: "The intent (a quote) is clear even though every detail is missing."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "t.okafor@example.org",
+        "subject": "Quote",
+        "body": "I need a quote please."
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

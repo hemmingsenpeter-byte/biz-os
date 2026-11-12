@@ -1,0 +1,20 @@
+name: service_forwarded_thread_follow_up_visit
+tags: [forwarded]
+why: "The newest text asks to confirm an agreed follow-up visit; the quoted thread shows an existing job."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "lewis.park@example.org",
+        "subject": "FW: RE: RE: visit on the 21st",
+        "body": "Please see the thread below. We still need the follow-up visit that was agreed. Can\nyou confirm a date?\n\nLewis Park\n\n-----Original Message-----\nSubject: RE: RE: visit on the 21st\n\n> Thanks Lewis. We will return to finish the remaining items once the parts arrive.\n>\n>> Your team were here on the 21st but two of the items on the list were not done.\n>> When will you be back?\n>>\n>>> Confirming our visit on the 21st between 9 and 11."
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

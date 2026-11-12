@@ -1,0 +1,19 @@
+name: spam_phishing_parcel_redelivery
+tags: [phishing]
+why: "A parcel-redelivery phishing message."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "sms",
+        "from": "+12025550190",
+        "subject": "",
+        "body": "We attempted to deliver your parcel but the address was incomplete. Confirm your details and pay the small redelivery fee here: http://parcel-redelivery.example.net/track"
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

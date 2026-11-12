@@ -38,7 +38,8 @@ class Bill(Base):
     po_number: Mapped[str | None] = mapped_column(String(80))
     po_id: Mapped[uuid.UUID | None]
     lines: Mapped[list[Any]] = mapped_column(JSONB, default=list)
-    total: Mapped[Decimal] = mapped_column(MONEY)
+    total: Mapped[Decimal] = mapped_column(MONEY)  # tax-exclusive, as posted
+    tax: Mapped[Decimal] = mapped_column(MONEY, default=Decimal(0), server_default="0")
     currency: Mapped[str] = mapped_column(String(3))
     due: Mapped[datetime | None]
     # received | matched | mismatch | posted | in_run
@@ -48,6 +49,11 @@ class Bill(Base):
     system: Mapped[str | None] = mapped_column(String(40))
     external_id: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    @property
+    def gross(self) -> Decimal:
+        """What we pay the supplier: the amount plus its tax."""
+        return Decimal(self.total) + Decimal(self.tax or 0)
 
 
 class BankAccount(Base):

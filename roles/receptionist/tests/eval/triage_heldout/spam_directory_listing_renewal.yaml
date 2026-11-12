@@ -1,0 +1,19 @@
+name: spam_directory_listing_renewal
+tags: [spam]
+why: "A fake renewal notice for a directory listing the business never bought."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "renewals@example.net",
+        "subject": "EXPIRATION NOTICE",
+        "body": "EXPIRATION NOTICE\n\nYour listing in the National Business Directory expires in 5 days. Failure to renew\nwill result in the loss of your online identity and your customers will be unable to\nfind you. Pay now to secure your listing for a further 24 months."
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

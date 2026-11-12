@@ -1,0 +1,19 @@
+name: other_see_attached
+tags: [ambiguous, short]
+why: "Nothing in the text to place."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "p.s@example.com",
+        "subject": "Fwd:",
+        "body": "See attached."
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

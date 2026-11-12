@@ -1,0 +1,20 @@
+name: service_broke_again_wear_and_tear_dispute
+tags: [broke_again]
+why: "A customer disputes the business's refusal and asks for a free inspection of a failed repair."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "s.banerjee@example.org",
+        "subject": "Disputing your decision on the failed repair",
+        "body": "Your office told me on the phone that the new failure is \"wear and tear\" and is not\nrelated to your repair. I disagree. It worked for years, you repaired it on the 14th,\nand it broke in the same way on the 20th.\n\nI would like a senior person to inspect it at no cost to me, and written reasons if\nyou still refuse to put it right.\n\nSunil Banerjee"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

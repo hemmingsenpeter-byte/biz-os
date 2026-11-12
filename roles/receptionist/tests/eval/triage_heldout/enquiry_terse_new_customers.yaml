@@ -1,0 +1,20 @@
+name: enquiry_terse_new_customers
+tags: [routine, short]
+why: "Someone who is not yet a customer asks whether the business is taking new ones."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "sms",
+        "from": "+12025550118",
+        "subject": "",
+        "body": "Are you taking new customers at the moment?"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

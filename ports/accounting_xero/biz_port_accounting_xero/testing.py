@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -23,6 +24,7 @@ class FakeXero:
         self.by_key: dict[str, dict[str, Any]] = {}
         self.fail_next_post: Exception | None = None  # raised after the invoice is stored
         self.reject_next_post: str | None = None  # a validation error message
+        self.tax_rate = Decimal("0.15")  # what the account's default tax adds to a line
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -50,7 +52,19 @@ class FakeXero:
                 msg, self.reject_next_post = self.reject_next_post, None
                 err = {**body, "HasErrors": True, "ValidationErrors": [{"Message": msg}]}
                 return httpx.Response(400, json={"Invoices": [err]})
-            row = {**body, "InvoiceID": str(uuid.uuid4()), "HasErrors": False}
+            net = sum(
+                (Decimal(i["Quantity"]) * Decimal(i["UnitAmount"]) for i in body["LineItems"]),
+                Decimal(0),
+            )
+            tax = (net * self.tax_rate).quantize(Decimal("0.01"))
+            row = {
+                **body,
+                "InvoiceID": str(uuid.uuid4()),
+                "HasErrors": False,
+                "SubTotal": float(net),
+                "TotalTax": float(tax),
+                "Total": float(net + tax),
+            }
             self.invoices.append(row)
             if key:
                 self.by_key[key] = row
@@ -58,6 +72,11 @@ class FakeXero:
                 exc, self.fail_next_post = self.fail_next_post, None
                 raise exc
             return httpx.Response(200, json={"Invoices": [row]})
+        if "/Invoices/" in path and request.method == "GET":
+            wanted = path.rsplit("/", 1)[-1]
+            return httpx.Response(
+                200, json={"Invoices": [i for i in self.invoices if i["InvoiceID"] == wanted]}
+            )
         if path.endswith("/Organisation"):
             return httpx.Response(200, json={"Organisations": [{"BaseCurrency": "NZD"}]})
         if path.endswith("/Reports/BankSummary"):

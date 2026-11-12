@@ -1,0 +1,20 @@
+name: service_french_problem_returned
+tags: [non_english, broke_again]
+why: "French: the business attended last month, the problem has been back since the weekend, and the customer asks for a prompt return visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "claire.dumont@example.com",
+        "subject": "Le probl\u00e8me est revenu",
+        "body": "Bonjour,\n\nVous \u00eates intervenus chez nous le mois dernier. Le probl\u00e8me est revenu depuis ce\nweek-end. Pourriez-vous repasser rapidement ?\n\nMerci d'avance,\nClaire Dumont"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

@@ -117,6 +117,16 @@ def doctor_cmd(
 
     problems = limit_problems(manifest.policy.get("limits") or {})
     report(not problems, "money limits are usable" + "".join(f"\n  {p}" for p in problems))
+    from biz_kernel.metrics import config_problems
+
+    metrics_cfg = manifest.policy.get("metrics")
+    problems = config_problems(metrics_cfg)
+    timed = isinstance(metrics_cfg, dict) and metrics_cfg.get("baseline_minutes")
+    report(
+        not problems,
+        ("time-saved baseline is usable" if timed else "time-saved baseline not set (optional)")
+        + "".join(f"\n  {p}" for p in problems),
+    )
     if failed:
         raise typer.Exit(1)
 
@@ -134,6 +144,37 @@ def migrate_cmd(
     target = url or db.database_url()
     migrations.upgrade(target)
     typer.echo("✓ database is at head")
+
+
+def _switch(app_dir: Path, repo_root: Path | None, url: str | None, on: bool, reason: str) -> None:
+    from biz_kernel import control, db
+
+    _load(app_dir, repo_root)
+    db.configure(url or db.database_url())
+    with db.session_scope() as s:
+        state = (control.pause if on else control.resume)(s, "cli", reason)
+    typer.echo("paused: no role runs and nothing is sent" if state.paused else "running")
+
+
+@app.command("pause")
+def pause_cmd(
+    app_dir: Path,
+    reason: Annotated[str, typer.Option(help="Why, for the audit log")] = "",
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """The kill switch: pause every role. Inbound work is kept and runs after `biz resume`."""
+    _switch(app_dir, repo_root, url, True, reason)
+
+
+@app.command("resume")
+def resume_cmd(
+    app_dir: Path,
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Turn the kill switch off."""
+    _switch(app_dir, repo_root, url, False, "")
 
 
 @app.command("owner-invite")
@@ -204,6 +245,31 @@ def owner_invite_cmd(
         typer.echo(invite["invite_url"])
 
 
+@app.command("metrics")
+def metrics_cmd(
+    app_dir: Path,
+    repo_root: RepoRoot = None,
+    days: Annotated[int, typer.Option("--days", min=1, max=366)] = 28,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON")] = False,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Print the measurement report for the last DAYS days. Reads only."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from biz_kernel import db, metrics
+
+    manifest, _ = _load(app_dir, repo_root)
+    engine = create_engine(url or db.database_url())
+    try:
+        with Session(engine) as session:
+            since, until = metrics.window(days)
+            rep = metrics.report(session, since, until, manifest.policy.get("metrics"))
+    finally:
+        engine.dispose()
+    typer.echo(rep.model_dump_json(indent=2) if as_json else metrics.render(rep))
+
+
 @app.command("worker")
 def worker_cmd(app_dir: Path, repo_root: RepoRoot = None) -> None:
     """Run the worker (migrations, DBOS, heartbeat loop) for an app directory."""
@@ -224,9 +290,12 @@ try:
         task: str,
         tier: Annotated[str, typer.Option(help="local | cloud | shadow")] = "local",
         cases: Annotated[Path, typer.Option(help="Folder of golden case YAML files")] = Path("."),
+        json_output: Annotated[bool, typer.Option("--json")] = False,
+        output: Annotated[Path | None, typer.Option("--output")] = None,
+        gate: Annotated[bool, typer.Option("--gate")] = False,
     ) -> None:
         """Score a model task on golden cases."""
-        _eval_cmd(task, tier, cases)
+        _eval_cmd(task, tier, cases, json_output=json_output, output=output, gate=gate)
 except ImportError:  # eval harness not installed yet
     pass
 

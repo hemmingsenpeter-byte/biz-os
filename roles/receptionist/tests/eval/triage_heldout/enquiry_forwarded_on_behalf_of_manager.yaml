@@ -1,0 +1,20 @@
+name: enquiry_forwarded_on_behalf_of_manager
+tags: [forwarded]
+why: "A forwarded note from a manager who wants someone found and a quote obtained for a job."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "front.desk@example.org",
+        "subject": "Fwd: FW: contractor needed",
+        "body": "Hi,\n\nForwarding on behalf of my manager - her note is below. Could you reply to her directly?\n\nThanks, Joel (front desk)\n\n---------- Forwarded message ----------\nFrom: Marianne Coates <m.coates@example.org>\nSubject: FW: contractor needed\n\nJoel, can you find someone for this and ask them to quote? We have not used anyone for\nthis sort of job before. I would like it done before the audit in March.\n\n-----Original Message-----\nFrom: Site team\nSubject: contractor needed\n\nMarianne, as discussed, the job in the east wing is beyond what we can do in house."
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

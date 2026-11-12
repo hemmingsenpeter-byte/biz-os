@@ -1,0 +1,20 @@
+name: enquiry_wary_after_bad_experience
+tags: [routine]
+why: "A wary prospect asks qualifying questions before choosing a new provider."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "yusuf.demir@example.com",
+        "subject": "A few questions before I commit",
+        "body": "Hello,\n\nThe last firm we used let us down badly, so we are looking for a new provider and I\nwant to be careful this time. Before going any further I would like to know: are you\ninsured, do you give written quotes, and how soon could you start?\n\nYusuf Demir"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

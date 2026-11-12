@@ -1,0 +1,20 @@
+name: service_support_how_to_use
+tags: [routine]
+why: "A customer asks for help using something the business put in."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "esther.lund@example.com",
+        "subject": "Timer settings",
+        "body": "We had the new unit put in by your team two weeks ago. I cannot work out how to change\nthe timer settings and the booklet is not clear. Could someone talk me through it?"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

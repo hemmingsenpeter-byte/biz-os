@@ -21,6 +21,9 @@ from sqlalchemy.orm import Session
 from biz_kernel import db
 from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
+from biz_kernel.control import service as control
+from biz_kernel.control.service import Paused
+from biz_kernel.health.service import raise_alert
 from biz_kernel.heartbeats.service import BUDGET_RESUME  # wake-up reason: resume a stopped run
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
@@ -87,6 +90,7 @@ class RunnerContext:
     roles: dict[str, RoleSpec] = field(default_factory=dict)
     approval_poll_seconds: float = 3600.0
     budgets: BudgetBook | None = None
+    retry_seconds: float = 60.0  # wait before the first retry of a failed step
 
 
 _CTX: RunnerContext | None = None
@@ -168,63 +172,185 @@ def notify_decision(op_id: str, decision: str, client: Any | None = None) -> boo
 # ---------------------------------------------------------------- workflow
 
 
+MAX_ATTEMPTS = 4  # tries of one step before the run ends as failed
+RETRY_BACKOFF = (1, 10, 60)  # multiples of retry_seconds: 1 min, 10 min, 1 hour by default
+FAILED_ALERT = "sop.failed"
+
+
+class StepFailed(Exception):
+    """A step raised. Carries only text, so DBOS can always store and replay it.
+
+    `permanent` marks a refusal or a bad input that asking again cannot change."""
+
+    def __init__(self, error: str, permanent: bool = False) -> None:
+        super().__init__(error)
+        self.error, self.permanent = error, permanent
+
+    def __reduce__(self) -> Any:
+        return (StepFailed, (self.error, self.permanent))
+
+
+class _RunFailed(Exception):
+    """The run was marked failed; the workflow just has to return."""
+
+
+def _is_permanent(exc: Exception) -> bool:
+    """Refusals, missing evidence and bad inputs stay wrong however often they are tried."""
+    from biz_kernel.evidence.service import EvidenceMissing
+
+    return isinstance(exc, PermissionError | LookupError | ValueError | TypeError | EvidenceMissing)
+
+
+def _checked(fn: Any) -> Any:
+    """Turn whatever a step raises into StepFailed (budget stops pass through)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except (BudgetExceeded, Paused, StepFailed):
+            raise
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}"[:500]
+            raise StepFailed(text, _is_permanent(exc)) from None
+
+    return wrapper
+
+
 @DBOS.workflow(name="biz.sop")
 def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     run_id = DBOS.workflow_id
     assert run_id is not None
-    state = _begin(run_id, role, sop_name, packet_id)
+    try:
+        return _run(run_id, role, sop_name, packet_id)
+    except _RunFailed:
+        return {"run_id": run_id, "status": "failed"}
+    except (ValueError, LookupError, TypeError) as exc:  # a broken SOP definition
+        _step_failed(run_id, role, f"{type(exc).__name__}: {exc}"[:500], True)
+        return {"run_id": run_id, "status": "failed"}
+
+
+def _run(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
+    def do(fn: Any, *args: Any) -> Any:
+        return _attempt(run_id, role, functools.partial(fn, *args))
+
+    state = do(_begin, run_id, role, sop_name, packet_id)
     sop = ctx().roles[role].sops[sop_name]
     conds = _conditions_by_step(sop, ctx().roles[role].escalate_when)
     for step in sop["steps"]:
         kind = step["kind"]
+        _hold_while_paused(run_id, role)
         if step.get("when") and not _step_applies(step["when"], state):
             state["steps"][step["id"]] = {"output": {"skipped": True}}
             continue
         if kind == "tool":
-            res = _budgeted(run_id, role, functools.partial(_tool_step, run_id, role, step, state))
+            res = do(_tool_step, run_id, role, step, state)
             while res["status"] == "staged":
                 if _await_decision(run_id, res["op_id"]) != "approved":
-                    return _end(run_id, "rejected")
-                stage = functools.partial(_execute_staged, run_id, role, step["id"], res["op_id"])
-                res = _budgeted(run_id, role, stage)
+                    return do(_end, run_id, "rejected")
+                res = do(_execute_staged, run_id, role, step["id"], res["op_id"])
             state["steps"][step["id"]] = {"output": res["output"]}
             if why := check(conds[step["id"]], kind=kind, output=res["output"]):
                 return _escalate(run_id, role, state, why)
         elif kind == "approve":
-            op_id = _approval_step(run_id, role, step, state)
+            op_id = do(_approval_step, run_id, role, step, state)
             if _await_decision(run_id, op_id) != "approved":
-                return _end(run_id, "rejected")
-            _mark_approved(run_id, step["id"], op_id)
+                return do(_end, run_id, "rejected")
+            do(_mark_approved, run_id, step["id"], op_id)
             state["steps"][step["id"]] = {"output": {"approved": True}}
         elif kind == "draft":
-            out = _draft_step(run_id, role, step, state)
+            out = do(_draft_step, run_id, role, step, state)
             state["steps"][step["id"]] = {"output": out}
             if why := check(conds[step["id"]], kind=kind, output=out):
                 return _escalate(run_id, role, state, why)
         elif kind == "stop":
             # End the run without completing the task: it stays open for the owner.
-            return _end(run_id, step.get("status", "escalated"))
+            return do(_end, run_id, step.get("status", "escalated"))
         elif kind == "publish":
-            state["steps"][step["id"]] = {"output": _publish_step(run_id, role, step, state)}
+            state["steps"][step["id"]] = {"output": do(_publish_step, run_id, role, step, state)}
         else:
             raise ValueError(f"unknown step kind {kind}")
-    return _end(run_id, "done")
+    return do(_end, run_id, "done")
 
 
-def _budgeted(run_id: str, role: str, step: Any) -> Any:
-    """Run a step; if the role's budget stops it, park the run until the budget allows.
+def _attempt(run_id: str, role: str, step: Any) -> Any:
+    """Run a step so that it never dies silently.
 
-    The run is marked budget_stopped (not left "running") and a heartbeat wake-up is
-    queued. The heartbeat keeps that wake-up pending while the role is stopped; once the
-    limit is raised it sends the resume message and the step is tried again.
+    Budget stop: the run is marked budget_stopped (not left "running") and a heartbeat
+    wake-up is queued; the heartbeat keeps it pending while the role is stopped, and once
+    the limit covers the step it sends the resume message and the step is tried again.
+
+    Any other failure: the step is tried again after a growing wait (every step is safe to
+    repeat). When it still fails after MAX_ATTEMPTS, or the failure is one that cannot pass,
+    the run ends as failed with an alert, and its task stays open for the owner.
     """
+    failures = 0
     while True:
         try:
             return step()
+        except Paused:  # the kill switch closed while the step was starting
+            _hold_while_paused(run_id, role)
+            # The transition can still be uncommitted and invisible to the check.
+            DBOS.sleep(0.05)
+            continue
         except BudgetExceeded as exc:
             _budget_stop(run_id, role, str(exc.needed))
-        DBOS.recv(topic="budget", timeout_seconds=ctx().approval_poll_seconds)
-        _set_waiting(run_id, None)  # back to running
+            DBOS.recv(topic="budget", timeout_seconds=ctx().approval_poll_seconds)
+            _set_waiting(run_id, None)  # back to running
+        except StepFailed as exc:
+            failures += 1
+            final = exc.permanent or failures >= MAX_ATTEMPTS
+            _step_failed(run_id, role, exc.error, final)
+            if final:
+                raise _RunFailed(exc.error) from None
+            DBOS.sleep(ctx().retry_seconds * RETRY_BACKOFF[failures - 1])
+
+
+@DBOS.step(name="biz.sop.failed")
+def _step_failed(run_id: str, role: str, error: str, final: bool) -> None:
+    """Log the failure; a final one marks the run failed and raises the alert (once)."""
+    with db.session_scope() as s:
+        run = s.get(SopRun, run_id)
+        sop = run.sop if run is not None else run_id
+        record(s, role, "sop.step_failed", sop, run_id=run_id, error=error, final=final)
+        if not final:
+            return
+        if run is not None and run.status not in ("done", "rejected"):
+            run.status, run.waiting_op_id, run.finished_at = "failed", None, db.utcnow()
+        raise_alert(s, FAILED_ALERT, run_id, f"{role} could not finish {sop}: {error}", db.utcnow())
+
+
+PAUSE_TOPIC = "pause"
+
+
+def _hold_while_paused(run_id: str, role: str) -> None:
+    """Park the run while the kill switch is on. The heartbeat after the resume wakes it."""
+    while _pause_check(run_id, role):
+        DBOS.recv(topic=PAUSE_TOPIC, timeout_seconds=ctx().approval_poll_seconds)
+
+
+@DBOS.step(name="biz.sop.pause_check")
+def _pause_check(run_id: str, role: str) -> bool:
+    with db.session_scope() as s:
+        paused = control.is_paused(s)
+        run = s.get(SopRun, run_id)
+        assert run is not None
+        if paused and run.status != "paused":
+            run.status = "paused"
+            record(s, role, "sop.paused", run.sop, run_id=run_id)
+        elif not paused and run.status == "paused":
+            run.status = "running"
+        return paused
+
+
+def resume_paused(run_ids: list[str], client: Any | None = None) -> None:
+    """Wake runs parked by the kill switch (called once it is off)."""
+    client = client or globals().get("_CLIENT")
+    for run_id in run_ids:
+        if client is not None:
+            client.send(run_id, "resume", topic=PAUSE_TOPIC)
+        else:
+            DBOS.send(run_id, "resume", topic=PAUSE_TOPIC)
 
 
 def resume_budget_stopped(reasons: list[str], client: Any | None = None) -> list[str]:
@@ -294,11 +420,11 @@ def _await_decision(run_id: str, op_id: str) -> str:
     """
     _set_waiting(run_id, op_id)
     while True:
-        DBOS.recv(topic=f"op:{op_id}", timeout_seconds=ctx().approval_poll_seconds)
-        state = _op_state(op_id)
+        state = _op_state(op_id)  # first: a decision made before we started waiting counts
         if state in ("approved", "rejected"):
             _set_waiting(run_id, None)
             return state
+        DBOS.recv(topic=f"op:{op_id}", timeout_seconds=ctx().approval_poll_seconds)
 
 
 @DBOS.step(name="biz.sop.op_state")
@@ -327,6 +453,7 @@ def _save(s: Session, run_id: str, step_id: str, output: Any) -> Any:
 
 
 @DBOS.step(name="biz.sop.begin")
+@_checked
 def _begin(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     sop = ctx().roles[role].sops[sop_name]
     with db.session_scope() as s:
@@ -374,6 +501,7 @@ def _begin(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, A
 
 
 @DBOS.step(name="biz.sop.tool")
+@_checked
 def _tool_step(
     run_id: str, role: str, step: dict[str, Any], state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -398,6 +526,7 @@ def _tool_step(
 
 
 @DBOS.step(name="biz.sop.execute")
+@_checked
 def _execute_staged(run_id: str, role: str, step_id: str, op_id: str) -> dict[str, Any]:
     """Run the approved operation once. Returns {"status": "ran", ...} or, if the approval
     went stale between the check and the lock, {"status": "staged", ...} to wait again."""
@@ -422,6 +551,7 @@ def _execute_staged(run_id: str, role: str, step_id: str, op_id: str) -> dict[st
 
 
 @DBOS.step(name="biz.sop.approval")
+@_checked
 def _approval_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, Any]) -> str:
     c = ctx()
     with db.session_scope() as s:
@@ -439,6 +569,7 @@ def _approval_step(run_id: str, role: str, step: dict[str, Any], state: dict[str
 
 
 @DBOS.step(name="biz.sop.approved")
+@_checked
 def _mark_approved(run_id: str, step_id: str, op_id: str) -> None:
     with db.session_scope() as s:
         if _ledger(s, run_id, step_id) is None:
@@ -447,6 +578,7 @@ def _mark_approved(run_id: str, step_id: str, op_id: str) -> None:
 
 
 @DBOS.step(name="biz.sop.draft")
+@_checked
 def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, Any]) -> Any:
     c = ctx()
     with db.session_scope() as s:
@@ -458,12 +590,7 @@ def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, A
     inputs = render(step.get("inputs", {}), state)
     # Drafting gets no tools, and every input is untrusted data.
     task = step.get("task", f"{role}.{state.get('sop', step['id'])}")
-    with db.session_scope() as s:
-        result = asyncio.run(
-            c.router.generate(
-                task, system, [], step["schema"], untrusted=[_as_text(inputs)], session=s, role=role
-            )
-        )
+    result = _generate(role, task, system, step["schema"], _as_text(inputs))
     with db.session_scope() as s:
         if _ledger(s, run_id, step["id"]) is None:
             _save(s, run_id, step["id"], result.output)
@@ -471,7 +598,28 @@ def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, A
     return result.output
 
 
+def _generate(role: str, task: str, system: str, schema: dict[str, Any], text: str) -> Any:
+    """One routed model call. What it cost is committed even when the draft is refused.
+
+    The router writes its cost rows into the session it is given. A paid call whose output
+    fails validation is still real spend, so the session commits before the failure is
+    raised; rolling it back would hide the spend from the role's budget.
+    """
+    failure: Exception | None = None
+    with db.session_scope() as s:
+        try:
+            return asyncio.run(
+                ctx().router.generate(
+                    task, system, [], schema, untrusted=[text], session=s, role=role
+                )
+            )
+        except Exception as exc:
+            failure = exc
+    raise failure
+
+
 @DBOS.step(name="biz.sop.publish")
+@_checked
 def _publish_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, Any]) -> Any:
     c = ctx()
     with db.session_scope() as s:
@@ -525,11 +673,12 @@ def _conditions_by_step(
 
 def _escalate(run_id: str, role: str, state: dict[str, Any], why: str) -> dict[str, Any]:
     """An escalate_when condition matched: tell the owner, then end like a stop step."""
-    _raise_escalation(run_id, role, state["packet"], why)
-    return _end(run_id, "escalated")
+    _attempt(run_id, role, functools.partial(_raise_escalation, run_id, role, state["packet"], why))
+    return _attempt(run_id, role, functools.partial(_end, run_id, "escalated"))
 
 
 @DBOS.step(name="biz.sop.escalate")
+@_checked
 def _raise_escalation(run_id: str, role: str, packet: dict[str, Any], why: str) -> None:
     c = ctx()
     with db.session_scope() as s:
@@ -555,12 +704,13 @@ def _raise_escalation(run_id: str, role: str, packet: dict[str, Any], why: str) 
 
 
 @DBOS.step(name="biz.sop.end")
+@_checked
 def _end(run_id: str, status: str) -> dict[str, Any]:
     c = ctx()
     with db.session_scope() as s:
         run = s.get(SopRun, run_id)
         assert run is not None
-        if run.status in ("done", "rejected"):
+        if run.status in ("done", "rejected", "failed"):
             return {"run_id": run_id, "status": run.status}
         if status == "done" and run.task_id is not None:
             c.evidence.complete(s, run.task_id)  # raises if declared evidence is missing

@@ -1,0 +1,20 @@
+name: enquiry_spanish_quote
+tags: [non_english, routine]
+why: "Spanish: a prospect asks for a quote or a call to arrange a visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "lucia.ferrer@example.com",
+        "subject": "Solicitud de presupuesto",
+        "body": "Buenos d\u00edas:\n\nEstoy buscando una empresa para un trabajo en mi oficina el mes que viene. \u00bfPodr\u00edan\nenviarme un presupuesto o llamarme para concertar una visita?\n\nMuchas gracias,\nLuc\u00eda Ferrer"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

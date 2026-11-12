@@ -1,0 +1,20 @@
+name: service_repeat_complaint_third_time
+tags: [repeat_complaint]
+why: "An existing customer chases an unresolved problem for the third time."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "p.lindqvist@example.com",
+        "subject": "Third time of asking",
+        "body": "This is the third time I am writing about the same problem. I reported it on the 4th\nand again on the 11th. Both times I was told somebody would be out within two working\ndays, and nobody has turned up or called.\n\nI have been a customer of yours for six years and have never had to chase like this.\nPlease tell me today when someone is coming.\n\nPer Lindqvist"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

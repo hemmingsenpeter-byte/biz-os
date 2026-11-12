@@ -18,6 +18,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 from biz_kernel import db, migrations
+from biz_kernel.control import service as control
 from biz_kernel.health import service as health
 
 log = logging.getLogger("biz.worker")
@@ -49,7 +50,8 @@ def run_once(rt: Any, now: datetime | None = None) -> list[str]:
     now = now or db.utcnow()
     woken = rt.tick(now)
     with db.session_scope() as s:
-        health.check_missed(s, now)
+        if not control.is_paused(s):  # paused heartbeats are not missed runs
+            health.check_missed(s, now)
     return woken
 
 

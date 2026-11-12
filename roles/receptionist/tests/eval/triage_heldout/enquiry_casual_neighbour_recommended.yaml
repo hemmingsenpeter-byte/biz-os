@@ -1,0 +1,20 @@
+name: enquiry_casual_neighbour_recommended
+tags: [routine]
+why: "Chatty tone, but a new prospect asks for a visit and a cost."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "baz.h@example.com",
+        "subject": "saw your van",
+        "body": "hey!! saw your van outside my neighbours place last week and they said you were great.\nany chance you could pop round and tell me what itd cost to do the same at mine? no\nrush. cheers, Baz"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric_min, field: confidence, min: 0.6 }

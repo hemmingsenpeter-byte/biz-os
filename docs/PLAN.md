@@ -46,7 +46,7 @@ An employee that is 95% reliable per step completes a five-step task correctly o
 | Knowledge store | `kernel/memory` (cited, scoped, reversible) on pgvector |
 | Model gateway | `kernel/models/router.py` with `model_ollama` and `model_claude` |
 | Test set and test runner | `roles/<role>/tests/eval/<task>/` and `biz eval <task> --tier local|cloud|shadow` |
-| Business HQ | `web/`. Not started |
+| Business HQ | `web/`: the owner console (passkey sign-in, approvals, tasks) |
 
 ## Architecture
 
@@ -114,7 +114,7 @@ Reliability comes from the workflow around the model, and security comes from th
 | Approval bound to the exact payload | Recipient, amount or message changing after approval | Built (staged operations) |
 | Post-action verification | Reporting success when the external application failed | Built as evidence-bound completion |
 | Untrusted-input handling | Inbound content steering the employee | Partly built: text is fenced, models get no tools; one injection case per task |
-| Kill switch | One control that pauses every employee | Not built |
+| Kill switch | One control that pauses every employee | Built (`test_kill_switch`; `biz pause`, `/v1/control`) |
 | Sender verification | Replying to a spoofed "original sender" | Not built; needs a mail port change |
 
 ### Untrusted input
@@ -192,7 +192,7 @@ The dashboard distinguishes fully operational from locally operational. If the i
 
 | Layer | Choice | State |
 | --- | --- | --- |
-| Business HQ | Next.js / React (`web/`) | Not started |
+| Business HQ | Next.js / React (`web/`) | First slice built: sign-in, approvals, tasks |
 | Backend, tool gateway, policy and approvals | Python / FastAPI | Built |
 | Workflow engine | DBOS on PostgreSQL | Built |
 | Database, retrieval and audit | PostgreSQL with pgvector | Built |

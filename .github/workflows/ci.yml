@@ -32,7 +32,7 @@ jobs:
       POSTGRES_PASSWORD: disposable-ci-postgres
       BIZ_SECRET_KEY: disposable-ci-secret-never-for-production
       BIZ_RP_ID: localhost
-      BIZ_ORIGIN: http://localhost
+      BIZ_ORIGIN: http://localhost:3000
       BIZ_DOMAIN: localhost
       BIZ_APP_DIR: /app/apps/demo
       DOCUSEAL_SECRET_KEY_BASE: disposable-ci-docuseal-secret
@@ -40,7 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build and start the demo core
-        run: docker compose up --build -d --wait --wait-timeout 120 postgres biz-api biz-worker
+        run: docker compose up --build -d --wait --wait-timeout 120 postgres biz-api biz-worker biz-web
+      - name: Check the owner console and same-origin API proxy
+        run: |
+          curl --fail --silent http://localhost:3000/auth/login > /dev/null
+          test "$(curl --fail --silent http://localhost:3000/v1/health)" = '{"status":"ok"}'
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:3000/v1/auth/me)" = '401'
       - name: Wait for the packaged worker to finish startup
         run: |
           worker_id=$(docker compose ps -q biz-worker)
@@ -68,3 +73,42 @@ jobs:
       - name: Remove disposable containers and volumes
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: System libraries for PDF rendering
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+      - run: uv sync --locked
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web lint
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web build
+      - name: Install the test browser
+        run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: Exercise passkeys and approvals against the real backend
+        env:
+          CI: "true"
+        run: pnpm --dir web test:e2e
+      - name: Browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owner-console-screenshots
+          path: web/test-results/**/*.png
+          if-no-files-found: ignore

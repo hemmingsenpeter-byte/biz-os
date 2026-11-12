@@ -1,5 +1,52 @@
 # Build log
 
+## 2026-11-12: owner console first slice
+
+- **A working Next.js owner console replaces the web placeholder.** It provides
+  passkey invitation enrolment and sign-in, the approval queue and exact action
+  details, version-bound approve/reject actions, tasks and completion activity.
+  Stale approvals refresh their details and require a fresh decision. The desktop
+  sidebar becomes a mobile drawer, and wide tables scroll within their panels.
+- **First-owner setup is a local administration command:**
+  `biz owner-invite apps/demo --email owner@example.invalid --name Owner`.
+  It serializes creation, refuses implicit staff promotion and additional first
+  owners, commits before exposing the invitation and supports explicit
+  `--reissue` recovery for an existing active owner. Audit records omit the token.
+- **Task activity is an authenticated read API.** It returns task-specific
+  evidence and applicable job-level events in order, excluding sibling tasks and
+  unrelated jobs, matching the kernel's evidence-bound completion rules.
+- **The web server proxies the private API at runtime.** It forwards an explicit
+  header allowlist, preserves HttpOnly cookies, disables response caching and
+  keeps untrusted action text as text. Browser mutation origin checks apply in
+  both the proxy and API so requests routed directly through Caddy are covered.
+- **The browser acceptance flow uses real services and virtual passkeys.** It
+  creates its own Postgres/DBOS databases, starts the production API and standalone
+  Next server, and uses fake ports. It verifies enrolment/login, exact approved
+  contents, one execution, completion evidence, rejection, stale-version conflicts,
+  repeat-request handling and logout. Its servers and databases are removed on
+  exit; desktop/mobile/evidence screenshots are generated under ignored test output.
+- **Deployment and CI include the web app.** Compose builds its standalone
+  non-root image, serves the local console on loopback port 3000 and checks the
+  proxied API. CI also runs frontend lint, fresh route type generation, type checks,
+  the production build and browser acceptance. Setup and recovery are documented
+  in `docs/OWNER_CONSOLE.md`.
+
+### Validation
+
+- Real Chromium browser acceptance passed, including a 390-pixel mobile layout.
+- Frontend lint, fresh-checkout type generation/type checks and production build
+  passed; independent backend and frontend review found no blocking issues.
+- Focused backend checks passed for owner setup, evidence scoping and browser
+  origin enforcement.
+- Full Python suite: **570 passed**, including the concurrent first-owner test;
+  Ruff lint/format, mypy and both composition doctors passed.
+- Both Docker builds passed. The four-service stack passed real passkey enrolment,
+  sign-in, HttpOnly session, mobile layout, sign-out and direct/proxied browser
+  origin checks. All task containers, images, volumes and build cache were removed.
+
+HIVE live integrations, customer/subcontractor portal, scheduling, procurement and
+bank-change screens remain future work.
+
 ## 2026-11-12: demo deployment readiness
 
 - **CI formatting blocker fixed:** `routes_approvals.py` now passes `ruff format --check`.

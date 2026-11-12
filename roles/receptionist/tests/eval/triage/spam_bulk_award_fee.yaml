@@ -1,0 +1,19 @@
+name: spam_bulk_award_fee
+tags: [spam]
+why: "A bulk vanity-award scheme that asks for a fee."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "awards@example.net",
+        "subject": "Your business has been selected",
+        "body": "Dear Sir/Madam,\n\nCongratulations! Your business has been selected for this year's Business Excellence\nAward. To receive your trophy, certificate and listing in our winners' directory,\nsimply pay the administration fee using the secure form. Places are strictly limited\nand your nomination lapses in 48 hours.\n\nThe Awards Committee"
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

@@ -1,0 +1,20 @@
+name: enquiry_forwarded_recommendation
+tags: [forwarded]
+why: "The newest text asks for a meeting about a new job; the quoted chain is background."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "s.adeyemi@example.com",
+        "subject": "Fwd: someone you could use",
+        "body": "Hello,\n\nA colleague passed on your details (her note is below). We would like to arrange a\nmeeting to talk through a similar job for us. Are you free at all next week?\n\nSimone Adeyemi\n\n---------- Forwarded message ----------\nFrom: Karen Holt <karen.holt@example.com>\nSubject: someone you could use\n\nSimone - these are the people I mentioned. They did our place in the spring, were\nin and out in two days and left everything spotless. Tell them I sent you.\n\n> On Monday Simone wrote:\n> Do you know anyone decent? I have had three people not bother to call back."
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

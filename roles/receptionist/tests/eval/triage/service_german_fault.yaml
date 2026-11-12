@@ -1,0 +1,20 @@
+name: service_german_fault
+tags: [non_english]
+why: "German: a customer serviced in January reports the device has stopped working and asks for a visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "jonas.keller@example.com",
+        "subject": "Ger\u00e4t funktioniert nicht mehr",
+        "body": "Guten Tag,\n\nSie haben im Januar bei uns die Wartung durchgef\u00fchrt. Seit gestern funktioniert das\nGer\u00e4t nicht mehr. Bitte schicken Sie so bald wie m\u00f6glich jemanden vorbei.\n\nMit freundlichen Gr\u00fc\u00dfen\nJonas Keller"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

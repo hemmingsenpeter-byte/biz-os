@@ -1,0 +1,20 @@
+name: enquiry_duplicate_resend
+tags: [duplicate]
+why: "A repeat of an unanswered quote request is still a prospect asking for a quote."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "mina.castellanos@example.com",
+        "subject": "Quote request (sent again)",
+        "body": "Hi,\n\nI filled in the form on your website last Tuesday asking for a quote and have not had a\nreply, so I am sending the same request again by email in case the form is broken.\n\nWe need a one-off job done at our office before the end of next month. It is a single\nroom and access is easy. Could someone call me to arrange a time to look at it?\n\nMina Castellanos"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

@@ -1,0 +1,19 @@
+name: spam_fake_invoice_attachment
+tags: [phishing]
+why: "A malware lure dressed up as an overdue invoice from an unknown sender."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "billing-dept-0047@example.net",
+        "subject": "FINAL NOTICE invoice overdue",
+        "body": "Final notice.\n\nYour invoice is overdue. Open the attached file invoice_8841.zip and enable content to\nview the amount due. Failure to pay today will result in legal action."
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

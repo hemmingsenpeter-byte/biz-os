@@ -10,6 +10,7 @@ from sqlalchemy import Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from biz_kernel.audit.log import APPEND_ONLY_TABLES
 from biz_kernel.db import Base, utcnow, uuid7
 
 
@@ -66,3 +67,30 @@ class Suggestion(Base):
     evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="proposed")
     staged_op_id: Mapped[uuid.UUID | None] = mapped_column()
+
+
+class Correction(Base):
+    """An approver's edit to a proposal: what was drafted, what it became, and why.
+
+    Rows are training data: they become proposed rules and test cases. Never changed.
+    """
+
+    __tablename__ = "approval_corrections"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+    op_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    actor: Mapped[str] = mapped_column(String(120))  # the role whose proposal was edited
+    tool: Mapped[str] = mapped_column(String(160))
+    decision_type: Mapped[str | None] = mapped_column(String(120))
+    from_version: Mapped[int] = mapped_column(Integer)
+    to_version: Mapped[int] = mapped_column(Integer)
+    before: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    after: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    by: Mapped[str] = mapped_column(String(120))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str | None] = mapped_column(String(10))  # cosmetic | factual | policy
+
+
+SEVERITIES = ("cosmetic", "factual", "policy")
+ERROR_SEVERITIES = ("factual", "policy")  # an untagged edit also counts as an error
+APPEND_ONLY_TABLES.append("approval_corrections")

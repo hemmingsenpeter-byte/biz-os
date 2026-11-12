@@ -1,1 +1,9 @@
+schema_version: 1
+dataset: receptionist-triage-tuning
+dataset_version: "1.0.0"
+task: receptionist.triage
+decision_type: enquiry_classification
+split: tuning
+provenance: synthetic
+owner_reviewed: false
 threshold: 0.1

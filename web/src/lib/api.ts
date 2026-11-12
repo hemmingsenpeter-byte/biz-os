@@ -119,6 +119,7 @@ export type DecisionTypeRow = {
   approved_unchanged: number;
   approved_cosmetic: number;
   approved_with_errors: number;
+  approved_unknown: number;
   rejected: number;
   pending: number;
   approval_without_edit_rate: number | null;
@@ -128,7 +129,8 @@ export type Metrics = {
   since: string;
   until: string;
   decision_types: DecisionTypeRow[];
-  serious_errors: number;
+  serious_errors: number | null;
+  recorded_demotions: number;
   tasks_completed: number;
   cost_usd: number;
   cost_per_task_usd: number | null;

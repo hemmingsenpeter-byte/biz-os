@@ -62,7 +62,7 @@ def test_stale_version_is_409(client, session):
     owner = create_user(session, "o2@example.com", "owner", "O")
     op = _op(session)
     _login(client, owner)
-    r = client.post(f"/v1/approvals/{op.id}/edit", json={"inputs": {"a": 2}})
+    r = client.post(f"/v1/approvals/{op.id}/edit", json={"version": op.version, "inputs": {"a": 2}})
     assert r.status_code == 200 and r.json()["version"] == 2
     assert client.post(f"/v1/approvals/{op.id}/approve", json={"version": 1}).status_code == 409
     assert client.post(f"/v1/approvals/{op.id}/approve", json={"version": 2}).status_code == 200
@@ -75,7 +75,12 @@ def test_staff_can_view_but_not_decide(client, session):
     assert len(client.get("/v1/approvals").json()) == 1
     assert client.post(f"/v1/approvals/{op.id}/approve", json={"version": 1}).status_code == 403
     assert client.post(f"/v1/approvals/{op.id}/reject", json={}).status_code == 403
-    assert client.post(f"/v1/approvals/{op.id}/edit", json={"inputs": {}}).status_code == 403
+    assert (
+        client.post(
+            f"/v1/approvals/{op.id}/edit", json={"version": op.version, "inputs": {}}
+        ).status_code
+        == 403
+    )
     assert session.get(StagedOperation, op.id).status == "pending"
 
 
@@ -178,5 +183,7 @@ def test_approval_cards_link_to_approval_task_and_run(client, session):
     )
     session.flush()
     # decisions return the linked card too
-    r = client.post(f"/v1/approvals/{waiting.id}/edit", json={"inputs": {"a": 3}})
+    r = client.post(
+        f"/v1/approvals/{waiting.id}/edit", json={"version": waiting.version, "inputs": {"a": 3}}
+    )
     assert r.status_code == 200 and r.json()["links"] == w["links"]

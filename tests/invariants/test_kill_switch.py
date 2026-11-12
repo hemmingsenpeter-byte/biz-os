@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import pytest
@@ -14,6 +16,7 @@ from biz_kernel import control, db
 from biz_kernel.approvals import staged
 from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.budgets import BudgetBook
+from biz_kernel.budgets.models import CostEvent
 from biz_kernel.control.models import PauseEvent
 from biz_kernel.heartbeats import service as heartbeats
 from biz_kernel.heartbeats.models import Wakeup
@@ -209,7 +212,9 @@ def test_kill_switch(live) -> None:  # type: ignore[no-untyped-def]
         decide(op_id, "demo_owner", approve=True, version=1)
     # The race: the approval landed just before the pause, the worker wakes just after.
     with db.session_scope() as s:
+        control.resume(s, "owner")
         staged.approve(s, op_id, "demo_owner", 1)
+        control.pause(s, "owner", "testing")
     notify_decision(str(op_id), "approved")
     _wait(lambda: _run(packet_id, "paused"))
     assert mail.sent == []
@@ -223,3 +228,54 @@ def test_kill_switch(live) -> None:  # type: ignore[no-untyped-def]
     assert len(mail.sent) == 1
     rt.tick()
     assert len(mail.sent) == 1 and _run(packet_id, "done") is not None
+
+
+def test_dispatch_race_unwinds_the_workflow_before_parking(live, monkeypatch) -> None:
+    """Admission fails after charging: release the operation/budget locks, then resume once."""
+    from biz_kernel.control import service
+    from biz_kernel.workflows.gate import decide
+    from dbos import DBOS
+
+    rt, mail, _ = live
+    name = "demo_desk.send_reply"
+    rt.registry.tools[name] = replace(rt.registry.get(name), cost_usd=1)
+    entered, release = Event(), Event()
+    original_admit = service.admit
+
+    def coordinated_admit(session, what=""):
+        if what == name and not entered.is_set():
+            entered.set()
+            assert release.wait(10)
+        original_admit(session, what)
+
+    monkeypatch.setattr(service, "admit", coordinated_admit)
+    packet_id = _request(rt)
+    rt.tick()
+    run = _wait(lambda: _run(packet_id, "waiting"))
+    op_id = uuid.UUID(run.waiting_op_id)
+    decide(op_id, "demo_owner", approve=True, version=1)
+    try:
+        assert entered.wait(10)
+        with db.session_scope() as session:
+            control.pause(session, "owner", "dispatch race")
+    finally:
+        release.set()
+    _wait(lambda: _run(packet_id, "paused"))
+    with db.session_scope() as session:
+        session.execute(text("SET LOCAL statement_timeout = '1s'"))
+        # These acquisitions would block if the parked step kept its transaction.
+        op = session.scalar(
+            select(StagedOperation).where(StagedOperation.id == op_id).with_for_update(nowait=True)
+        )
+        assert op is not None and op.status == "approved"
+        assert rt.registry.budgets is not None
+        rt.registry.budgets._lock(session, "demo_clerk")
+        assert list(session.scalars(select(CostEvent).where(CostEvent.ref == name))) == []
+    assert mail.sent == []
+    with db.session_scope() as session:
+        control.resume(session, "owner")
+    rt.tick()
+    assert DBOS.retrieve_workflow(run.id).get_result()["status"] == "done"
+    assert len(mail.sent) == 1
+    with db.session_scope() as session:
+        assert len(list(session.scalars(select(CostEvent).where(CostEvent.ref == name)))) == 1

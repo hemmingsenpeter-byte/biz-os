@@ -362,6 +362,16 @@ def register(
         )
         return {"address": row.address, "opted_out": True}
 
+    def is_suppressed(
+        session: Session, address: str, party_id: str | None = None
+    ) -> dict[str, Any]:
+        """The one suppression list: other capabilities ask here before they send."""
+        pid = uuid.UUID(party_id) if party_id else None
+        return {
+            "address": normalize_address(address),
+            "suppressed": service.is_suppressed(session, address, pid),
+        }
+
     idem: dict[str, Any] = {"idempotency_key": _STR}
     tools = [
         Tool(
@@ -469,6 +479,14 @@ def register(
             _obj({"address": _STR, "source": _STR, "party_id": _STR}, ["address"]),
             opt_out,
             "Record a permanent suppression for an address or number",
+        ),
+        Tool(
+            f"{CAP}.is_suppressed",
+            CAP,
+            SideEffect.READ,
+            _obj({"address": _STR, "party_id": _STR}, ["address"]),
+            is_suppressed,
+            "Whether an address or number (or its party) has opted out",
         ),
     ]
     for t in tools:

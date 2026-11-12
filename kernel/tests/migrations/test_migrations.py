@@ -44,5 +44,5 @@ def test_upgrade_matches_metadata_and_downgrade_empties(fresh_db: str) -> None:
         conn.execute(text("update audit_log set actor = 'b'"))
     eng.dispose()
 
-    migrations.downgrade(fresh_db)
+    migrations.downgrade(fresh_db, allow_data_loss=True)
     assert _tables(fresh_db) == set()

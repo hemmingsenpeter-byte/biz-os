@@ -185,11 +185,25 @@ export default function ScorecardPage() {
         </Stat>
         <Stat
           icon={<CircleAlert size={19} />}
-          tone={data?.serious_errors ? "red" : "teal"}
+          tone={
+            data?.serious_errors === null
+              ? "amber"
+              : data?.serious_errors
+                ? "red"
+                : "teal"
+          }
           label="Serious errors"
-          note="Actions that had to be undone"
+          note={
+            data?.serious_errors === null
+              ? "Reversals are not recorded yet"
+              : "Actions that had to be undone"
+          }
         >
-          {data ? data.serious_errors : "—"}
+          {data ? (
+            <Measured value={data.serious_errors} format={String} />
+          ) : (
+            "—"
+          )}
         </Stat>
         <Stat icon={<Coins size={19} />} tone="blue" label="Cost">
           {data ? money(data.cost_usd) : "—"}
@@ -218,6 +232,15 @@ export default function ScorecardPage() {
           )}
         </Stat>
       </div>
+      {data && (
+        <div className="quiet-note">
+          <span className="live-dot" />
+          <span>
+            Recorded demotions: {data.recorded_demotions}. These are demotion
+            events recorded after bad outcomes, including at the minimum level.
+          </span>
+        </div>
+      )}
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -228,8 +251,8 @@ export default function ScorecardPage() {
               </span>
             </h2>
             <p>
-              What you did with each proposal. Rates count approved proposals
-              only.
+              What you did with each proposal. The as-is rate uses all
+              proposals; the error-free rate uses approved proposals only.
             </p>
           </div>
           <span className="subtle-label">LAST {DAYS} DAYS</span>
@@ -251,6 +274,7 @@ export default function ScorecardPage() {
                   <th>Approved as is</th>
                   <th>Wording-only edits</th>
                   <th>Approved with errors</th>
+                  <th>Approved with unknown history</th>
                   <th>Rejected</th>
                   <th>Waiting</th>
                   <th>Approved as is rate</th>
@@ -278,6 +302,9 @@ export default function ScorecardPage() {
                     <td data-label="Approved with errors">
                       {row.approved_with_errors}
                     </td>
+                    <td data-label="Approved with unknown history">
+                      {row.approved_unknown}
+                    </td>
                     <td data-label="Rejected">{row.rejected}</td>
                     <td data-label="Waiting">{row.pending}</td>
                     <td data-label="Approved as is rate">
@@ -287,7 +314,16 @@ export default function ScorecardPage() {
                       />
                     </td>
                     <td data-label="Error-free rate">
-                      <Measured value={row.error_free_rate} format={percent} />
+                      {row.approved_unknown > 0 ? (
+                        <span className="not-measured">
+                          Not measured: history unknown
+                        </span>
+                      ) : (
+                        <Measured
+                          value={row.error_free_rate}
+                          format={percent}
+                        />
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -306,9 +342,12 @@ export default function ScorecardPage() {
       <div className="quiet-note">
         <span className="live-dot" />
         <span>
-          Approved with errors means you corrected a fact or a broken rule
-          before approving. Error-free counts approvals that needed no edit or
-          wording changes only.
+          Approved as is rate = unchanged approvals ÷ all proposals, including
+          rejected and waiting proposals. Error-free rate = unchanged or
+          wording-only approvals ÷ all approved proposals. Approved with errors
+          means you corrected a fact or a broken rule. Incomplete version
+          history is counted as unknown, never as error-free; its presence makes
+          the error-free rate not measured.
         </span>
       </div>
       {corrections.error && (
@@ -326,8 +365,7 @@ export default function ScorecardPage() {
               </span>
             </h2>
             <p>
-              The draft, your edit and your reason. These are what the roles
-              learn from.
+              The draft, your edit and your reason, saved together for review.
             </p>
           </div>
           <span className="subtle-label">NEWEST FIRST</span>

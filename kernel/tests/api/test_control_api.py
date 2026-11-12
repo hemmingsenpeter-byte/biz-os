@@ -83,7 +83,9 @@ def test_nothing_is_approved_while_paused(client, session):
     client.post("/v1/control/pause", json={})
     r = client.post(f"/v1/approvals/{op.id}/approve", json={"version": 1})
     assert r.status_code == 409 and "paused" in r.json()["detail"]
-    edited = client.post(f"/v1/approvals/{op.id}/edit", json={"inputs": {"body": "x"}})
+    edited = client.post(
+        f"/v1/approvals/{op.id}/edit", json={"version": op.version, "inputs": {"body": "x"}}
+    )
     assert edited.status_code == 200  # editing and rejecting stay possible
     client.post("/v1/control/resume")
     assert client.post(f"/v1/approvals/{op.id}/approve", json={"version": 2}).status_code == 200
@@ -101,6 +103,7 @@ def test_an_edit_is_kept_as_a_correction(client, session):
     r = client.post(
         f"/v1/approvals/{op.id}/edit",
         json={
+            "version": op.version,
             "inputs": {"body": "fixed", "idempotency_key": "changed"},
             "reason": "wrong opening time",
             "severity": "factual",
@@ -116,11 +119,15 @@ def test_an_edit_is_kept_as_a_correction(client, session):
     assert row["reason"] == "wrong opening time" and row["severity"] == "factual"
 
     # A second edit is a second correction; severity is optional (untagged counts as an error).
-    client.post(f"/v1/approvals/{op.id}/edit", json={"inputs": {"body": "fixed again"}})
+    client.post(
+        f"/v1/approvals/{op.id}/edit",
+        json={"version": op.version, "inputs": {"body": "fixed again"}},
+    )
     rows = client.get("/v1/corrections").json()
     assert [c["severity"] for c in rows] == [None, "factual"]  # newest first
     bad = client.post(
-        f"/v1/approvals/{op.id}/edit", json={"inputs": {"body": "y"}, "severity": "huge"}
+        f"/v1/approvals/{op.id}/edit",
+        json={"version": op.version, "inputs": {"body": "y"}, "severity": "huge"},
     )
     assert bad.status_code == 422
     assert client.get("/v1/corrections?limit=0").status_code == 422
@@ -128,17 +135,23 @@ def test_an_edit_is_kept_as_a_correction(client, session):
 
 def test_what_is_not_a_correction(session):
     op = _op(session)
-    staged.edit(session, op.id, {"body": "role rewrote its own draft"}, by="sales")
-    staged.edit(session, op.id, {"body": "unattributed"})
+    staged.edit(
+        session, op.id, {"body": "role rewrote its own draft"}, by="sales", version=op.version
+    )
+    staged.edit(session, op.id, {"body": "unattributed"}, version=op.version)
     same = dict(session.get(type(op), op.id).inputs)
-    staged.edit(session, op.id, same, by="owner", severity="cosmetic")  # nothing changed
+    staged.edit(
+        session, op.id, same, by="owner", severity="cosmetic", version=op.version
+    )  # nothing changed
     assert session.scalars(select(Correction)).all() == []
     with pytest.raises(staged.ApprovalError):
-        staged.edit(session, op.id, {"body": "z"}, by="owner", severity="huge")
+        staged.edit(session, op.id, {"body": "z"}, by="owner", severity="huge", version=op.version)
 
 
 def test_corrections_are_append_only(session):
     op = _op(session)
-    staged.edit(session, op.id, {"body": "fixed"}, by="owner", severity="policy")
+    staged.edit(
+        session, op.id, {"body": "fixed"}, by="owner", severity="policy", version=op.version
+    )
     with pytest.raises(DBAPIError, match="append-only"), session.begin_nested():
         session.execute(Correction.__table__.update().values(severity="cosmetic"))

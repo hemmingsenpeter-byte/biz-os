@@ -6,13 +6,14 @@ is None ("not measured"), never 0.
 Where each number comes from, and where it is weaker than its definition:
 
 - proposals and their buckets: `staged_operations` created in the window, joined to
-  `approval_corrections`. An edit that left no correction row is invisible here.
+  `approval_corrections`. Versioned edits without correction history are reported as unknown.
 - level: the *stored* level in `autonomy_levels` (owner-set, promoted or demoted). None
   means nothing is stored and the configured default applies; the effective level also
   depends on the tool and policy.yaml, which only the policy engine resolves.
-- serious_errors: audit entries written by `autonomy.record_outcome` for a bad outcome
+- recorded_demotions: audit entries written by `autonomy.record_outcome` for a bad outcome
   (kind "autonomy", how "demote") in the window. The lifetime `bad_outcomes` counter is
-  not used because it has no dates.
+  not used because it has no dates. Actual serious_errors is unmeasured until
+  production reversal/outcome capture exists.
 - tasks_completed: tasks have no completion time of their own. A task counts when it is
   done and a workflow run that finished "done" in the window is linked to it; a task
   completed any other way is not counted.
@@ -55,6 +56,7 @@ class DecisionTypeRow(BaseModel):
     approved_unchanged: int
     approved_cosmetic: int
     approved_with_errors: int
+    approved_unknown: int
     rejected: int
     pending: int
     approval_without_edit_rate: float | None
@@ -65,7 +67,8 @@ class MetricsReport(BaseModel):
     since: datetime
     until: datetime
     decision_types: list[DecisionTypeRow]
-    serious_errors: int
+    serious_errors: int | None
+    recorded_demotions: int = 0
     tasks_completed: int
     cost_usd: float
     cost_per_task_usd: float | None
@@ -125,15 +128,16 @@ def _decision_types(session: Session, since: datetime, until: datetime) -> list[
             StagedOperation.actor,
             StagedOperation.decision_type,
             StagedOperation.status,
+            StagedOperation.version,
         ).where(*in_window)
     ).all()
-    severities: dict[uuid.UUID, list[str | None]] = defaultdict(list)
-    for op_id, severity in session.execute(
-        select(Correction.op_id, Correction.severity).where(
-            Correction.op_id.in_(select(StagedOperation.id).where(*in_window))
-        )
+    corrections: dict[uuid.UUID, list[tuple[int, int, str | None]]] = defaultdict(list)
+    for op_id, start, end, severity in session.execute(
+        select(
+            Correction.op_id, Correction.from_version, Correction.to_version, Correction.severity
+        ).where(Correction.op_id.in_(select(StagedOperation.id).where(*in_window)))
     ):
-        severities[op_id].append(severity)
+        corrections[op_id].append((start, end, severity))
     stored = {
         (role, decision_type): level
         for role, decision_type, level in session.execute(
@@ -141,24 +145,36 @@ def _decision_types(session: Session, since: datetime, until: datetime) -> list[
         )
     }
     counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for op_id, actor, decision_type, status in ops:
+    for op_id, actor, decision_type, status, version in ops:
         c = counts[(actor, decision_type or "")]
         c["proposals"] += 1
         if status in APPROVED_STATUSES:
-            edits = severities.get(op_id)
-            if not edits:
-                c["approved_unchanged"] += 1
-            elif all(s == COSMETIC for s in edits):
-                c["approved_cosmetic"] += 1
-            else:  # factual, policy or untagged
+            edits = corrections.get(op_id, [])
+            ordered = sorted(edits, key=lambda edit: edit[:2])
+            complete = len(edits) == version - 1 and all(
+                (start, end) == (n, n + 1) for n, (start, end, _) in enumerate(ordered, start=1)
+            )
+            if any(severity != COSMETIC for _, _, severity in edits):
+                # A known error remains an error even when older edits are missing.
                 c["approved_with_errors"] += 1
+            elif not complete:
+                c["approved_unknown"] += 1
+            elif edits:
+                c["approved_cosmetic"] += 1
+            else:
+                c["approved_unchanged"] += 1
         elif status == "rejected":
             c["rejected"] += 1
         else:
             c["pending"] += 1
     rows = []
     for (role, decision_type), c in sorted(counts.items()):
-        decided = c["approved_unchanged"] + c["approved_cosmetic"] + c["approved_with_errors"]
+        decided = (
+            c["approved_unchanged"]
+            + c["approved_cosmetic"]
+            + c["approved_with_errors"]
+            + c["approved_unknown"]
+        )
         rows.append(
             DecisionTypeRow(
                 role=role,
@@ -168,10 +184,15 @@ def _decision_types(session: Session, since: datetime, until: datetime) -> list[
                 approved_unchanged=c["approved_unchanged"],
                 approved_cosmetic=c["approved_cosmetic"],
                 approved_with_errors=c["approved_with_errors"],
+                approved_unknown=c["approved_unknown"],
                 rejected=c["rejected"],
                 pending=c["pending"],
-                approval_without_edit_rate=_rate(c["approved_unchanged"], decided),
-                error_free_rate=_rate(c["approved_unchanged"] + c["approved_cosmetic"], decided),
+                approval_without_edit_rate=_rate(c["approved_unchanged"], c["proposals"]),
+                error_free_rate=(
+                    None
+                    if c["approved_unknown"]
+                    else _rate(c["approved_unchanged"] + c["approved_cosmetic"], decided)
+                ),
             )
         )
     return rows
@@ -212,10 +233,9 @@ def report(
 
     `config` is the `metrics:` section of the composition's policy.yaml, if any.
 
-    Both rates use *decided approvals* as the denominator: proposals that were approved
-    (or approved and run), whether unchanged, with cosmetic edits or with errors. Rejected
-    and pending proposals are reported but are not in the denominator, so a rejection
-    lowers neither rate. A rate is None when nothing was approved.
+    Approval without edit is unchanged approvals divided by all proposals. Error-free
+    rate describes approved requests only and is unknown when legacy edits lack
+    correction provenance. Rejections and pending requests remain visible.
 
     Time saved is the timed baseline for each completed task, minus the review minutes
     for every proposal in the window that the approver decided (approved or rejected).
@@ -238,14 +258,19 @@ def report(
         select(func.sum(CostEvent.amount_usd)).where(CostEvent.at >= since, CostEvent.at < until)
     ) or Decimal(0)
     reviews = sum(
-        r.approved_unchanged + r.approved_cosmetic + r.approved_with_errors + r.rejected
+        r.approved_unchanged
+        + r.approved_cosmetic
+        + r.approved_with_errors
+        + r.approved_unknown
+        + r.rejected
         for r in rows
     )
     return MetricsReport(
         since=since,
         until=until,
         decision_types=rows,
-        serious_errors=int(serious or 0),
+        serious_errors=None,
+        recorded_demotions=int(serious or 0),
         tasks_completed=len(kinds),
         cost_usd=round(float(cost), 6),
         cost_per_task_usd=round(float(cost) / len(kinds), 6) if kinds else None,
@@ -263,7 +288,8 @@ def render(rep: MetricsReport) -> str:
         f"From {rep.since:%d %b %Y} to {rep.until:%d %b %Y}",
         "",
         f"Tasks completed:  {rep.tasks_completed}",
-        f"Serious errors:   {rep.serious_errors}",
+        f"Serious errors:   {NOT_MEASURED if rep.serious_errors is None else rep.serious_errors}",
+        f"Recorded demotions: {rep.recorded_demotions}",
         f"Cost:             ${rep.cost_usd:.2f}",
         "Cost per task:    "
         + (NOT_MEASURED if rep.cost_per_task_usd is None else f"${rep.cost_per_task_usd:.2f}"),
@@ -277,8 +303,15 @@ def render(rep: MetricsReport) -> str:
     ]
     if not rep.decision_types:
         return "\n".join([*lines, "No proposals in this period."])
-    head: tuple[str, ...] = ("Role", "Decision", "Level", "Proposed", "As is", "Small edits")
-    head += ("Errors", "Rejected", "Waiting", "Approved as is", "Error-free")
+    head: tuple[str, ...] = ("Role", "Decision", "Stored level", "Proposed", "As is", "Small edits")
+    head += (
+        "Errors",
+        "Unknown edits",
+        "Rejected",
+        "Waiting",
+        "Unchanged/proposals",
+        "Error-free/approved",
+    )
     table = [head] + [
         (
             r.role,
@@ -288,6 +321,7 @@ def render(rep: MetricsReport) -> str:
             str(r.approved_unchanged),
             str(r.approved_cosmetic),
             str(r.approved_with_errors),
+            str(r.approved_unknown),
             str(r.rejected),
             str(r.pending),
             _pct(r.approval_without_edit_rate),

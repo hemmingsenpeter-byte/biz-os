@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from biz_cap_invoicing import config
 from biz_cap_invoicing.models import Invoice
 from biz_cap_invoicing.tools import register
 from biz_kernel.records.models import Job, Party, Person
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 
 @pytest.fixture
 def stack() -> Any:
+    config.bind(None)  # no composition: defaults, whatever an earlier test bound
     reg = ToolRegistry()
     acct = FakeAccounting()
     register(reg, {"accounting": acct})

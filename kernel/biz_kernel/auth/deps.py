@@ -14,12 +14,12 @@ from biz_kernel.auth.models import User
 
 
 def get_session() -> Iterator[Session]:
-    """One session per request; commits on success. Tests override this dependency."""
+    """One session per request; commit before acknowledging success over HTTP."""
     with db.session_scope() as session:
         yield session
 
 
-DbSession = Annotated[Session, Depends(get_session)]
+DbSession = Annotated[Session, Depends(get_session, scope="function")]
 
 
 def current_user(

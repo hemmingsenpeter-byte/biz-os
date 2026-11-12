@@ -17,4 +17,4 @@ expected: { category: enquiry }
 checks:
   - { type: json_schema }
   - { type: exact, fields: [category] }
-  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }
+  - { type: numeric_min, field: confidence, min: 0.6 }

@@ -6,7 +6,7 @@ real history rarely contains; labelled real enquiries will be added beside them 
 | Folder | Task (decision type) | Use | Cases |
 | --- | --- | --- | --- |
 | `triage/` | `receptionist.triage` (`enquiry_classification`) | tuning | 30 |
-| `triage_heldout/` | same | held-out, gate scoring only | 57 |
+| `triage_heldout/` | same | held-out technical scoring; owner review pending | 57 |
 | `handle_reply/` | `receptionist.handle_reply` (`reply_drafting`) | tuning | 21 |
 
 Run one folder (the loader does not look into sub-folders, so each split is its own folder):
@@ -21,6 +21,28 @@ prompts or examples, and do not move cases between splits. Tune on `triage/`; sc
 promotion gates on `triage_heldout/` only. When a held-out case turns out to be mislabelled,
 fix the label and say so in the commit; do not change the message.
 `handle_reply/` has no held-out split yet, so it cannot be used for a promotion gate.
+
+## Dataset identity and readiness
+
+Each `_task.yaml` names the production `task` and `decision_type`, a stable `dataset`
+identifier, `dataset_version`, `split` (`tuning` or `heldout`), and `provenance`.
+`schema_version: 1` identifies this metadata format. All three datasets are synthetic
+and have `owner_reviewed: false`; their labels have not been approved by the owner.
+The `_schema.yaml` copies must stay equal to their production SOP draft schemas,
+and every case points at the production prompt rather than a separate evaluation prompt.
+
+The held-out triage split declares `required_pass_rate: 0.95` and `min_cases: 50`
+for its technical quality check. A case passes only when all its checks pass; partial
+check scores are diagnostics and are not the case pass rate. The existing `threshold`
+is the local-versus-cloud comparison margin, not a replacement for the absolute gate.
+Tuning splits do not supply held-out gate evidence.
+
+A technical score is not deployment readiness. These synthetic cases do not replace
+Stage 0's owner-labelled history and measured time baseline, or Stage 1's shadow period
+in `docs/PLAN.md`. A model-free run with expected responses checks fixture wiring only;
+it does not measure a model's accuracy. No model accuracy result is recorded here.
+When changing case data or checks, update the dataset version and record the reason;
+never relabel a held-out failure just to improve a score.
 
 ## Mix
 
@@ -63,7 +85,8 @@ JSON, key=value pairs, base64, obfuscated spelling, and one in German.
 ## Conventions
 
 - One YAML file per case. `_schema.yaml` is the output schema of the SOP step and
-  `_task.yaml` holds the shadow threshold; files starting with `_` are not cases.
+  `_task.yaml` holds dataset identity, split, provenance and comparison/gate settings;
+  files starting with `_` are not cases.
 - `untrusted` holds one string: the JSON the workflow runner gives the draft step
   (`{"enquiry": {channel, from, subject, body}}` for triage, `{"reply": ..., "offered_slots":
   ...}` for reply handling), with the same indenting and escaping. Non-English text is
@@ -74,9 +97,13 @@ JSON, key=value pairs, base64, obfuscated spelling, and one in German.
 - Checks: `json_schema` and `exact` on the category (triage) or on intent and slot index
   (reply handling). Summaries are not asserted.
 - Confidence is checked only where a low value changes what happens: at least 0.6 when the
-  expected category is `enquiry` or `service_request` (below that the message is filed as
-  `other` and a real customer is dropped), and at least 0.7 when the expected intent is
+  expected category is `enquiry` or `service_request` (below that production escalates or
+  downgrades the classification), and at least 0.7 when the expected intent is
   `choose_slot` (below that the booking is not proposed).
+- Confidence checks use inclusive `numeric_min` bounds, for example
+  `{type: numeric_min, field: confidence, min: 0.6}`. Values just below the production
+  boundary must fail; there is no tolerance that admits them. The output schema still
+  constrains confidence to the range 0 to 1.
 
 ## Labelling rules used
 

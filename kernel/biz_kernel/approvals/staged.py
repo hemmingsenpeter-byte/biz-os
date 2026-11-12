@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from biz_kernel.approvals import autonomy
 from biz_kernel.approvals.models import SEVERITIES, Correction, StagedOperation
 from biz_kernel.audit.log import record
+from biz_kernel.control import service as control
 from biz_kernel.db import utcnow
 from biz_kernel.policy.types import Action, Deny, NeedsApproval
 from biz_kernel.tools.registry import CallResult, PolicyChecker, ToolRegistry
@@ -55,7 +56,10 @@ def _json(value: Any) -> Any:
 
 def _locked(session: Session, op_id: uuid.UUID) -> StagedOperation:
     op = session.scalar(
-        select(StagedOperation).where(StagedOperation.id == op_id).with_for_update()
+        select(StagedOperation)
+        .where(StagedOperation.id == op_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if op is None:
         raise ApprovalError(f"no staged operation {op_id}")
@@ -100,6 +104,7 @@ def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> Staged
         raise StaleVersion(f"approval names version {version}, current is {op.version}")
     if by == op.actor or by not in (op.approver, OWNER):
         raise NotAuthorised(f"{by} may not approve this operation")
+    control.admit(session, "approval")
     op.status, op.approved_by = "approved", by
     op.approved_version, op.approved_sha256 = op.version, op.inputs_sha256
     if op.decision_type:
@@ -124,6 +129,8 @@ def edit(
     by: str = "",
     reason: str = "",
     severity: str | None = None,
+    *,
+    version: int,
 ) -> StagedOperation:
     """Change inputs: bumps the version and clears any approval.
 
@@ -136,6 +143,8 @@ def edit(
     if severity is not None and severity not in SEVERITIES:
         raise ApprovalError(f"severity must be one of {', '.join(SEVERITIES)}")
     op = _locked(session, op_id)
+    if version != op.version:
+        raise StaleVersion(f"edit names version {version}, current is {op.version}")
     if op.status not in ("pending", "approved"):
         raise ApprovalError(f"operation is {op.status}, cannot edit")
     inputs = _json(new_inputs)

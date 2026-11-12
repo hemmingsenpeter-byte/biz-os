@@ -21,6 +21,7 @@ __all__ = [
     "OutboundMessage",
     "Party",
     "Payment",
+    "PostedDocument",
     "SendResult",
     "SignEvent",
     "SignPort",
@@ -49,6 +50,17 @@ class ExternalRef(BaseModel):
     system: str
     id: str
     url: str | None = None
+
+
+class PostedDocument(ExternalRef):
+    """An invoice or bill as the accounting system holds it once posted.
+
+    `tax` and `total` (tax-inclusive) are that system's own figures, so what is owed is
+    never guessed from a rate. Both are None when the system cannot say.
+    """
+
+    tax: Decimal | None = None
+    total: Decimal | None = None
 
 
 class LineItem(BaseModel):
@@ -149,8 +161,8 @@ class Transcript(BaseModel):
 @runtime_checkable
 class AccountingPort(Protocol):
     async def upsert_contact(self, party: Party) -> ExternalRef: ...
-    async def create_invoice(self, inv: InvoiceDraft) -> ExternalRef: ...
-    async def create_bill(self, bill: BillDraft) -> ExternalRef: ...
+    async def create_invoice(self, inv: InvoiceDraft) -> PostedDocument: ...
+    async def create_bill(self, bill: BillDraft) -> PostedDocument: ...
     async def list_payments(self, since: datetime) -> list[Payment]: ...
     async def bank_balance(self) -> tuple[Decimal, str]:
         """Total closing balance of the bank accounts, in the base currency: (amount, code)."""

@@ -137,6 +137,14 @@ exactly the edited text is sent under the original operation reference, and read
 the scorecard with the correction listed, before signing out. Desktop and mobile
 screenshots go to ignored `web/test-results/`.
 
+The same real-service flow covers two open tabs editing one proposal, preserves
+unsaved corrections after a stale edit, and verifies that staff can pause while
+only the owner can resume. Its temporary composition has no metrics baseline and
+includes a legacy edited approval without correction history, so unmeasured and
+unknown values are exercised without response stubs. See
+[Reliability integration](RELIABILITY_INTEGRATION.md) for the versioned edit API,
+pause acknowledgement boundary and upgrade notes.
+
 On a development machine with Chromium already installed, set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium` instead of downloading a test
 browser. The harness stops its servers and removes its temporary databases and

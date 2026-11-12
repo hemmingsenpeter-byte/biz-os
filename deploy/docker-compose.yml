@@ -60,12 +60,26 @@ services:
     command: ["python", "-m", "biz_kernel.workflows.worker"]
 
   biz-web:
-    # Placeholder until the Next.js app exists (M6/M7). Serves a static notice on :3000.
-    image: caddy:2-alpine
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
     restart: unless-stopped
-    command: ["caddy", "respond", "--listen", ":3000", "--body", "BIZ OS web: not built yet", "--status", "200"]
+    environment:
+      # Read by the server at runtime; browser requests stay on the web origin.
+      BIZ_API_URL: http://biz-api:8000
+      BIZ_ORIGIN: ${BIZ_ORIGIN}
+    depends_on:
+      biz-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "Promise.all(['/auth/login', '/v1/health'].map(path => fetch('http://127.0.0.1:3000' + path).then(response => { if (!response.ok) throw new Error(String(response.status)); }))).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     expose:
       - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"   # local demo only; private access uses Caddy/Tailscale
 
   docuseal:
     image: docuseal/docuseal:latest   # unmodified; pin a tag before production

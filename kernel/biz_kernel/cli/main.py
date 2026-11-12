@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlencode
 
 import typer
 
@@ -132,6 +134,74 @@ def migrate_cmd(
     target = url or db.database_url()
     migrations.upgrade(target)
     typer.echo("✓ database is at head")
+
+
+@app.command("owner-invite")
+def owner_invite_cmd(
+    app_dir: Path,
+    email: Annotated[str, typer.Option("--email", help="Email of the first owner.")],
+    name: Annotated[str, typer.Option("--name", help="Display name for a new owner.")] = "Owner",
+    reissue: Annotated[
+        bool, typer.Option("--reissue", help="Issue a fresh invite for an existing active owner.")
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print the invitation as JSON.")
+    ] = False,
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Create the first owner and print a single-use passkey enrolment link.
+
+    Run locally against an already migrated database. This command sends no mail.
+    Use --reissue to recover an interrupted enrolment for the same active owner.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from biz_kernel import db
+    from biz_kernel.audit.log import record
+    from biz_kernel.auth import config, tokens
+    from biz_kernel.auth.users import prepare_owner_invite
+
+    _load(app_dir, repo_root)
+    try:
+        config.secret_key()  # fail before creating a user if signing is not configured
+    except RuntimeError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(1) from exc
+    engine = create_engine(url or db.database_url())
+    try:
+        with Session(engine) as session, session.begin():
+            user = prepare_owner_invite(session, email, name, reissue=reissue)
+            token = tokens.issue_invite(user.id)
+            invite_url = (
+                f"{config.origin().rstrip('/')}/auth/register?{urlencode({'invite': token})}"
+            )
+            invite = {
+                "user_id": str(user.id),
+                "email": user.email,
+                "invite_url": invite_url,
+                "expires_in_seconds": config.INVITE_MAX_AGE,
+            }
+            record(
+                session,
+                "cli",
+                "auth",
+                "owner_invite_reissued" if reissue else "first_owner_invited",
+                user_id=user.id,
+                email=user.email,
+            )
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+    # The database transaction committed before the bearer invitation is exposed.
+    if json_output:
+        typer.echo(json.dumps(invite))
+    else:
+        typer.echo(f"Owner invitation for {invite['email']} (single use, valid for 24 hours):")
+        typer.echo(invite["invite_url"])
 
 
 @app.command("worker")

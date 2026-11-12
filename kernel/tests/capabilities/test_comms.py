@@ -194,6 +194,8 @@ def _sent_with_slots(session, reg, n=2):  # type: ignore[no-untyped-def]
 
     day = datetime.now(UTC) + timedelta(days=3)
     day = day.replace(hour=10, minute=0, second=0, microsecond=0)
+    while day.weekday() >= 5:  # FakeCalendar offers working hours on weekdays only.
+        day += timedelta(days=1)
     slots = [
         {
             "start": (day + timedelta(hours=i)).isoformat(),

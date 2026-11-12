@@ -22,3 +22,49 @@ jobs:
       - run: uv run mypy .
       - run: uv run pytest -p no:cacheprovider
       - run: uv run biz doctor apps/demo && uv run biz doctor apps/hive
+
+  docker-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: biz-ci
+      COMPOSE_FILE: deploy/docker-compose.yml
+      POSTGRES_PASSWORD: disposable-ci-postgres
+      BIZ_SECRET_KEY: disposable-ci-secret-never-for-production
+      BIZ_RP_ID: localhost
+      BIZ_ORIGIN: http://localhost
+      BIZ_DOMAIN: localhost
+      BIZ_APP_DIR: /app/apps/demo
+      DOCUSEAL_SECRET_KEY_BASE: disposable-ci-docuseal-secret
+      CLOUDFLARE_TUNNEL_TOKEN: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the demo core
+        run: docker compose up --build -d --wait --wait-timeout 120 postgres biz-api biz-worker
+      - name: Wait for the packaged worker to finish startup
+        run: |
+          worker_id=$(docker compose ps -q biz-worker)
+          for attempt in $(seq 1 60); do
+            test "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' "$worker_id")" = "true 0"
+            if docker compose logs --no-color biz-worker | grep -F 'worker up: demo,'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'Worker did not finish startup within 60 seconds' >&2
+          exit 1
+      - name: Check packaged compositions
+        run: |
+          docker compose exec -T biz-api biz doctor apps/demo
+          docker compose exec -T biz-api biz doctor apps/hive
+      - name: Exercise approval, recovery, replay and PDF rendering with fake ports
+        run: |
+          docker compose cp deploy/smoke_demo.py biz-api:/tmp/smoke_demo.py
+          docker compose exec -T biz-api python /tmp/smoke_demo.py --repo-root /app
+          test "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' "$(docker compose ps -q biz-worker)")" = "true 0"
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail 100
+      - name: Remove disposable containers and volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans

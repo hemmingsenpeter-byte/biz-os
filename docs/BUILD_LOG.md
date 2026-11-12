@@ -1,5 +1,46 @@
 # Build log
 
+## 2026-11-12: demo deployment readiness
+
+- **CI formatting blocker fixed:** `routes_approvals.py` now passes `ruff format --check`.
+- **The container includes the whole Python workspace.** The Dockerfile copies
+  `capabilities/`, pins uv to 0.13.6, and installs against the lockfile. The old
+  dependency step that swallowed failures is removed. `.dockerignore` excludes
+  local environments, caches and credentials from the build context.
+- **PDF runtime dependencies ship in the image:** Pango, HarfBuzz and a font.
+  An optional BuildKit `proxy_ca` secret supports dependency downloads behind a
+  TLS-inspecting proxy.
+- **Repeatable offline deployment check:** `deploy/smoke_demo.py` creates scratch
+  databases, runs the real demo SOP with fake ports, verifies the pending approval
+  has sent nothing, kills its workflow process, recovers and approves it, and
+  checks task completion evidence. Replaying the completed workflow must leave
+  exactly one fake mail invocation with the approved inputs. It also renders a
+  PDF and checks its extracted text. Scratch databases are removed on exit.
+- **CI now builds and starts the demo core.** The `docker-smoke` job checks API
+  health, waits for the packaged worker's startup log and rejects restart loops,
+  runs both composition doctors and the smoke script, then removes its volumes.
+- **Booking test dates respect the fake calendar.** `_sent_with_slots` previously
+  chose three days ahead even on a weekend. It now advances to the next weekday,
+  preserving the successful-booking assertions on every day of the week.
+- **Deployment instructions include a disposable demo setup and cleanup.** The
+  command explicitly selects `apps/demo`, including when the caller has exported
+  another `BIZ_APP_DIR`.
+
+### Validation
+
+- Built the application image and ran its API and worker against Postgres 16 with
+  pgvector. API health returned `{"status":"ok"}`; the worker completed startup
+  and did so again after an explicit container restart.
+- The packaged smoke script passed PDF text extraction, approval/recovery,
+  evidence-bound completion and replay checks. No scratch databases remained.
+- Full suite: **544 passed** (including PDF tests), with the test suite's live
+  network guard enabled.
+- Ruff lint/format, mypy and `biz doctor` for demo and HIVE passed.
+
+HIVE live integrations, the Mac mini deployment, owner web UI and backup acceptance
+remain open. Compose still needs the relevant provider environment variables and
+persistent storage configuration wired before enabling HIVE's real ports.
+
 ## 2026-11-09: M6 code close-out (block 1)
 
 The owner approved the schema changes below in advance ("approve all").

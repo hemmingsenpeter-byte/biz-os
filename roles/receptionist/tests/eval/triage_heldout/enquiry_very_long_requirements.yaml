@@ -1,0 +1,20 @@
+name: enquiry_very_long_requirements
+tags: [long]
+why: "A long, detailed brief from an organisation that has not used the business before, ending in a request for a quote."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "facilities@example.org",
+        "subject": "Request for quotation - community centre",
+        "body": "Hello,\n\nI look after the building for a community centre run by volunteers. We have not used\nyour firm before. The committee has asked me to obtain three written quotations for a\njob we want completed over the summer closure, and I would be grateful if you could\nprovide one of them. I have tried to set out everything you might need below.\n\nBackground. The centre is a single-storey building with a main hall, two meeting\nrooms, an office and a store. It is used seven days a week by about twenty groups,\nwhich is why the work has to happen while we are closed.\n\nTiming. We close on the last Friday of July and reopen on the first Monday of\nSeptember. Work can take place on any day in between, including weekends. There is a\ncaretaker on site from 8am to 4pm on weekdays; outside those hours we would need to\narrange a key holder, so please tell us in advance if you expect to work late.\n\nAccess and parking. There is level access from the car park at the rear. Vehicles up\nto the size of a large van can reach the back door. The front entrance is on a bus\nroute and cannot be used for loading.\n\nWhat we need from you.\n1. A fixed quotation, valid for sixty days, with any exclusions listed.\n2. An indication of how many working days the job would take.\n3. Confirmation that you hold public liability insurance, with the level of cover.\n4. Two references from customers of a similar size, if you have them.\n5. Your payment terms. As a charity we cannot pay more than a quarter in advance.\n\nDecision. The committee meets on the second Tuesday of next month and will choose\nthen. We are not obliged to accept the lowest quotation; reliability and tidiness\nmatter to us as much as cost.\n\nYou are welcome to visit before quoting. Any weekday morning suits; please give me a\nday's notice so I can make sure the hall is free. If you would rather not quote,\na short reply to say so would be appreciated so that I can approach someone else.\n\nWith thanks,\nBeatrice Nwosu\nBuildings volunteer"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

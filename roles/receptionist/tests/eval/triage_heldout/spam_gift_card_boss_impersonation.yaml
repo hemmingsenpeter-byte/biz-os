@@ -1,0 +1,19 @@
+name: spam_gift_card_boss_impersonation
+tags: [phishing]
+why: "A gift-card scam impersonating the boss from an outside address."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "director.office1@example.net",
+        "subject": "Quick favour",
+        "body": "Hi, it is me. I am stuck in a meeting and cannot talk. I need you to buy some gift\ncards for a client urgently and send me the codes by email. I will reimburse you\ntoday. Do not call, just reply here."
+      }
+    }
+expected: { category: spam }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

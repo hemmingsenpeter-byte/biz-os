@@ -1,0 +1,19 @@
+name: other_van_blocking_entrance
+tags: [routine]
+why: "A neighbour asks for a van to be moved: about the business, but not a customer or supplier."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "reception@example.org",
+        "subject": "Your van",
+        "body": "Just to let you know, one of your vans is blocking the entrance to our car park next\ndoor. Could the driver move it please?"
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

@@ -1,0 +1,20 @@
+name: service_abusive_legal_threat
+tags: [abusive, broke_again]
+why: "Insults and threats from a paying customer whose replaced item failed; wants it sorted."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "d.mcallister@example.com",
+        "subject": "Last warning",
+        "body": "Listen, you incompetent crooks. The item your man replaced has packed in after nine\ndays. I paid you good money for that. Sort it out this week or you will hear from my\nsolicitor, and I will make sure everyone on this street knows what you are like.\n\nD. McAllister"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

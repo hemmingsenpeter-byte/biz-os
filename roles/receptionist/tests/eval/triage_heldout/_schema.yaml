@@ -1,0 +1,7 @@
+# Same schema as the `model` step in sops/triage.yaml.
+type: object
+required: [category, summary, confidence]
+properties:
+  category: { enum: [enquiry, service_request, supplier, spam, other] }
+  summary: { type: string }
+  confidence: { type: number, minimum: 0, maximum: 1 }

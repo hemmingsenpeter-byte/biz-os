@@ -13,6 +13,11 @@ uv run biz load apps/demo             # print the loaded manifest
 uv run biz doctor apps/hive           # validate packs, ports, schedules, budgets
 ```
 
+For the packaged API and worker, follow the [local Docker demo smoke check](deploy/README.md#local-demo-smoke-check).
+It verifies approval, worker recovery, completed-workflow replay and PDF rendering with fake ports.
+The [owner console guide](docs/OWNER_CONSOLE.md) covers passkey setup, browser approvals,
+task activity and the seeded browser acceptance test.
+
 Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. They never use the live network: every port has a fake in `ports/fakes`.
 
 ## Status

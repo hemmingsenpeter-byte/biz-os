@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, FastAPI, Query, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
+from starlette.responses import JSONResponse, Response
 
 from biz_kernel.api import routes_approvals, routes_control, routes_status, routes_suggestions
 from biz_kernel.audit.log import AuditEntry
+from biz_kernel.auth import config
 from biz_kernel.auth.deps import CurrentUser, DbSession, OwnerUser
 from biz_kernel.auth.routes import router as auth_router
 from biz_kernel.contracts.ports import MailPort
@@ -114,6 +115,27 @@ def create_app(
     app = FastAPI(
         title="BIZ OS", version="1.0.0", openapi_url="/v1/openapi.json", docs_url="/v1/docs"
     )
+
+    @app.middleware("http")
+    async def protect_browser_mutations(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # The API can also be reached directly through Caddy. Enforce the browser
+        # boundary here as well as in the web proxy; SameSite alone permits sibling
+        # origins. Headerless API clients keep their existing authentication path.
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path.startswith("/v1/"):
+            origin = request.headers.get("origin")
+            site = request.headers.get("sec-fetch-site")
+            if (origin is not None and origin != config.origin().rstrip("/")) or site in {
+                "same-site",
+                "cross-site",
+            }:
+                return JSONResponse(
+                    {"detail": "This action must be requested from the workspace origin."},
+                    status_code=403,
+                )
+        return await call_next(request)
+
     app.state.manifest = manifest
     app.state.mail = mail
     app.state.registry = registry

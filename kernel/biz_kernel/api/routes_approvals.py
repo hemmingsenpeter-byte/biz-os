@@ -92,7 +92,8 @@ def _run_for(session: Session, op: StagedOperation) -> SopRun | None:
     if run is not None:
         return run
     step = session.scalar(
-        select(SopStep).where(
+        select(SopStep)
+        .where(
             or_(
                 and_(
                     SopStep.step_id.like("%:staged"),
@@ -183,9 +184,7 @@ def router() -> APIRouter:
         return card(session, _load(session, op_id))
 
     @r.post("/{op_id}/edit", response_model=ApprovalOut)
-    def edit(
-        op_id: uuid.UUID, body: EditIn, user: CurrentUser, session: DbSession
-    ) -> ApprovalOut:
+    def edit(op_id: uuid.UUID, body: EditIn, user: CurrentUser, session: DbSession) -> ApprovalOut:
         _may_decide(user, _load(session, op_id))
         try:
             op = staged.edit(

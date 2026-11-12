@@ -40,9 +40,7 @@ def state(session: Session) -> PauseState:
 
 
 def is_paused(session: Session) -> bool:
-    return bool(
-        session.scalar(select(PauseEvent.paused).order_by(PauseEvent.id.desc()).limit(1))
-    )
+    return bool(session.scalar(select(PauseEvent.paused).order_by(PauseEvent.id.desc()).limit(1)))
 
 
 def _set(session: Session, paused: bool, by: str, reason: str) -> PauseState:

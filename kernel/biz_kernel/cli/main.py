@@ -134,6 +134,37 @@ def migrate_cmd(
     typer.echo("✓ database is at head")
 
 
+def _switch(app_dir: Path, repo_root: Path | None, url: str | None, on: bool, reason: str) -> None:
+    from biz_kernel import control, db
+
+    _load(app_dir, repo_root)
+    db.configure(url or db.database_url())
+    with db.session_scope() as s:
+        state = (control.pause if on else control.resume)(s, "cli", reason)
+    typer.echo("paused: no role runs and nothing is sent" if state.paused else "running")
+
+
+@app.command("pause")
+def pause_cmd(
+    app_dir: Path,
+    reason: Annotated[str, typer.Option(help="Why, for the audit log")] = "",
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """The kill switch: pause every role. Inbound work is kept and runs after `biz resume`."""
+    _switch(app_dir, repo_root, url, True, reason)
+
+
+@app.command("resume")
+def resume_cmd(
+    app_dir: Path,
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Turn the kill switch off."""
+    _switch(app_dir, repo_root, url, False, "")
+
+
 @app.command("worker")
 def worker_cmd(app_dir: Path, repo_root: RepoRoot = None) -> None:
     """Run the worker (migrations, DBOS, heartbeat loop) for an app directory."""

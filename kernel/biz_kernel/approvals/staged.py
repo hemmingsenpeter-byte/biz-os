@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from biz_kernel.approvals import autonomy
-from biz_kernel.approvals.models import StagedOperation
+from biz_kernel.approvals.models import SEVERITIES, Correction, StagedOperation
 from biz_kernel.audit.log import record
 from biz_kernel.db import utcnow
 from biz_kernel.policy.types import Action, Deny, NeedsApproval
@@ -118,19 +118,45 @@ def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> Staged
 
 
 def edit(
-    session: Session, op_id: uuid.UUID, new_inputs: dict[str, Any], by: str = ""
+    session: Session,
+    op_id: uuid.UUID,
+    new_inputs: dict[str, Any],
+    by: str = "",
+    reason: str = "",
+    severity: str | None = None,
 ) -> StagedOperation:
     """Change inputs: bumps the version and clears any approval.
+
+    An edit by anyone but the proposing role is a correction: the draft, the edit, the
+    reason and its severity (cosmetic, factual or policy) are kept as training data.
 
     The operation's idempotency key is not the editor's to change: every version carries
     the original key, so the send ledgers dedupe and an edit can never cause a second send.
     """
+    if severity is not None and severity not in SEVERITIES:
+        raise ApprovalError(f"severity must be one of {', '.join(SEVERITIES)}")
     op = _locked(session, op_id)
     if op.status not in ("pending", "approved"):
         raise ApprovalError(f"operation is {op.status}, cannot edit")
     inputs = _json(new_inputs)
     if IDEMPOTENCY_KEY in op.inputs:
         inputs[IDEMPOTENCY_KEY] = op.inputs[IDEMPOTENCY_KEY]
+    if by and by != op.actor and inputs != op.inputs:
+        session.add(
+            Correction(
+                op_id=op.id,
+                actor=op.actor,
+                tool=op.tool,
+                decision_type=op.decision_type,
+                from_version=op.version,
+                to_version=op.version + 1,
+                before=op.inputs,
+                after=inputs,
+                by=by,
+                reason=reason,
+                severity=severity,
+            )
+        )
     op.inputs, op.inputs_sha256 = inputs, digest(inputs)
     op.version += 1
     op.status = "pending"
@@ -144,6 +170,8 @@ def edit(
         event="edited",
         version=op.version,
         sha256=op.inputs_sha256,
+        reason=reason,
+        severity=severity,
     )
     return op
 
@@ -235,6 +263,11 @@ def run_or_stage(
     return result
 
 
+def corrections(session: Session, limit: int = 100) -> list[Correction]:
+    """Newest first."""
+    return list(session.scalars(select(Correction).order_by(Correction.id.desc()).limit(limit)))
+
+
 def pending(session: Session, approver: str | None = None) -> list[StagedOperation]:
     """Approval queue: operations awaiting approval (or approved but not yet run)."""
     q = select(StagedOperation).where(StagedOperation.status.in_(("pending", "approved")))
@@ -249,6 +282,7 @@ __all__ = [
     "NotApproved",
     "StaleVersion",
     "approve",
+    "corrections",
     "datetime",
     "digest",
     "edit",

@@ -160,6 +160,14 @@ class Runtime:
 
         self.follow.register("sop_waiting_on_decided_op", decided_but_waiting, resume)
 
+        def parked(session: Session) -> list[str]:
+            """Runs the kill switch parked. The sweep only runs once it is off again."""
+            return list(session.scalars(select(SopRun.id).where(SopRun.status == "paused")))
+
+        self.follow.register(
+            "sop_parked_by_pause", parked, lambda session, run_id: runner.resume_paused([run_id])
+        )
+
 
 def capability_routes(rt: Runtime, hook: str = "routes") -> list[tuple[str, Any]]:
     """(name, APIRouter) per loaded capability defining `hook(rt)`.

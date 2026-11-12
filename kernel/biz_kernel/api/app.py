@@ -7,15 +7,17 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, FastAPI, Query
+from fastapi import APIRouter, FastAPI, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
-from biz_kernel.api import routes_approvals, routes_status, routes_suggestions
+from biz_kernel.api import routes_approvals, routes_control, routes_status, routes_suggestions
 from biz_kernel.audit.log import AuditEntry
 from biz_kernel.auth.deps import CurrentUser, DbSession, OwnerUser
 from biz_kernel.auth.routes import router as auth_router
 from biz_kernel.contracts.ports import MailPort
+from biz_kernel.control.service import Paused
 from biz_kernel.packets.bus import Packet, timeline
 
 
@@ -84,6 +86,8 @@ def _v1() -> APIRouter:
         return list(session.scalars(q))
 
     router.include_router(routes_approvals.router())
+    router.include_router(routes_approvals.corrections_router())
+    router.include_router(routes_control.router())
     router.include_router(routes_suggestions.router())
     router.include_router(routes_status.router())
     return router
@@ -115,4 +119,10 @@ def create_app(
     app.state.registry = registry
     app.state.decide = decide or _default_decide
     app.include_router(_v1(), prefix="/v1")
+
+    @app.exception_handler(Paused)
+    def paused(_: Request, exc: Paused) -> JSONResponse:
+        """Any route that would act while the kill switch is on answers 409."""
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
     return app

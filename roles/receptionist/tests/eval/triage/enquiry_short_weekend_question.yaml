@@ -1,0 +1,20 @@
+name: enquiry_short_weekend_question
+tags: [routine, short]
+why: "A prospect asks whether the business takes small jobs and works weekends."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "sms",
+        "from": "+12025550143",
+        "subject": "",
+        "body": "Hi do you take on small jobs and do you work weekends?"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

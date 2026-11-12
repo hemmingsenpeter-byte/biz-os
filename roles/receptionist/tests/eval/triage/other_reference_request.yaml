@@ -1,0 +1,19 @@
+name: other_reference_request
+tags: [routine]
+why: "A request to confirm a former employee's dates: genuine, but none of the four named kinds."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "lettings@example.org",
+        "subject": "Reference request",
+        "body": "Good afternoon,\n\nWe are processing a tenancy application from Alex Moreno, who has given you as a\nprevious employer. Could you confirm that Alex worked for you between 2019 and 2022?\n\nMany thanks,\nLettings team"
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

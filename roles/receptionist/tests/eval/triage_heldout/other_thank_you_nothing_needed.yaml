@@ -1,0 +1,19 @@
+name: other_thank_you_nothing_needed
+tags: [routine]
+why: "A customer says thanks and asks for nothing."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "moira.kane@example.com",
+        "subject": "Thank you",
+        "body": "Just wanted to say thank you to the two lads who came on Tuesday. Brilliant job and\nvery polite. Nothing further needed.\n\nMoira Kane"
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

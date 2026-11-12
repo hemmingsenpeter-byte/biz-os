@@ -1,0 +1,20 @@
+name: service_refund_charged_twice_on_invoice
+tags: [refund_money]
+why: "A customer asks for an invoice to be corrected and the overcharge returned."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "accounts@example.org",
+        "subject": "Error on last month's invoice",
+        "body": "Hello,\n\nOur invoice for last month's visit shows two call-out charges, but there was only one\nvisit. Please correct the invoice and refund the difference.\n\nRegards,\nFelicity Marsh"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

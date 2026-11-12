@@ -1,0 +1,20 @@
+name: service_repeat_complaint_unfinished_work
+tags: [repeat_complaint]
+why: "A customer complains again about unfinished work and demands a completion date."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "r.achterberg@example.org",
+        "subject": "Unfinished work - complaint no. 4",
+        "body": "I am writing yet again about the unfinished work at our premises.\n\nI complained on the 2nd, the 10th and the 19th. On each occasion I was promised a call\nfrom a manager and on each occasion nobody rang. Your team left with the job half\ndone and we have been working around it for a month.\n\nI want a date for completion, in writing, by Friday. If I do not get one I will take\nthis further.\n\nRuth Achterberg"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

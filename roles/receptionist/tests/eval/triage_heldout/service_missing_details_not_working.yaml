@@ -1,0 +1,20 @@
+name: service_missing_details_not_working
+tags: [missing_details, short]
+why: "Something the business put in is not working; a customer asking for a fix, with no details."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "kim@example.com",
+        "subject": "Problem",
+        "body": "The thing you put in for us is not working properly. Can someone get back to me."
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

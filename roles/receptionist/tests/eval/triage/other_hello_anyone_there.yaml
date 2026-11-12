@@ -1,0 +1,19 @@
+name: other_hello_anyone_there
+tags: [ambiguous, short]
+why: "No content to place: the sender could be anyone wanting anything."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "jo@example.com",
+        "subject": "(no subject)",
+        "body": "Hello? Is anyone there"
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

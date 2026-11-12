@@ -1,0 +1,19 @@
+name: supplier_short_order_ready
+tags: [supplier, short]
+why: "A supplier's depot says the business's order is ready to collect."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "sms",
+        "from": "+12025550152",
+        "subject": "",
+        "body": "Hi its Dev from the depot, your order is ready for collection, we close at 5."
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

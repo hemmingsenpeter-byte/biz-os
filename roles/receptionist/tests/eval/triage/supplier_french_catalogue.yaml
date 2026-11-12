@@ -1,0 +1,19 @@
+name: supplier_french_catalogue
+tags: [non_english, sales]
+why: "French: a supplier of consumables and equipment wants to present its catalogue and rates."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "commercial@example.net",
+        "subject": "Pr\u00e9sentation de notre catalogue",
+        "body": "Bonjour,\n\nNous sommes un fournisseur de consommables et d'\u00e9quipements pour les professionnels.\nNous aimerions vous pr\u00e9senter notre catalogue et nos tarifs. Seriez-vous disponible\npour un \u00e9change la semaine prochaine ?\n\nCordialement,\nAur\u00e9lie Besson"
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

@@ -1,0 +1,20 @@
+name: service_routine_bring_visit_forward
+tags: [routine]
+why: "A contract customer asks to move a visit and reports a warning on an item."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "office@example.org",
+        "subject": "Next quarterly visit",
+        "body": "Hi,\n\nWe have a contract with you for quarterly visits. Could we bring the next one forward?\nOne of the items you look after has been showing a warning light since Friday and I\nwould rather not leave it until the planned date.\n\nThanks,\nImran Qureshi"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

@@ -1,0 +1,37 @@
+name: other_any_of_them
+tags: [ambiguous, short]
+why: "All offered times are accepted, so there is not exactly one choice."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "Any of them work."
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-01-14T10:00:00+00:00",
+          "end": "2027-01-14T10:30:00+00:00",
+          "label": "Thu 14 Jan 2027 10:00 UTC"
+        },
+        {
+          "index": 1,
+          "start": "2027-01-14T15:00:00+00:00",
+          "end": "2027-01-14T15:30:00+00:00",
+          "label": "Thu 14 Jan 2027 15:00 UTC"
+        },
+        {
+          "index": 2,
+          "start": "2027-01-18T09:30:00+00:00",
+          "end": "2027-01-18T10:00:00+00:00",
+          "label": "Mon 18 Jan 2027 09:30 UTC"
+        }
+      ]
+    }
+expected: { intent: other, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

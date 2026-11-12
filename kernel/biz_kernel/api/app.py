@@ -12,7 +12,13 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from starlette.responses import JSONResponse, Response
 
-from biz_kernel.api import routes_approvals, routes_control, routes_status, routes_suggestions
+from biz_kernel.api import (
+    routes_approvals,
+    routes_control,
+    routes_metrics,
+    routes_status,
+    routes_suggestions,
+)
 from biz_kernel.audit.log import AuditEntry
 from biz_kernel.auth import config
 from biz_kernel.auth.deps import CurrentUser, DbSession, OwnerUser
@@ -89,6 +95,7 @@ def _v1() -> APIRouter:
     router.include_router(routes_approvals.router())
     router.include_router(routes_approvals.corrections_router())
     router.include_router(routes_control.router())
+    router.include_router(routes_metrics.router())
     router.include_router(routes_suggestions.router())
     router.include_router(routes_status.router())
     return router

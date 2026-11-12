@@ -117,6 +117,16 @@ def doctor_cmd(
 
     problems = limit_problems(manifest.policy.get("limits") or {})
     report(not problems, "money limits are usable" + "".join(f"\n  {p}" for p in problems))
+    from biz_kernel.metrics import config_problems
+
+    metrics_cfg = manifest.policy.get("metrics")
+    problems = config_problems(metrics_cfg)
+    timed = isinstance(metrics_cfg, dict) and metrics_cfg.get("baseline_minutes")
+    report(
+        not problems,
+        ("time-saved baseline is usable" if timed else "time-saved baseline not set (optional)")
+        + "".join(f"\n  {p}" for p in problems),
+    )
     if failed:
         raise typer.Exit(1)
 
@@ -233,6 +243,31 @@ def owner_invite_cmd(
     else:
         typer.echo(f"Owner invitation for {invite['email']} (single use, valid for 24 hours):")
         typer.echo(invite["invite_url"])
+
+
+@app.command("metrics")
+def metrics_cmd(
+    app_dir: Path,
+    repo_root: RepoRoot = None,
+    days: Annotated[int, typer.Option("--days", min=1, max=366)] = 28,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON")] = False,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Print the measurement report for the last DAYS days. Reads only."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from biz_kernel import db, metrics
+
+    manifest, _ = _load(app_dir, repo_root)
+    engine = create_engine(url or db.database_url())
+    try:
+        with Session(engine) as session:
+            since, until = metrics.window(days)
+            rep = metrics.report(session, since, until, manifest.policy.get("metrics"))
+    finally:
+        engine.dispose()
+    typer.echo(rep.model_dump_json(indent=2) if as_json else metrics.render(rep))
 
 
 @app.command("worker")

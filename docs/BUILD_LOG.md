@@ -44,10 +44,30 @@ PRs #1 (container packaging and smoke checks) and #2 (owner console) were merged
 - Should cosmetic-only edits count toward autonomy promotion?
 - Still open from the plan: sender verification (a mail port change), hash-chained audit.
 
+- **Owner console** now has the kill switch on every page (a banner while paused, approve
+  disabled), an edit form that requires a reason and a severity, and a scorecard page
+  with recent corrections. The browser acceptance test covers all three against the real
+  API. Not checked against the real backend: the staff view of pause and resume (the
+  test seeds only an owner) and the "not measured yet" display (stubbed).
+- **Receptionist test set (synthetic).** `roles/receptionist/tests/eval/`: triage has 30
+  tuning cases and 57 held-out cases (18 injection attempts between them); `handle_reply`
+  has 21 tuning cases. Held-out cases are never used to tune prompts. No model has been
+  run against them yet, so there are no scores.
+  - Complaints, refunds and billing disputes are labelled `service_request`, because the
+    triage prompt has no category for them and `other` ends in `enquiry.declined`.
+
+### Waiting on the owner (added)
+
+- Confirm the `service_request` label for complaints and refunds, or add a category.
+- `POST /v1/approvals/{id}/edit` has no version check, so two people editing at once
+  overwrite each other. Adding an expected version is an API change.
+
 ### Not done yet
 
 - Corrections do not yet become rule suggestions or test cases (Stage 2).
-- The owner console does not yet show the kill switch, the edit form or the scorecard.
+- `biz eval` prints a mean partial score and has no "category X or low confidence"
+  check; the gate needs the share of cases passed.
+- `handle_reply` has no held-out split and `book_meeting` has no cases.
 
 ## 2026-11-12: owner console first slice
 

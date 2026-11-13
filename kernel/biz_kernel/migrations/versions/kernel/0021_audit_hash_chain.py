@@ -1,22 +1,14 @@
-"""Hash-chain the audit log: `seq`, `prev_hash` and `hash` on `audit_log`, backfilled.
+"""Hash-chain the audit log: `seq`, `prev_hash` and `hash` on `audit_log`, sealed.
 
-Existing rows are chained in (at, id) order, which is creation order (ids are UUIDv7),
-using `biz_kernel.audit.log.entry_hash`, the same encoding `record()` and `verify()` use.
+The old append-only trigger on `audit_log` rejected every UPDATE. It is replaced by
+`biz_audit_append_only()`, which still rejects every UPDATE and DELETE except the one the
+sealer makes: setting all three chain columns on a row whose chain columns are NULL, with
+every other column unchanged. With that trigger in place the backfill is just a seal
+(`biz_kernel.audit.log.seal_connection`): existing rows are chained in (at, id) order,
+inside this migration's transaction, without ever disabling the trigger.
 
-The append-only trigger rejects UPDATE, so the backfill runs like this, all inside the
-migration's single transaction:
-
-1. `LOCK TABLE audit_log IN ACCESS EXCLUSIVE MODE`, so no other session can read or append
-   while the trigger is off and no row can land unchained mid-backfill;
-2. `ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`;
-3. fill the three columns in batches;
-4. `ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`.
-
-DDL is transactional in Postgres: if anything fails the transaction rolls back with the
-trigger enabled, and no other session ever sees the table with the trigger disabled.
-
-The columns stay nullable so a raw INSERT that bypasses the ORM still succeeds; `verify()`
-reports such a row as unchained. `seq` is unique, which also serves the tail lookup.
+The columns stay nullable: a row is unsealed between its insert and the next seal.
+`seq` is unique, which also serves the tail lookup.
 
 Revision ID: 0021
 Revises: 0020
@@ -26,84 +18,35 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from biz_kernel.audit.log import GENESIS, entry_hash
-from sqlalchemy.dialects import postgresql
+from biz_kernel.audit.log import AUDIT_SEAL_FN, seal_connection
 
 revision = "0021"
 down_revision = "0020"
 branch_labels = None
 depends_on = None
 
-BATCH = 1000
 
-_audit = sa.table(
-    "audit_log",
-    sa.column("id", sa.Uuid()),
-    sa.column("at", sa.DateTime(timezone=True)),
-    sa.column("actor", sa.String()),
-    sa.column("kind", sa.String()),
-    sa.column("subject", sa.Text()),
-    sa.column("detail", postgresql.JSONB()),
-    sa.column("seq", sa.BigInteger()),
-    sa.column("prev_hash", sa.String()),
-    sa.column("hash", sa.String()),
-)
+def _trigger(fn: str) -> str:
+    return (
+        "DROP TRIGGER IF EXISTS audit_log_append_only ON audit_log;"
+        "CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log "
+        f"FOR EACH ROW EXECUTE FUNCTION {fn}()"
+    )
 
 
 def upgrade() -> None:
     op.add_column("audit_log", sa.Column("seq", sa.BigInteger(), nullable=True))
     op.add_column("audit_log", sa.Column("prev_hash", sa.String(64), nullable=True))
     op.add_column("audit_log", sa.Column("hash", sa.String(64), nullable=True))
-
-    conn = op.get_bind()
-    conn.execute(sa.text("LOCK TABLE audit_log IN ACCESS EXCLUSIVE MODE"))
-    conn.execute(sa.text("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only"))
-    _backfill(conn)
-    conn.execute(sa.text("ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only"))
-
     op.create_unique_constraint(op.f("uq_audit_log_seq"), "audit_log", ["seq"])
-
-
-def _backfill(conn: sa.Connection) -> None:
-    seq, prev = 0, GENESIS
-    last: tuple[object, object] | None = None
-    update = (
-        sa.update(_audit)
-        .where(_audit.c.id == sa.bindparam("b_id"))
-        .values(
-            seq=sa.bindparam("b_seq"),
-            prev_hash=sa.bindparam("b_prev"),
-            hash=sa.bindparam("b_hash"),
-        )
-    )
-    cols = [_audit.c[n] for n in ("id", "at", "actor", "kind", "subject", "detail")]
-    while True:
-        stmt = sa.select(*cols).order_by(_audit.c.at, _audit.c.id).limit(BATCH)
-        if last is not None:
-            stmt = stmt.where(sa.tuple_(_audit.c.at, _audit.c.id) > sa.tuple_(*last))
-        rows = conn.execute(stmt).all()
-        if not rows:
-            return
-        params = []
-        for r in rows:
-            seq += 1
-            digest = entry_hash(
-                seq=seq,
-                id=r.id,
-                at=r.at,
-                actor=r.actor,
-                kind=r.kind,
-                subject=r.subject,
-                detail=r.detail,
-                prev_hash=prev,
-            )
-            params.append({"b_id": r.id, "b_seq": seq, "b_prev": prev, "b_hash": digest})
-            prev = digest
-        conn.execute(update, params)
-        last = (rows[-1].at, rows[-1].id)
+    op.execute(sa.text(AUDIT_SEAL_FN))
+    op.execute(sa.text(_trigger("biz_audit_append_only")))
+    seal_connection(op.get_bind())
 
 
 def downgrade() -> None:
+    op.execute(sa.text(_trigger("biz_reject_mutation")))
+    op.execute(sa.text("DROP FUNCTION IF EXISTS biz_audit_append_only()"))
     op.drop_constraint(op.f("uq_audit_log_seq"), "audit_log", type_="unique")
     op.drop_column("audit_log", "hash")
     op.drop_column("audit_log", "prev_hash")

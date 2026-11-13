@@ -187,7 +187,7 @@ def audit_verify_cmd(
     repo_root: RepoRoot = None,
     url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
 ) -> None:
-    """Walk the audit log hash chain; exit 1 if any row was changed, removed or re-linked."""
+    """Seal pending audit rows, then walk the hash chain; exit 1 on any problem."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
@@ -198,10 +198,13 @@ def audit_verify_cmd(
     engine = create_engine(url or db.database_url())
     try:
         with Session(engine) as session:
+            sealed = log.seal(session)
             problems = log.verify(session)
             tail = log.head(session)
     finally:
         engine.dispose()
+    if sealed:
+        typer.echo(f"sealed {sealed} pending row(s)")
     for problem in problems:
         typer.echo(f"✗ {problem}", err=True)
     if problems:

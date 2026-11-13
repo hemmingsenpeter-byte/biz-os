@@ -1,4 +1,4 @@
-"""`biz audit verify` exits 0 on an intact chain and 1 once a row has been tampered with."""
+"""`biz audit verify` seals pending rows, exits 0 on an intact chain, 1 after tampering."""
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ def test_audit_verify_passes_then_fails_after_tamper(fresh_db: str) -> None:
         for i in range(3):
             record(s, "cli-test", "test", i=i)
     res = CliRunner().invoke(app, ["audit", "verify", DEMO, "--url", fresh_db])
-    assert res.exit_code == 0 and "intact: 3 rows" in res.output, res.output
+    assert res.exit_code == 0 and "sealed 3 pending" in res.output, res.output
+    assert "intact: 3 rows" in res.output, res.output
 
     with eng.begin() as conn:
         conn.execute(text("DROP TRIGGER audit_log_append_only ON audit_log"))

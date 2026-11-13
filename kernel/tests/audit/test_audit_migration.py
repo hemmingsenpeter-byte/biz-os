@@ -1,4 +1,4 @@
-"""Migration 0021 chains the rows already in audit_log, in creation order, and verifies clean."""
+"""Migration 0021 seals the rows already in audit_log, in (at, id) order; verify is clean."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from biz_kernel import migrations
-from biz_kernel.audit.log import AuditEntry, record, verify
+from biz_kernel.audit import log
+from biz_kernel.audit.log import AuditEntry, record, seal, verify
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -47,8 +48,11 @@ def test_backfill_chains_existing_rows_and_verifies_clean(fresh_db: str) -> None
         assert [(e.at, str(e.id)) for e in chained] == sorted((e.at, str(e.id)) for e in chained)
         assert verify(s) == []
     with Session(eng) as s, s.begin():
-        assert record(s, "role", "after").seq == 5
+        assert record(s, "role", "after").seq is None  # unsealed until the next seal
     with Session(eng) as s:
+        assert seal(s) == 1
+        tail = log.head(s)
+        assert tail is not None and tail[0] == 5
         assert verify(s) == []
 
     with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:
@@ -57,4 +61,6 @@ def test_backfill_chains_existing_rows_and_verifies_clean(fresh_db: str) -> None
     migrations.downgrade(fresh_db, "0020")
     cols = {c["name"] for c in inspect(eng).get_columns("audit_log")}
     assert not cols & {"seq", "prev_hash", "hash"}
+    with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:
+        conn.execute(text("UPDATE audit_log SET actor = 'x'"))
     eng.dispose()

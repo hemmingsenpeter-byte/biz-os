@@ -207,9 +207,15 @@ def test_kill_switch(live) -> None:  # type: ignore[no-untyped-def]
         control.pause(s, "owner", "testing")
     with pytest.raises(control.Paused):  # nothing can be approved while paused
         decide(op_id, "demo_owner", approve=True, version=1)
-    # The race: the approval landed just before the pause, the worker wakes just after.
+    with db.session_scope() as s, pytest.raises(control.Paused):  # not even directly
+        staged.approve(s, op_id, "demo_owner", 1)
+    # The race: the approval lands just before the pause, the worker wakes just after.
+    with db.session_scope() as s:
+        control.resume(s, "owner")
     with db.session_scope() as s:
         staged.approve(s, op_id, "demo_owner", 1)
+    with db.session_scope() as s:
+        control.pause(s, "owner", "testing")
     notify_decision(str(op_id), "approved")
     _wait(lambda: _run(packet_id, "paused"))
     assert mail.sent == []

@@ -8,12 +8,13 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from biz_kernel.approvals import autonomy
 from biz_kernel.approvals.models import SEVERITIES, Correction, StagedOperation
 from biz_kernel.audit.log import record
+from biz_kernel.control import service as control
 from biz_kernel.db import utcnow
 from biz_kernel.policy.types import Action, Deny, NeedsApproval
 from biz_kernel.tools.registry import CallResult, PolicyChecker, ToolRegistry
@@ -106,7 +107,11 @@ def _only_cosmetic_edits(session: Session, op: StagedOperation) -> bool:
 
 
 def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> StagedOperation:
-    """Approve exactly `version`. The approver (or owner) may approve; never the actor."""
+    """Approve exactly `version`. The approver (or owner) may approve; never the actor.
+
+    Nothing is approved while the kill switch is on (raises control.Paused).
+    """
+    control.guard(session, "resume before approving")
     op = _locked(session, op_id)
     if op.status != "pending":
         raise ApprovalError(f"operation is {op.status}, not pending")
@@ -177,6 +182,7 @@ def edit(
                 by=by,
                 reason=reason,
                 severity=severity,
+                at=func.clock_timestamp(),  # the database's clock orders corrections
             )
         )
     op.inputs, op.inputs_sha256 = inputs, digest(inputs)
@@ -287,7 +293,8 @@ def run_or_stage(
 
 def corrections(session: Session, limit: int = 100) -> list[Correction]:
     """Newest first."""
-    return list(session.scalars(select(Correction).order_by(Correction.id.desc()).limit(limit)))
+    newest = (Correction.at.desc(), Correction.id.desc())
+    return list(session.scalars(select(Correction).order_by(*newest).limit(limit)))
 
 
 def pending(session: Session, approver: str | None = None) -> list[StagedOperation]:

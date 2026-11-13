@@ -1,0 +1,25 @@
+name: decline_german_not_pursuing
+tags: [non_english]
+why: "German: 'Thank you, but we have decided not to pursue the project.'"
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "Vielen Dank, aber wir haben uns entschieden, das Projekt nicht weiterzuverfolgen."
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-02-26T10:30:00+00:00",
+          "end": "2027-02-26T11:00:00+00:00",
+          "label": "Fri 26 Feb 2027 10:30 UTC"
+        }
+      ]
+    }
+expected: { intent: decline, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

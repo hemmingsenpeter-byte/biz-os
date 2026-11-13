@@ -177,6 +177,42 @@ def resume_cmd(
     _switch(app_dir, repo_root, url, False, "")
 
 
+audit_app = typer.Typer(help="Audit log checks", no_args_is_help=True)
+app.add_typer(audit_app, name="audit")
+
+
+@audit_app.command("verify")
+def audit_verify_cmd(
+    app_dir: Path,
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Walk the audit log hash chain; exit 1 if any row was changed, removed or re-linked."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from biz_kernel import db
+    from biz_kernel.audit import log
+
+    _load(app_dir, repo_root)
+    engine = create_engine(url or db.database_url())
+    try:
+        with Session(engine) as session:
+            problems = log.verify(session)
+            tail = log.head(session)
+    finally:
+        engine.dispose()
+    for problem in problems:
+        typer.echo(f"✗ {problem}", err=True)
+    if problems:
+        typer.echo(f"✗ audit chain broken: {len(problems)} problem(s)", err=True)
+        raise typer.Exit(1)
+    if tail is None:
+        typer.echo("✓ audit chain intact (empty)")
+    else:
+        typer.echo(f"✓ audit chain intact: {tail[0]} rows, head {tail[1]}")
+
+
 @app.command("owner-invite")
 def owner_invite_cmd(
     app_dir: Path,

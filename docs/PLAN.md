@@ -133,7 +133,7 @@ Every significant action writes one append-only record: employee, action, trigge
 
 The log must answer four questions: what happened, why it was permitted, who authorised it, and what confirms the outcome. It records inputs, decisions and observable actions, not model reasoning.
 
-Append-only is enforced today by a Postgres trigger. Hash-chaining the records, so tampering by someone with database access is detectable, is a Stage 3 item.
+Append-only is enforced today by a Postgres trigger. Records are also hash-chained once per heartbeat (`biz audit verify`), so tampering by someone with database access is detectable.
 
 ## Measurement
 
@@ -215,7 +215,7 @@ Each stage ends on a number or a demonstrated recovery, not on features shipped.
 | 0. Baseline | Label 100 historical Hive enquiries with the correct outcome; write the awkward and injection cases; time the owner on 20 live tasks; count enquiries in a normal week | Test set (with held-out split) and time baseline exist; weekly volume times baseline time is at least five hours, or the target or scope is re-set |
 | 1. One employee, shadow mode | Mac mini install (compose stack, Ollama, Tailscale, backups, monitoring); Business HQ with approvals queue, health light and kill switch; `biz eval` on both tiers; live Microsoft 365 read with all sends blocked | At least 95% classification pass rate on the held-out set; two weeks of shadow running with zero external actions; local versus cloud decided per task |
 | 2. Supervised with training | Preconditions: kill switch, sender verification, a tested backup. Then corrections capture (draft, edit, reason, severity), rule suggestions, regression runs, and the metrics report | Owner corrects an error, approves the rule, and the pass rate rises with no older case regressing; five hours a week saved for four consecutive weeks |
-| 3. Production safe | Hash-chained audit; full injection suite; restore runbook | Kill the worker mid-task 20 times: no lost task, no duplicate external action; restore from backup onto a clean machine; all injection cases blocked |
+| 3. Production safe | Full injection suite; restore runbook | Kill the worker mid-task 20 times: no lost task, no duplicate external action; restore from backup onto a clean machine; all injection cases blocked |
 | 4. Appliance | Installer, updates, onboarding | A second business goes live on a fresh Mac mini in under one day with no custom code |
 | 5. Workforce | Unfreeze SPEC M7 to M9; switch on the estimator and bookkeeper at Hive, each through its own Stage 1 and 2 gates | A sales employee hands an approved job to an operations employee with no duplicate record and no permission exceeded |
 

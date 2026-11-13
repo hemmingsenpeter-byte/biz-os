@@ -53,6 +53,16 @@ The owner approved the three open decisions and the mail port change.
     version. Before deploying, check for waiting runs; if any exist, set
     `BIZ_WORKFLOW_VERSION` to the old version name (in the DBOS system database's
     application versions table) for that deploy, or approve or reject them first.
+- **The audit log is hash-chained** (migration `0021`). Rows are written as before, with
+  no lock; each worker heartbeat seals new rows into a SHA-256 chain in its own short
+  transaction. The append-only trigger allows exactly one update: sealing an unsealed row
+  with nothing else changed. `biz audit verify <app>` seals, then reports changed rows,
+  broken links, deleted rows, gaps, and rows left unsealed over 10 minutes; it exits 1 on
+  any problem. A first design that locked on every write was rejected: it would have held
+  a global lock across mail and accounting calls.
+  - **Tamper window:** a row is unprotected until the next seal (one heartbeat, 60 s by
+    default). Deleting rows from the end of the chain can't be detected without keeping
+    a copy of the chain head somewhere else (see "Waiting on the owner").
 - **Test order fix:** the production-app test left a stub DBOS client behind, which made
   in-process DBOS tests fail depending on order. It now restores it.
 
@@ -66,6 +76,8 @@ The owner approved the three open decisions and the mail port change.
 - New enquiries (not replies) carry no sender verdict, and meeting offers still go to the
   unverified address. Changing that touches sending.
 - `reply.received/v1` does not declare `sender_verified` in its schema.
+- **Where to keep the audit chain head** so truncation is detectable: for example in the
+  daily brief to the owner, or an off-box backup. `biz audit verify` prints it.
 
 ### Not done yet
 

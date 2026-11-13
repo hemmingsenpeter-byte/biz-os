@@ -92,3 +92,15 @@ class _Scope:
 
     def __exit__(self, *exc) -> None:  # type: ignore[no-untyped-def]
         return None
+
+
+def test_worker_pins_the_workflow_version(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A deploy must not change the DBOS application version, or waiting runs are stranded."""
+    from biz_kernel.workflows import worker
+
+    monkeypatch.delenv("BIZ_WORKFLOW_VERSION", raising=False)
+    cfg = worker.dbos_config("demo", "postgresql://x/y_dbos")
+    assert cfg["application_version"] == worker.WORKFLOW_VERSION
+    assert cfg["name"] == "biz-demo" and cfg["system_database_url"] == "postgresql://x/y_dbos"
+    monkeypatch.setenv("BIZ_WORKFLOW_VERSION", "2")
+    assert worker.dbos_config("demo", "u")["application_version"] == "2"

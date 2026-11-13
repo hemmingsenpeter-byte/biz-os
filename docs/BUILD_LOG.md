@@ -42,6 +42,17 @@ The owner approved the three open decisions and the mail port change.
   invoice, the latest step now due; steps that came due unseen (a pause, a stopped
   worker) are skipped, not caught up. Nothing is published while paused. The reviewer
   suspected this; it was real.
+- **Deploys no longer strand waiting runs.** DBOS 3.4 recovers only workflows whose
+  application version matches, and by default the version is a hash of the workflow
+  source, so any deploy touching the runner left every run waiting on an approval stuck
+  for good (the reviewer suspected this for pauses; it applied to every deploy). The
+  worker now pins `application_version` to `WORKFLOW_VERSION` ("1", overridable with
+  `BIZ_WORKFLOW_VERSION`). Bump it only when the SOP workflow's step sequence changes in
+  a way an in-flight run can't replay, and drain waiting runs before that deploy.
+  - **The first deploy of this change** still meets runs started under the old hashed
+    version. Before deploying, check for waiting runs; if any exist, set
+    `BIZ_WORKFLOW_VERSION` to the old version name (in the DBOS system database's
+    application versions table) for that deploy, or approve or reject them first.
 - **Test order fix:** the production-app test left a stub DBOS client behind, which made
   in-process DBOS tests fail depending on order. It now restores it.
 
@@ -58,9 +69,7 @@ The owner approved the three open decisions and the mail port change.
 
 ### Not done yet
 
-- **Unproven review suspicions:** a deploy while paused may leave parked runs on the old
-  application version (DBOS recovers by version); `TRUNCATE` is not blocked on
-  append-only tables.
+- **Unproven review suspicion:** `TRUNCATE` is not blocked on append-only tables.
 - No local or cloud model has been scored on the test sets.
 
 ## 2026-11-12 (later): plan v2.1, kill switch, corrections, metrics

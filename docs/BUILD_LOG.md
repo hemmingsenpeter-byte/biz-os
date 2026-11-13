@@ -38,6 +38,10 @@ The owner approved the three open decisions and the mail port change.
   header carrying `BIZ_M365_AUTHSERV_ID`; with that unset, nothing is verified. Intake
   passes the verdict into reply handling. Unverified senders are still flagged and the
   owner still confirms every booking.
+- **Overdue reminders never pile up.** Each poll publishes at most one reminder per
+  invoice, the latest step now due; steps that came due unseen (a pause, a stopped
+  worker) are skipped, not caught up. Nothing is published while paused. The reviewer
+  suspected this; it was real.
 - **Test order fix:** the production-app test left a stub DBOS client behind, which made
   in-process DBOS tests fail depending on order. It now restores it.
 
@@ -55,9 +59,8 @@ The owner approved the three open decisions and the mail port change.
 ### Not done yet
 
 - **Unproven review suspicions:** a deploy while paused may leave parked runs on the old
-  application version (DBOS recovers by version); overdue-invoice reminder steps keep
-  advancing while paused, so several reminders for one invoice can queue for approval
-  after a resume; `TRUNCATE` is not blocked on append-only tables.
+  application version (DBOS recovers by version); `TRUNCATE` is not blocked on
+  append-only tables.
 - No local or cloud model has been scored on the test sets.
 
 ## 2026-11-12 (later): plan v2.1, kill switch, corrections, metrics

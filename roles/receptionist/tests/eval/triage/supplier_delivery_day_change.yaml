@@ -1,0 +1,19 @@
+name: supplier_delivery_day_change
+tags: [supplier]
+why: "An existing supplier tells the business about a change to deliveries."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "supplydesk@example.net",
+        "subject": "Change to delivery days",
+        "body": "Dear customer,\n\nPlease note that our delivery days are changing from next month. Orders placed before\nnoon on Wednesday will arrive on Friday. Your account manager remains Tom Abara and\nyour trade terms are unchanged.\n\nRegards,\nSupply desk"
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

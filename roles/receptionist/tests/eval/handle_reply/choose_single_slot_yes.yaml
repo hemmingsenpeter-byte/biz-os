@@ -1,0 +1,26 @@
+name: choose_single_slot_yes
+tags: [routine, short]
+why: "Only one slot was offered and the customer accepts it."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "Yes, that's fine. Thank you."
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-01-13T16:00:00+00:00",
+          "end": "2027-01-13T16:30:00+00:00",
+          "label": "Wed 13 Jan 2027 16:00 UTC"
+        }
+      ]
+    }
+expected: { intent: choose_slot, slot_index: 0 }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }
+  - { type: numeric, field: confidence, value: 0.85, tolerance: 0.1501 }

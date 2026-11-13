@@ -23,7 +23,7 @@ class SopRun(Base):
     task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id"))
     goal_key: Mapped[str | None] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(20), default="running")
-    # running | waiting | budget_stopped | done | rejected | failed
+    # running | waiting | budget_stopped | paused | done | rejected | failed
     waiting_op_id: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     finished_at: Mapped[datetime | None]

@@ -3,7 +3,8 @@
 Modular platform for AI-run small businesses. Layers: kernel → capabilities → ports →
 role packs → industry packs → compositions (apps/). Full spec: docs/SPEC.md.
 Build one milestone at a time; a milestone is done when its acceptance tests pass in
-BOTH apps/demo and apps/hive.
+BOTH apps/demo and apps/hive. Build order and stage gates: docs/PLAN.md (it overrides
+the spec's milestone order; M7-M9 are frozen until its Stage 2 gate passes).
 
 ## Where code goes
 - Would it make sense in a plumbing firm or a law firm? → kernel or a capability.
@@ -41,6 +42,20 @@ BOTH apps/demo and apps/hive.
 - Reuse before writing: DBOS, Claude Agent SDK, FastAPI, Pydantic, SQLAlchemy,
   xero-python, twilio-python, msgraph, faster-whisper, WeasyPrint, Next.js,
   shadcn/ui, assistant-ui, DocuSeal (unmodified service). Keep licence notices.
+
+## Subagents
+- Default: work inline. Delegate only parallel work on separate paths, broad searches,
+  or a fresh-eyes review.
+- One writer per package, each in its own worktree. The lead hands out migration
+  numbers and owns kernel/policy, kernel/approvals, packets/ and port interfaces.
+- Brief: goal, paths owned, done-check command, what to return. Don't repeat this file.
+- Agents run only their package's tests, never push or merge, and report anything
+  under "When unsure" as an open decision instead of doing it.
+- Return at most 15 lines: files changed, check results, open decisions. No dumps.
+- Reviewers are read-only, get the diff and not the writer's reasoning, and prove each
+  defect with a failing test.
+- The lead merges, runs pytest, ruff, mypy and biz doctor for both apps, then logs
+  decisions in docs/BUILD_LOG.md.
 
 ## When unsure
 Ask before changing a packet schema, a port interface, policy behaviour, or anything

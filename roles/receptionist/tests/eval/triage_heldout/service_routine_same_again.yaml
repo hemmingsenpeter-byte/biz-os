@@ -1,0 +1,20 @@
+name: service_routine_same_again
+tags: [routine]
+why: "A past customer asks to book the same work again."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "colin.reyes@example.com",
+        "subject": "Booking",
+        "body": "Hi, it is Colin Reyes at number 14 - you did a job for us last autumn. Could we book\nyou in for the same again some time in the next fortnight?"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

@@ -1,0 +1,19 @@
+name: other_building_notice
+tags: [routine]
+why: "A notice from building management: not a customer, supplier or junk."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "building.manager@example.org",
+        "subject": "Fire alarm test Thursday",
+        "body": "To all tenants,\n\nThe fire alarm will be tested on Thursday at 10am. The sounders will run for about two\nminutes. There is no need to leave the building and no action is needed from you.\n\nBuilding management"
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

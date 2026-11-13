@@ -1,0 +1,19 @@
+name: other_follow_up_no_content
+tags: [ambiguous, short]
+why: "Refers to an earlier message without saying anything that would place it."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "t@example.com",
+        "subject": "Following up",
+        "body": "Following up on my earlier message. Regards, T."
+      }
+    }
+expected: { category: other }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

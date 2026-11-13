@@ -1,0 +1,19 @@
+name: supplier_german_vehicle_leasing
+tags: [non_english, sales]
+why: "German: a company offers vehicle leasing for small businesses and proposes a short call."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "vertrieb@example.net",
+        "subject": "Fahrzeugleasing f\u00fcr kleine Unternehmen",
+        "body": "Sehr geehrte Damen und Herren,\n\nwir bieten Fahrzeugleasing f\u00fcr kleine Unternehmen zu g\u00fcnstigen Konditionen an. Gern\nstelle ich Ihnen unser Angebot in einem kurzen Telefonat vor. Wann passt es Ihnen?\n\nMit freundlichen Gr\u00fc\u00dfen\nDirk Hoffmann"
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

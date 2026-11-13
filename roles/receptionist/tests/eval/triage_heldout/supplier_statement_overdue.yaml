@@ -1,0 +1,19 @@
+name: supplier_statement_overdue
+tags: [supplier, refund_money]
+why: "An existing supplier's credit control chases the business for payment."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "creditcontrol@example.net",
+        "subject": "Statement and overdue items",
+        "body": "Dear customer,\n\nPlease find attached your account statement for the materials delivered last month.\nTwo invoices are now past our 30-day terms. Could you let us know when payment will\nbe made? Your account manager, Lorna Fisk, is copied in.\n\nCredit control"
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

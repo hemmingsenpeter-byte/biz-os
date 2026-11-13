@@ -1,0 +1,20 @@
+name: enquiry_long_rambling
+tags: [long]
+why: "After a long preamble the writer asks for someone to come, look and give a quote."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "gerald.pemberton@example.org",
+        "subject": "Advice needed and possibly a quote",
+        "body": "Dear Sir or Madam,\n\nI hope you do not mind me writing at some length. My wife and I have lived in the same\nhouse for thirty-one years and until recently my brother-in-law looked after anything\nthat needed doing, but he has now moved to be nearer his grandchildren and we find\nourselves without anyone to call on.\n\nA friend at the bowls club mentioned your name. She said you had done a very tidy job\nfor her daughter, although she could not remember exactly when that was, and that you\nturned up when you said you would, which in my experience is rarer than it should be.\n\nWe have a few things that have been put off for too long. I will not list them all\nhere because I am not sure which of them are the sort of thing you do and which are\nnot, and I would rather show somebody in person than describe them badly in writing.\nNothing is urgent. We are at home most days except Thursday mornings, and I am afraid\nI am rather hard of hearing on the telephone, so email or a letter is best.\n\nI should say that we are pensioners and would need to know the cost before agreeing\nto anything, but we do not expect something for nothing and we would rather pay a\nfair amount to somebody reliable.\n\nWould it be possible for somebody to call round, look at what needs doing, and tell\nus what it would cost? If there is a charge for coming out, please let me know first.\n\nYours faithfully,\nGerald Pemberton"
+      }
+    }
+expected: { category: enquiry }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

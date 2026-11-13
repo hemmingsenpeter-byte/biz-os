@@ -1,0 +1,20 @@
+name: service_abusive_customer
+tags: [abusive]
+why: "Abusive in tone, but it is an existing customer demanding that a bad job is put right."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "form",
+        "from": "rk1979@example.com",
+        "subject": "USELESS",
+        "body": "Your lot are absolutely useless. The idiot you sent on Monday left a mess everywhere\nand the thing still does not work. I do not know why I bothered. Get somebody competent\nround here tomorrow or I am going to put this on every review site I can find."
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

@@ -1,5 +1,74 @@
 # Build log
 
+## 2026-11-12 (later): plan v2.1, kill switch, corrections, metrics
+
+PRs #1 (container packaging and smoke checks) and #2 (owner console) were merged to
+`main` at the owner's request; this work sits on top of them.
+
+### Decisions made (check these)
+
+- **`docs/PLAN.md` now sets the build order.** It is the owner's v2 plan reconciled with
+  the repo. SPEC milestones M7 to M9 are frozen until its Stage 2 gate passes.
+- **Kill switch** (`kernel/biz_kernel/control`, migration `0020`). One control pauses
+  every role. While paused: the heartbeat starts no role and wake-ups stay pending; a
+  running SOP parks before its next step (run status `paused`); no `external` or `money`
+  tool runs, not even one replaying an approval (`Paused` is raised, and the API answers
+  409); nothing can be approved. Rejecting and editing still work.
+  - **Inbound work is still collected while paused** (pollers and webhooks keep running),
+    because mail older than the look-back window would otherwise be lost. Nothing leaves.
+  - **Anyone signed in may pause; only the owner may resume.** `biz pause` and
+    `biz resume` do the same from the command line when the web app is down.
+  - Parked runs are woken by the first heartbeat after the resume, so a resume takes up
+    to one tick (60 seconds by default) to take effect.
+  - Missed-schedule alerts are not raised while paused.
+  - Pause events are append-only; the newest row is the state.
+- **Corrections** (`approval_corrections`, migration `0020`, append-only). An edit to a
+  proposal by anyone but the proposing role stores the draft, the edit, a reason and a
+  severity (`cosmetic`, `factual` or `policy`). `POST /v1/approvals/{id}/edit` takes the
+  optional `reason` and `severity`; `GET /v1/corrections` lists them. An untagged edit
+  counts as an error. A correction can't be re-tagged later.
+  - **Autonomy promotion is unchanged:** any edit still breaks the approved-unchanged
+    streak, including a cosmetic one. Letting cosmetic edits count toward promotion is a
+    policy change for the owner to decide.
+- **Metrics** (`kernel/biz_kernel/metrics`, `GET /v1/metrics`, `biz metrics <app>`). The
+  six measures in the plan, read-only. Unmeasured numbers are null, never 0. Weaker than
+  their definitions today: the level shown is the stored one, not the effective one;
+  tasks count as completed only through a finished SOP run; serious errors are the
+  demotions recorded in the audit log.
+  - Time saved needs `metrics.baseline_minutes` and `review_minutes_per_approval` in
+    `policy.yaml`. Demo has invented values; HIVE's is commented out.
+
+### Waiting on the owner
+
+- Time yourself on about 20 tasks and set HIVE's `metrics:` section.
+- Should cosmetic-only edits count toward autonomy promotion?
+- Still open from the plan: sender verification (a mail port change), hash-chained audit.
+
+- **Owner console** now has the kill switch on every page (a banner while paused, approve
+  disabled), an edit form that requires a reason and a severity, and a scorecard page
+  with recent corrections. The browser acceptance test covers all three against the real
+  API. Not checked against the real backend: the staff view of pause and resume (the
+  test seeds only an owner) and the "not measured yet" display (stubbed).
+- **Receptionist test set (synthetic).** `roles/receptionist/tests/eval/`: triage has 30
+  tuning cases and 57 held-out cases (18 injection attempts between them); `handle_reply`
+  has 21 tuning cases. Held-out cases are never used to tune prompts. No model has been
+  run against them yet, so there are no scores.
+  - Complaints, refunds and billing disputes are labelled `service_request`, because the
+    triage prompt has no category for them and `other` ends in `enquiry.declined`.
+
+### Waiting on the owner (added)
+
+- Confirm the `service_request` label for complaints and refunds, or add a category.
+- `POST /v1/approvals/{id}/edit` has no version check, so two people editing at once
+  overwrite each other. Adding an expected version is an API change.
+
+### Not done yet
+
+- Corrections do not yet become rule suggestions or test cases (Stage 2).
+- `biz eval` prints a mean partial score and has no "category X or low confidence"
+  check; the gate needs the share of cases passed.
+- `handle_reply` has no held-out split and `book_meeting` has no cases.
+
 ## 2026-11-12: owner console first slice
 
 - **A working Next.js owner console replaces the web placeholder.** It provides

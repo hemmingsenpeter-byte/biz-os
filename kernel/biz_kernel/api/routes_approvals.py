@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
@@ -17,6 +17,7 @@ from biz_kernel.approvals import staged
 from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.auth.deps import CurrentUser, DbSession
 from biz_kernel.auth.models import User
+from biz_kernel.control import service as control
 from biz_kernel.workflows.models import SopRun, SopStep
 
 Decide = Callable[..., Any]
@@ -51,6 +52,25 @@ class RejectIn(BaseModel):
 
 class EditIn(BaseModel):
     inputs: dict[str, Any]
+    reason: str = ""  # one line: why the draft was wrong
+    severity: Literal["cosmetic", "factual", "policy"] | None = None
+
+
+class CorrectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    at: datetime
+    op_id: uuid.UUID
+    actor: str
+    tool: str
+    decision_type: str | None
+    from_version: int
+    to_version: int
+    before: dict[str, Any]
+    after: dict[str, Any]
+    by: str
+    reason: str
+    severity: str | None
 
 
 def identity(user: User) -> str:
@@ -135,6 +155,8 @@ def router() -> APIRouter:
     ) -> ApprovalOut:
         op = _load(session, op_id)
         _may_decide(user, op)
+        if control.is_paused(session):
+            raise HTTPException(409, "paused: resume before approving")
         if op.status != "pending":
             raise HTTPException(409, f"operation is {op.status}, not pending")
         if body.version != op.version:
@@ -165,8 +187,29 @@ def router() -> APIRouter:
     def edit(op_id: uuid.UUID, body: EditIn, user: CurrentUser, session: DbSession) -> ApprovalOut:
         _may_decide(user, _load(session, op_id))
         try:
-            return card(session, staged.edit(session, op_id, body.inputs, by=identity(user)))
+            op = staged.edit(
+                session,
+                op_id,
+                body.inputs,
+                by=identity(user),
+                reason=body.reason,
+                severity=body.severity,
+            )
+            return card(session, op)
         except staged.ApprovalError as exc:
             raise _translate(exc) from exc
+
+    return r
+
+
+def corrections_router() -> APIRouter:
+    r = APIRouter(prefix="/corrections", tags=["approvals"])
+
+    @r.get("", response_model=list[CorrectionOut])
+    def corrections(
+        _: CurrentUser, session: DbSession, limit: Annotated[int, Query(ge=1, le=1000)] = 100
+    ) -> list[Any]:
+        """Approver edits, newest first: the draft, the edit, the reason and its severity."""
+        return staged.corrections(session, limit)
 
     return r

@@ -1,0 +1,37 @@
+name: decline_not_going_ahead
+tags: [routine]
+why: "The customer has decided not to proceed for now."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "We have decided not to go ahead for now. I will be in touch if that changes."
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-01-14T10:00:00+00:00",
+          "end": "2027-01-14T10:30:00+00:00",
+          "label": "Thu 14 Jan 2027 10:00 UTC"
+        },
+        {
+          "index": 1,
+          "start": "2027-01-14T15:00:00+00:00",
+          "end": "2027-01-14T15:30:00+00:00",
+          "label": "Thu 14 Jan 2027 15:00 UTC"
+        },
+        {
+          "index": 2,
+          "start": "2027-01-18T09:30:00+00:00",
+          "end": "2027-01-18T10:00:00+00:00",
+          "label": "Mon 18 Jan 2027 09:30 UTC"
+        }
+      ]
+    }
+expected: { intent: decline, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

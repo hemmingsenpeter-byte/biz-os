@@ -1,0 +1,20 @@
+name: service_refund_cancelled_visit
+tags: [refund_money]
+why: "An existing customer asks for a deposit back after the business cancelled a visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "priya.nair@example.com",
+        "subject": "Deposit refund",
+        "body": "Hello,\n\nI paid a deposit for a visit on the 12th, which you cancelled the day before. I have\nsince made other arrangements, so I would like the deposit refunded to the card I paid\nwith. The booking was under the name Priya Nair.\n\nThank you"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

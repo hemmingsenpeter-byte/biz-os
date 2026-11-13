@@ -1,0 +1,20 @@
+name: service_broke_again_polite
+tags: [broke_again]
+why: "A customer politely reports that the fault returned after a repair and asks for a return visit."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "naomi.fitzgerald@example.com",
+        "subject": "Fault has come back",
+        "body": "Hello,\n\nThank you for coming out last week. Unfortunately the fault has returned, with the\nsame symptoms as before, starting about two days after the repair. Could you arrange\na return visit? I assume this is covered since it is the same issue.\n\nNaomi Fitzgerald"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

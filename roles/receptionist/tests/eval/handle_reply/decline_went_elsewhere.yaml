@@ -1,0 +1,37 @@
+name: decline_went_elsewhere
+tags: [routine]
+why: "The customer no longer wants to meet."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "Thanks, but we have gone with another firm so there is no need to meet."
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-01-12T09:00:00+00:00",
+          "end": "2027-01-12T09:30:00+00:00",
+          "label": "Tue 12 Jan 2027 09:00 UTC"
+        },
+        {
+          "index": 1,
+          "start": "2027-01-13T14:00:00+00:00",
+          "end": "2027-01-13T14:30:00+00:00",
+          "label": "Wed 13 Jan 2027 14:00 UTC"
+        },
+        {
+          "index": 2,
+          "start": "2027-01-15T11:00:00+00:00",
+          "end": "2027-01-15T11:30:00+00:00",
+          "label": "Fri 15 Jan 2027 11:00 UTC"
+        }
+      ]
+    }
+expected: { intent: decline, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

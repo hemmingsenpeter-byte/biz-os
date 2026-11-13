@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from biz_kernel import db
 from biz_kernel.approvals import staged
 from biz_kernel.approvals.models import StagedOperation
+from biz_kernel.control import service as control
 from biz_kernel.policy.types import Action, Allow, Deny, SideEffect
 from biz_kernel.tools.registry import PolicyChecker, Tool, ToolRegistry
 
@@ -98,6 +99,8 @@ def decide(
         op = s.get(StagedOperation, op_id)
         if op is None:
             raise LookupError(op_id)
+        if approve and control.is_paused(s):
+            raise control.Paused("resume before approving")
         if approve:
             op = staged.approve(s, op_id, by, version if version is not None else op.version)
         else:

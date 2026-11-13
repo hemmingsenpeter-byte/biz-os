@@ -1,0 +1,20 @@
+name: service_missing_details_move_appointment
+tags: [missing_details, short]
+why: "A customer with a repair visit already booked asks to move it."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "sms",
+        "from": "+12025550129",
+        "subject": "",
+        "body": "Cant be in for tomorrows repair visit any more, can we move it?"
+      }
+    }
+expected: { category: service_request }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }
+  - { type: numeric, field: confidence, value: 0.8, tolerance: 0.2001 }

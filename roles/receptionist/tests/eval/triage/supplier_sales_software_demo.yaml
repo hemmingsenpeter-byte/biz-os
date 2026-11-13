@@ -1,0 +1,19 @@
+name: supplier_sales_software_demo
+tags: [sales]
+why: "A salesperson offers a product to the business."
+system_file: ../../../prompts/triage.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "enquiry": {
+        "channel": "mail",
+        "from": "kyle.ferreira@example.net",
+        "subject": "Quick question about your scheduling",
+        "body": "Hi there,\n\nI am with a company that makes scheduling software for service businesses. Firms like\nyours typically cut the time spent on rotas and reminders by a third. Do you have\nfifteen minutes next week for a short demo? Happy to work around your diary.\n\nBest,\nKyle Ferreira\nAccount Executive"
+      }
+    }
+expected: { category: supplier }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [category] }

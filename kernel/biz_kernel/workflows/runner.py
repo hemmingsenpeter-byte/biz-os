@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 from biz_kernel import db
 from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
+from biz_kernel.control import service as control
+from biz_kernel.control.service import Paused
 from biz_kernel.heartbeats.service import BUDGET_RESUME  # wake-up reason: resume a stopped run
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
@@ -177,6 +179,7 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
     conds = _conditions_by_step(sop, ctx().roles[role].escalate_when)
     for step in sop["steps"]:
         kind = step["kind"]
+        _hold_while_paused(run_id, role)
         if step.get("when") and not _step_applies(step["when"], state):
             state["steps"][step["id"]] = {"output": {"skipped": True}}
             continue
@@ -221,10 +224,46 @@ def _budgeted(run_id: str, role: str, step: Any) -> Any:
     while True:
         try:
             return step()
+        except Paused:  # the kill switch closed while the step was starting
+            _hold_while_paused(run_id, role)
+            continue
         except BudgetExceeded as exc:
             _budget_stop(run_id, role, str(exc.needed))
         DBOS.recv(topic="budget", timeout_seconds=ctx().approval_poll_seconds)
         _set_waiting(run_id, None)  # back to running
+
+
+PAUSE_TOPIC = "pause"
+
+
+def _hold_while_paused(run_id: str, role: str) -> None:
+    """Park the run while the kill switch is on. The heartbeat after the resume wakes it."""
+    while _pause_check(run_id, role):
+        DBOS.recv(topic=PAUSE_TOPIC, timeout_seconds=ctx().approval_poll_seconds)
+
+
+@DBOS.step(name="biz.sop.pause_check")
+def _pause_check(run_id: str, role: str) -> bool:
+    with db.session_scope() as s:
+        paused = control.is_paused(s)
+        run = s.get(SopRun, run_id)
+        assert run is not None
+        if paused and run.status != "paused":
+            run.status = "paused"
+            record(s, role, "sop.paused", run.sop, run_id=run_id)
+        elif not paused and run.status == "paused":
+            run.status = "running"
+        return paused
+
+
+def resume_paused(run_ids: list[str], client: Any | None = None) -> None:
+    """Wake runs parked by the kill switch (called once it is off)."""
+    client = client or globals().get("_CLIENT")
+    for run_id in run_ids:
+        if client is not None:
+            client.send(run_id, "resume", topic=PAUSE_TOPIC)
+        else:
+            DBOS.send(run_id, "resume", topic=PAUSE_TOPIC)
 
 
 def resume_budget_stopped(reasons: list[str], client: Any | None = None) -> list[str]:

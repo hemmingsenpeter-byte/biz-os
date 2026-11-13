@@ -54,6 +54,7 @@ class EditIn(BaseModel):
     inputs: dict[str, Any]
     reason: str = ""  # one line: why the draft was wrong
     severity: Literal["cosmetic", "factual", "policy"] | None = None
+    version: int | None = None  # the version being edited; a stale one is a 409
 
 
 class CorrectionOut(BaseModel):
@@ -194,6 +195,7 @@ def router() -> APIRouter:
                 by=identity(user),
                 reason=body.reason,
                 severity=body.severity,
+                version=body.version,
             )
             return card(session, op)
         except staged.ApprovalError as exc:

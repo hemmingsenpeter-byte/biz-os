@@ -115,7 +115,7 @@ Reliability comes from the workflow around the model, and security comes from th
 | Post-action verification | Reporting success when the external application failed | Built as evidence-bound completion |
 | Untrusted-input handling | Inbound content steering the employee | Partly built: text is fenced, models get no tools; one injection case per task |
 | Kill switch | One control that pauses every employee | Built (`test_kill_switch`; `biz pause`, `/v1/control`) |
-| Sender verification | Replying to a spoofed "original sender" | Not built; needs a mail port change |
+| Sender verification | Replying to a spoofed "original sender" | Built; M365 header trust waits on a real header sample |
 
 ### Untrusted input
 

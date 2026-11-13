@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 __all__ = [
     "AccountingPort",
+    "AuthVerdict",
     "BillDraft",
     "ExternalRef",
     "InboundMessage",
@@ -22,6 +23,7 @@ __all__ = [
     "Party",
     "Payment",
     "SendResult",
+    "SenderAuth",
     "SignEvent",
     "SignPort",
     "Signer",
@@ -93,6 +95,37 @@ class OutboundMessage(BaseModel):
     attachments: list[str] = Field(default_factory=list)
 
 
+AuthVerdict = Literal["pass", "fail", "none"]
+
+
+def _domain(value: str) -> str:
+    return value.strip().rstrip(".").lower()
+
+
+class SenderAuth(BaseModel):
+    """The receiving mail server's verdict on an inbound message's sender (RFC 8601
+    Authentication-Results). `fail` means checked and not passed (fail, softfail, neutral,
+    temperror, ...); `none` means not checked or not known. An adapter fills this only from a
+    header its own receiving server added, never from one the sender could have written, so
+    the default is unverified."""
+
+    dmarc: AuthVerdict = "none"
+    spf: AuthVerdict = "none"
+    dkim: AuthVerdict = "none"
+    from_domain: str = ""  # the From domain DMARC was evaluated for (header.from)
+    authserv_id: str = ""  # the server that produced the verdict
+
+    def verifies(self, sender: str) -> bool:
+        """True only on a DMARC pass for the domain of `sender` (the From address read)."""
+        _, at, domain = sender.strip().rpartition("@")
+        return (
+            self.dmarc == "pass"
+            and bool(at)
+            and bool(_domain(domain))
+            and _domain(domain) == _domain(self.from_domain)
+        )
+
+
 class InboundMessage(BaseModel):
     provider_id: str
     sender: str
@@ -101,6 +134,7 @@ class InboundMessage(BaseModel):
     body: str
     received_at: datetime
     thread_id: str | None = None
+    auth: SenderAuth = Field(default_factory=SenderAuth)  # default: unverified
 
 
 class SendResult(BaseModel):

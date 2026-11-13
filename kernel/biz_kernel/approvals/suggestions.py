@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from biz_kernel.approvals import staged
 from biz_kernel.approvals.models import StagedOperation, Suggestion
 from biz_kernel.audit.log import record
+from biz_kernel.control import service as control
 from biz_kernel.policy.types import Action, SideEffect
 from biz_kernel.tools.registry import ToolRegistry
 
@@ -43,7 +44,11 @@ def propose(
 def approve_suggestion(
     session: Session, suggestion_id: uuid.UUID, by: str, registry: ToolRegistry | None = None
 ) -> StagedOperation:
-    """Create a staged operation pre-approved by `by` (owner). Still needs execute()."""
+    """Create a staged operation pre-approved by `by` (owner). Still needs execute().
+
+    Nothing is approved while the kill switch is on (raises control.Paused).
+    """
+    control.guard(session, "resume before approving")  # first: before any other write
     s = session.get(Suggestion, suggestion_id, with_for_update=True)
     if s is None or s.status != "proposed":
         raise staged.ApprovalError("suggestion is not open")

@@ -1,4 +1,9 @@
-"""`biz eval <task> --tier local|cloud --cases <dir>`; mount `eval_cmd` or `app` in the main CLI."""
+"""`biz eval <task> --tier local|cloud|shadow --cases <dir> [--json]`; mount `eval_cmd` or `app`.
+
+Prints passed/total, the pass rate, the promotion gate verdict and each failing case with
+why. Exits 0 when the gate passes and 1 when it fails; in shadow mode the local tier's gate
+decides, since shadow mode asks whether the local tier can take the task.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +13,12 @@ from typing import Annotated, Any
 
 import typer
 
-from biz_kernel.models.eval.harness import run_eval, shadow
+from biz_kernel.models.eval.harness import report_json, report_text, run_eval, shadow
 from biz_kernel.models.router import Router
 
 app = typer.Typer(help="Score model tasks against golden cases.", no_args_is_help=True)
+
+TIERS = ("local", "cloud", "shadow")
 
 
 def build_router() -> Router:
@@ -27,24 +34,25 @@ def build_router() -> Router:
 
 
 def eval_cmd(
-    task: str, tier: str = "local", cases: Path = Path("."), router: Router | None = None
+    task: str,
+    tier: str = "local",
+    cases: Path = Path("."),
+    router: Router | None = None,
+    as_json: bool = False,
 ) -> None:
-    """Score `task` on a tier (or both, with tier=shadow); exits 1 if a case fails."""
+    """Score `task` on a tier (or both, with tier=shadow); exits 1 if the gate fails."""
+    if tier not in TIERS:
+        raise typer.BadParameter("tier must be local, cloud or shadow")
     r = router or build_router()
     if tier == "shadow":
-        rep = asyncio.run(shadow(task, r, cases))
-        typer.echo(
-            f"{task}: local {rep.local.score:.2f} cloud {rep.cloud.score:.2f} "
-            f"agreement {rep.agreement:.2f} ready_for_local={rep.ready_for_local}"
-        )
-        return
-    if tier not in ("local", "cloud"):
-        raise typer.BadParameter("tier must be local, cloud or shadow")
-    rep1 = asyncio.run(run_eval(task, tier, r, cases))  # type: ignore[arg-type]
-    typer.echo(f"{task} [{tier}]: score {rep1.score:.2f}")
-    for res in rep1.results:
-        typer.echo(f"  {'ok  ' if res.passed else 'FAIL'} {res.name} {'; '.join(res.failures)}")
-    if rep1.score < 1.0:
+        srep = asyncio.run(shadow(task, r, cases))
+        typer.echo(report_json(srep) if as_json else report_text(srep))
+        gate_passed = srep.local.gate.passed
+    else:
+        rep = asyncio.run(run_eval(task, tier, r, cases))  # type: ignore[arg-type]
+        typer.echo(report_json(rep) if as_json else report_text(rep))
+        gate_passed = rep.gate.passed
+    if not gate_passed:
         raise typer.Exit(1)
 
 
@@ -53,5 +61,6 @@ def run_command(
     task: str,
     tier: Annotated[str, typer.Option(help="local, cloud or shadow (both)")] = "local",
     cases: Annotated[Path, typer.Option(help="directory of golden case YAML files")] = Path("."),
+    as_json: Annotated[bool, typer.Option("--json", help="print the report as JSON")] = False,
 ) -> None:
-    eval_cmd(task, tier, cases)
+    eval_cmd(task, tier, cases, as_json=as_json)

@@ -48,9 +48,11 @@ def ensure_database(url: str) -> None:
 def run_once(rt: Any, now: datetime | None = None) -> list[str]:
     """One loop iteration: heartbeat tick, then the missed-schedule check. Returns woken roles."""
     now = now or db.utcnow()
+    with db.session_scope() as s:
+        paused = control.is_paused(s)  # read before the tick: a resume during it changes it
     woken = rt.tick(now)
     with db.session_scope() as s:
-        if not control.is_paused(s):  # paused heartbeats are not missed runs
+        if not paused and not control.is_paused(s):  # paused heartbeats are not missed runs
             health.check_missed(s, now)
     return woken
 

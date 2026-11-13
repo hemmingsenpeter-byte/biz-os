@@ -18,6 +18,7 @@ from biz_kernel.contracts.ports import (
     OutboundMessage,
     Party,
     Payment,
+    SenderAuth,
     SendResult,
     Signer,
     SignEvent,
@@ -65,8 +66,9 @@ class FakeMail(_Sender):
         super().__init__()
         self.inbox: list[InboundMessage] = []
 
-    def inject_inbound(self, msg: InboundMessage) -> None:
-        self.inbox.append(msg)
+    def inject_inbound(self, msg: InboundMessage, auth: SenderAuth | None = None) -> None:
+        """Queue a message; `auth` sets the receiving server's verdict (default: unverified)."""
+        self.inbox.append(msg if auth is None else msg.model_copy(update={"auth": auth}))
 
     async def send(self, msg: OutboundMessage, idempotency_key: str) -> SendResult:
         return self._deliver(idempotency_key, msg)

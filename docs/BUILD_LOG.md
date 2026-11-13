@@ -1,5 +1,65 @@
 # Build log
 
+## 2026-11-13: owner decisions, review fixes, eval gate, sender verification
+
+The owner approved the three open decisions and the mail port change.
+
+### Decisions made (check these)
+
+- **Cosmetic edits keep the promotion streak.** An approval extends it when every edit
+  since the draft is a correction tagged cosmetic. The role's own rewrites, unattributed
+  edits and untagged, factual or policy corrections still reset it.
+- **Edits name the version they change.** `POST /v1/approvals/{id}/edit` takes
+  `version`; a stale one is a 409. The field is optional in the API so older clients
+  still work; the console always sends it.
+- **Complaints, refund and billing questions, and failed earlier work are
+  `service_request`.** The triage prompt now says so, matching the test set's labels.
+- **Kill switch review fixes** (a fresh-eyes review of PR #4 found four defects, each
+  proven by a failing test, now in `tests/invariants/test_kill_switch_races.py`):
+  - The pause state is the newest event by the database clock, written under an
+    exclusive advisory lock. Before, the highest uuid7 id won, so a pause from a machine
+    whose clock was behind, or two events in one millisecond, could sort the wrong way.
+  - Every approval path takes the same lock shared and refuses while paused, so a pause
+    and an approval can't interleave. Approving a suggestion while paused was possible
+    and is now refused.
+  - A tick that started paused raises no missed-schedule alerts, even if the owner
+    resumes during it.
+  - A pause now waits for approvals already in progress to commit (normally
+    milliseconds).
+- **`biz eval` reports the promotion gate.** It prints passed, total, pass rate and a
+  verdict (at least 95% of at least 50 cases, set per task in `_task.yaml`). It exits 0
+  only when the gate passes, so the tuning folders (under 50 cases) always exit 1. New
+  check types: `any_of`, `not_equal`, `not_contains`, `min`/`max`.
+- **Reply handling has a held-out set:** 57 cases (choose_slot 23, reschedule 10,
+  question 9, decline 7, other 8; 10 injection attempts).
+- **Sender verification (defect #3).** The mail port's `InboundMessage` gains `auth`
+  (DMARC, SPF and DKIM results). A sender is verified only on a DMARC pass for their own
+  From domain. The Microsoft 365 adapter trusts only the topmost `Authentication-Results`
+  header carrying `BIZ_M365_AUTHSERV_ID`; with that unset, nothing is verified. Intake
+  passes the verdict into reply handling. Unverified senders are still flagged and the
+  owner still confirms every booking.
+- **Test order fix:** the production-app test left a stub DBOS client behind, which made
+  in-process DBOS tests fail depending on order. It now restores it.
+
+### Waiting on the owner
+
+- **Exchange Online's header format.** Exchange Online may stamp `Authentication-Results`
+  with no authserv-id. If so, M365 mail can never be verified as built. Choices: confirm
+  Exchange removes sender-inserted copies and trust the topmost header without an id,
+  verify ARC instead, or accept verification stays off. Needs one real message header
+  from HIVE's tenant to decide.
+- New enquiries (not replies) carry no sender verdict, and meeting offers still go to the
+  unverified address. Changing that touches sending.
+- `reply.received/v1` does not declare `sender_verified` in its schema.
+
+### Not done yet
+
+- **Unproven review suspicions:** a deploy while paused may leave parked runs on the old
+  application version (DBOS recovers by version); overdue-invoice reminder steps keep
+  advancing while paused, so several reminders for one invoice can queue for approval
+  after a resume; `TRUNCATE` is not blocked on append-only tables.
+- No local or cloud model has been scored on the test sets.
+
 ## 2026-11-12 (later): plan v2.1, kill switch, corrections, metrics
 
 PRs #1 (container packaging and smoke checks) and #2 (owner console) were merged to

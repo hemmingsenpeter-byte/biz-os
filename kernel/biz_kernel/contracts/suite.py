@@ -27,6 +27,7 @@ from biz_kernel.contracts.ports import (
     OutboundMessage,
     Party,
     Payment,
+    SenderAuth,
     SendResult,
     Signer,
     SignEvent,
@@ -64,6 +65,26 @@ async def check_mail_port(port: MailPort) -> None:
     fetched = await port.fetch_new(EPOCH)
     assert isinstance(fetched, list)
     assert all(isinstance(m, InboundMessage) for m in fetched)
+    for m in fetched:
+        check_sender_auth(m)
+    plain = InboundMessage(
+        provider_id="p", sender="a@example.com", to=[], subject="", body="", received_at=EPOCH
+    )
+    assert plain.auth == SenderAuth() and not plain.auth.verifies(plain.sender), "unverified"
+
+
+def check_sender_auth(m: InboundMessage) -> None:
+    """A message is verified only by a DMARC pass for its own From domain."""
+    auth = m.auth
+    assert isinstance(auth, SenderAuth), m
+    assert {auth.dmarc, auth.spf, auth.dkim} <= {"pass", "fail", "none"}, auth
+    if auth.verifies(m.sender):
+        assert auth.dmarc == "pass", auth
+        assert m.sender.rpartition("@")[2].lower().rstrip(".") == auth.from_domain.lower()
+    if auth.dmarc == "pass" and auth.from_domain:
+        spoofed = f"x@not-{auth.from_domain}"
+        assert not auth.verifies(spoofed), "a pass for one domain must not verify another"
+    assert not auth.verifies("no-at-sign"), "a sender without a domain is never verified"
 
 
 async def check_telephony_port(port: TelephonyPort, sample_webhook: Any | None = None) -> None:

@@ -326,9 +326,10 @@ try:
         task: str,
         tier: Annotated[str, typer.Option(help="local | cloud | shadow")] = "local",
         cases: Annotated[Path, typer.Option(help="Folder of golden case YAML files")] = Path("."),
+        as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON")] = False,
     ) -> None:
-        """Score a model task on golden cases."""
-        _eval_cmd(task, tier, cases)
+        """Score a model task on golden cases; exit 1 unless the promotion gate passes."""
+        _eval_cmd(task, tier, cases, as_json=as_json)
 except ImportError:  # eval harness not installed yet
     pass
 

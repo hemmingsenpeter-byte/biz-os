@@ -299,7 +299,10 @@ export default function ApprovalPage({
     try {
       const saved = await api<Approval>(
         `/approvals/${encodeURIComponent(id)}/edit`,
-        { method: "POST", body: JSON.stringify(edit) },
+        {
+          method: "POST",
+          body: JSON.stringify({ ...edit, version: request.version }),
+        },
       );
       setEditing(false);
       setNotice(
@@ -309,7 +312,7 @@ export default function ApprovalPage({
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setDecisionError(
-          "This request can no longer be edited. Its latest details are shown below.",
+          "Someone changed or decided this request while you were editing, so your changes were not saved. Its latest details are shown below.",
         );
         setEditing(false);
         await reload();

@@ -63,7 +63,9 @@ def dbos_config(name: str, sys_url: str) -> dict[str, Any]:
 
 
 def run_once(rt: Any, now: datetime | None = None) -> list[str]:
-    """One loop iteration: heartbeat tick, then the missed-schedule check. Returns woken roles."""
+    """One iteration: heartbeat tick, missed-schedule check, audit seal. Returns woken roles."""
+    from biz_kernel.audit import log as audit
+
     now = now or db.utcnow()
     with db.session_scope() as s:
         paused = control.is_paused(s)  # read before the tick: a resume during it changes it
@@ -71,6 +73,8 @@ def run_once(rt: Any, now: datetime | None = None) -> list[str]:
     with db.session_scope() as s:
         if not paused and not control.is_paused(s):  # paused heartbeats are not missed runs
             health.check_missed(s, now)
+    with db.session_scope() as s:
+        audit.seal(s)  # hash-chain the audit rows written since the last heartbeat
     return woken
 
 

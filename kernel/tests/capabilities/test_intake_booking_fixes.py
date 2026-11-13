@@ -227,3 +227,55 @@ def test_poll_mail_isolates_bad_message_and_advances_cursor(fresh_db, monkeypatc
         assert longest <= service.MAX_BODY
         assert s.get(Cursor, "mail").value >= (now - timedelta(minutes=1)).replace(microsecond=0)
     eng.dispose()
+
+
+# ---- sender verification: only the mail port's DMARC verdict for the From domain counts
+
+
+def _reply_msg(sender: str, auth=None):  # type: ignore[no-untyped-def]
+    from biz_kernel.contracts.ports import SenderAuth
+
+    msg = InboundMessage(
+        provider_id="r1",
+        sender=sender,
+        to=["box@example.com"],
+        subject="Re: Times [ref:abcdef12]",
+        body="the first",
+        received_at=datetime.now(UTC),
+    )
+    return msg if auth is None else msg.model_copy(update={"auth": SenderAuth(**auth)})
+
+
+@pytest.mark.parametrize(
+    ("sender", "auth", "verified"),
+    [
+        ("a@client.example", None, False),  # no verdict: unverified
+        ("a@client.example", {"dmarc": "pass", "from_domain": "client.example"}, True),
+        ("A@Client.Example", {"dmarc": "pass", "from_domain": "client.example"}, True),
+        ("a@client.example", {"dmarc": "fail", "from_domain": "client.example"}, False),
+        ("a@client.example", {"dmarc": "none", "spf": "pass", "dkim": "pass"}, False),
+        ("a@client.example", {"dmarc": "pass", "from_domain": "attacker.example"}, False),
+    ],
+)
+def test_reply_sender_verified_from_port_verdict(sender, auth, verified) -> None:  # type: ignore[no-untyped-def]
+    from biz_cap_intake.web import receive_reply, sender_verified
+
+    m = _reply_msg(sender, auth)
+    assert sender_verified(m) is verified
+    bus = StubBus()
+    thread = {"message_id": "m1", "party_id": "", "enquiry_id": "e1"}
+    receive_reply(None, SimpleNamespace(bus=bus), m, thread)
+    assert bus.out[0]["payload"]["sender_verified"] is verified
+
+
+def test_raw_header_text_on_a_message_is_never_trusted() -> None:
+    """A loose header string or dict on a message is not the port's verdict."""
+    from biz_cap_intake.web import sender_verified
+
+    m = SimpleNamespace(
+        sender="a@client.example",
+        headers={"Authentication-Results": "x; dmarc=pass header.from=client.example"},
+        authentication_results="dmarc=pass",
+        auth={"dmarc": "pass", "from_domain": "client.example"},
+    )
+    assert sender_verified(m) is False

@@ -142,3 +142,14 @@ def test_corrections_are_append_only(session):
     staged.edit(session, op.id, {"body": "fixed"}, by="owner", severity="policy")
     with pytest.raises(DBAPIError, match="append-only"), session.begin_nested():
         session.execute(Correction.__table__.update().values(severity="cosmetic"))
+
+
+def test_a_stale_edit_is_409(client, session):
+    owner = create_user(session, "o4@example.com", "owner", "O")
+    op = _op(session)
+    _login(client, owner)
+    first = client.post(f"/v1/approvals/{op.id}/edit", json={"inputs": {"body": "a"}, "version": 1})
+    assert first.status_code == 200 and first.json()["version"] == 2
+    stale = client.post(f"/v1/approvals/{op.id}/edit", json={"inputs": {"body": "b"}, "version": 1})
+    assert stale.status_code == 409
+    assert client.get(f"/v1/approvals/{op.id}").json()["inputs"]["body"] == "a"

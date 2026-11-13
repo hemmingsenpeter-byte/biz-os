@@ -162,6 +162,11 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     });
     expect(edit.status()).toBe(200);
     expect((await edit.json()).version).toBe(2);
+    const staleEdit = await page.request.post(`/v1/approvals/${operation.id}/edit`, {
+      data: { inputs: { ...operation.inputs, body: "A second editor." }, version: 1 },
+      headers: { Origin: origin },
+    });
+    expect(staleEdit.status()).toBe(409); // two editors can't overwrite each other
     const stale = page.waitForResponse(`**/v1/approvals/${operation.id}/approve`);
     await page.getByRole("button", { name: "Approve version 1" }).click();
     expect((await stale).status()).toBe(409);
@@ -291,6 +296,7 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
       inputs: { ...operation.inputs, body: edited },
       reason: editReason,
       severity: "factual",
+      version: 2, // the version on screen: a stale one would be refused with 409
     });
     const card = await saved.json();
     expect(card.version).toBe(3);

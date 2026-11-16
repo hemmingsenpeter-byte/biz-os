@@ -10,8 +10,8 @@ inside this migration's transaction, without ever disabling the trigger.
 The columns stay nullable: a row is unsealed between its insert and the next seal.
 `seq` is unique, which also serves the tail lookup.
 
-Revision ID: 0021
-Revises: 0020
+Revision ID: 0022
+Revises: 0021
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from alembic import op
 from biz_kernel.audit.log import AUDIT_SEAL_FN, seal_connection
 
-revision = "0021"
-down_revision = "0020"
+revision = "0022"
+down_revision = "0021"
 branch_labels = None
 depends_on = None
 

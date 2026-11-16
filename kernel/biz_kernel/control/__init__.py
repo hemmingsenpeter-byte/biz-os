@@ -3,11 +3,11 @@
 from biz_kernel.control.service import (
     Paused,
     PauseState,
-    guard,
+    admit,
     is_paused,
     pause,
     resume,
     state,
 )
 
-__all__ = ["PauseState", "Paused", "guard", "is_paused", "pause", "resume", "state"]
+__all__ = ["PauseState", "Paused", "admit", "is_paused", "pause", "resume", "state"]

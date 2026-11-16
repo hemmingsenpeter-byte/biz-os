@@ -52,7 +52,7 @@ def _row(session, table: str):
 
         action = Action(actor="r", tool="t.send", side_effect=SideEffect.EXTERNAL, inputs={"a": 1})
         op = staged.stage(session, action, "owner")
-        staged.edit(session, op.id, {"a": 2}, by="owner", severity="factual")
+        staged.edit(session, op.id, {"a": 2}, by="owner", severity="factual", version=op.version)
         return session.scalar(select(Correction.id))
     return session.execute(text(f"SELECT id FROM {table} LIMIT 1")).scalar()
 

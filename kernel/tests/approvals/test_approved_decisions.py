@@ -30,6 +30,11 @@ def _streak(session, decision_type="reply_sending") -> int:
     return row.approved_unchanged_streak if row is not None else 0
 
 
+def _edit(session, op, inputs, by="owner", **kw):
+    current = session.get(type(op), op.id).version
+    return staged.edit(session, op.id, inputs, by=by, version=current, **kw)
+
+
 def _approve(session, op):
     staged.approve(session, op.id, "owner", session.get(type(op), op.id).version)
 
@@ -37,8 +42,8 @@ def _approve(session, op):
 def test_cosmetic_edits_keep_the_streak(session):
     _approve(session, _op(session))  # unchanged: 1
     op = _op(session)
-    staged.edit(session, op.id, {"body": "Draft."}, by="owner", severity="cosmetic")
-    staged.edit(session, op.id, {"body": "Draft!"}, by="owner", severity="cosmetic")
+    _edit(session, op, {"body": "Draft."}, severity="cosmetic")
+    _edit(session, op, {"body": "Draft!"}, severity="cosmetic")
     _approve(session, op)
     assert _streak(session) == 2
 
@@ -59,7 +64,7 @@ def test_other_edits_break_the_streak(session, edits):
     assert _streak(session) == 1
     op = _op(session)
     for i, (by, severity) in enumerate(edits):
-        staged.edit(session, op.id, {"body": f"edit {i}"}, by=by, severity=severity)
+        _edit(session, op, {"body": f"edit {i}"}, by=by, severity=severity)
     _approve(session, op)
     assert _streak(session) == 0
 
@@ -68,7 +73,7 @@ def test_promotion_bar_counts_cosmetic_approvals(session):
     for i in range(3):
         op = _op(session)
         if i % 2:
-            staged.edit(session, op.id, {"body": "tidy"}, by="owner", severity="cosmetic")
+            _edit(session, op, {"body": "tidy"}, severity="cosmetic")
         _approve(session, op)
     assert autonomy.promotion_due(session, "r", "reply_sending", bar=3)
 

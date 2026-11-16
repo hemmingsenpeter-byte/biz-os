@@ -43,7 +43,7 @@ def test_staged_operation_exact(session):
     assert isinstance(op, staged.StagedOperation) and sent == []
     staged.approve(session, op.id, "owner", op.version)
     # edit clears approval; stale approval and execute both fail
-    staged.edit(session, op.id, {"to": "y"})
+    staged.edit(session, op.id, {"to": "y"}, version=op.version)
     with pytest.raises(staged.StaleVersion):
         staged.approve(session, op.id, "owner", 1)
     with pytest.raises(staged.NotApproved):

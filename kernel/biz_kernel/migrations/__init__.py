@@ -32,5 +32,13 @@ def upgrade(url: str, revision: str = "kernel@head", pack_dirs: Sequence[Path] =
     command.upgrade(make_config(url, pack_dirs), revision)
 
 
-def downgrade(url: str, revision: str = "base", pack_dirs: Sequence[Path] = ()) -> None:
-    command.downgrade(make_config(url, pack_dirs), revision)
+def downgrade(
+    url: str,
+    revision: str = "base",
+    pack_dirs: Sequence[Path] = (),
+    *,
+    allow_data_loss: bool = False,
+) -> None:
+    config = make_config(url, pack_dirs)
+    config.attributes["allow_data_loss"] = allow_data_loss
+    command.downgrade(config, revision)

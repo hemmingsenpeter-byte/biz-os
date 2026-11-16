@@ -6,6 +6,10 @@ import pytest
 from biz_cap_comms import config, handle_packet
 from biz_cap_comms.gate import GateConfig
 from biz_cap_comms.tools import register
+from biz_cap_intake import service as intake
+from biz_cap_intake.tools import Suppressed
+from biz_cap_intake.tools import register as register_intake
+from biz_kernel.packets.bus import Bus, SchemaRegistry
 from biz_kernel.records.models import Party, Person
 from biz_kernel.tools.registry import ToolRegistry
 from biz_port_fakes import FakeMail, FakeTelephony
@@ -91,3 +95,44 @@ def test_packet_consumer_records_stop(env) -> None:  # type: ignore[no-untyped-d
         session, "reply.received", {"channel": "mail", "sender": "d@x.org", "body": "thanks"}
     )
     assert _msg(reg, session, "k1", "mail", "c@x.org")[1] == "blocked"
+
+
+@pytest.fixture
+def both(session):  # type: ignore[no-untyped-def]
+    """intake and comms loaded together, as in every composition that takes calls."""
+    config.configure(GateConfig())
+    mail, tel = FakeMail(), FakeTelephony()
+    reg = ToolRegistry()
+    register(reg, {"mail": mail, "telephony": tel})
+    register_intake(reg, {"mail": mail, "telephony": tel})
+    yield session, reg, mail, tel
+    config.configure(None)
+
+
+def test_sms_stop_taken_by_intake_blocks_comms_sends(both) -> None:  # type: ignore[no-untyped-def]
+    session, reg, _, tel = both
+    got = intake.receive(
+        session,
+        Bus(SchemaRegistry()),
+        channel="sms",
+        sender="+6421000111",
+        body="STOP",
+        provider_id="SM1",
+        registry=reg,
+    )
+    assert got.enquiry.status == "opted_out"
+    mid, status = _msg(reg, session, "k1", "sms", "+64 21 000 111")
+    assert status == "blocked" and tel.sent == []
+
+
+def test_comms_optout_blocks_intake_sends(both) -> None:  # type: ignore[no-untyped-def]
+    session, reg, mail, tel = both
+    reg.get("comms.opt_out").fn(session=session, address="+6421000222")
+    reg.get("comms.opt_out").fn(session=session, address="eve@x.org")
+    with pytest.raises(Suppressed):
+        reg.get("intake.text_back").fn(session=session, to="+6421000222", idempotency_key="t1")
+    with pytest.raises(Suppressed):
+        reg.get("intake.reply").fn(
+            session=session, to="Eve@x.org", subject="Hi", body="Hello", idempotency_key="t2"
+        )
+    assert tel.sent == [] and mail.sent == []

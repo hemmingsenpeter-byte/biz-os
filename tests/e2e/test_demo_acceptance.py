@@ -169,7 +169,7 @@ def test_stale_approval_is_never_acted_on(live) -> None:  # type: ignore[no-unty
         key = op.inputs.get("idempotency_key")
         edited = {k: v for k, v in op.inputs.items() if k != "idempotency_key"}
         edited["body"] = "Yes, two visitor spaces."  # an editor that drops the key
-        op = staged.edit(s, op_id, edited, by=approver)
+        op = staged.edit(s, op_id, edited, by=approver, version=op.version)
         assert op.inputs.get("idempotency_key") == key  # every version keeps the run's key
     assert notify_decision(str(op_id), "approved")  # the stale wake-up arrives
     time.sleep(2.5)  # > approval_poll_seconds: the run re-checked and kept waiting

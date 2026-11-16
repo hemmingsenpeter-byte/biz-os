@@ -1,42 +1,17 @@
-"""Golden cases as YAML; score a task on a tier; compare tiers; report the promotion gate.
+"""Golden cases as YAML; score a task on a tier; compare tiers in shadow mode.
 
 Case file keys: name, system | system_file (relative to the case file), messages | prompt,
-untrusted (list of text), schema | schema_file, expected (dict), checks (list). Other keys
-(tags, why) are for people and ignored. With no checks a case gets one json_schema check.
-
-A case passes when every one of its checks passes. Check types:
-
-- json_schema: the output matches the case schema.
-- exact {fields}: each listed field (default: every key of `expected`) equals `expected`.
-- contains {field, value}: the field, as text, contains value (case-insensitive).
-- numeric {field, value?, tolerance}: the field is within tolerance of value (default: the
-  field's `expected` value).
-- min {field, value, exclusive?}: the field is a number >= value (> when exclusive: true).
-- max {field, value, exclusive?}: the field is a number <= value (< when exclusive: true).
-- not_equal {field, value}: the field is not equal to value. A missing field passes.
-- not_contains {field, value}: the field, as text, does not contain value (case-insensitive).
-  A missing field passes.
-- any_of {checks}: passes when at least one listed sub-check passes. "Category spam, or
-  confidence below 0.6" is
-      {type: any_of, checks: [{type: exact, fields: [category]},
-                              {type: max, field: confidence, value: 0.6, exclusive: true}]}
-
-`load_cases` rejects unknown check types and checks missing their keys.
-
-Optional `_task.yaml` in the cases dir (files starting with `_` are not cases):
-    threshold: 0.05                          # shadow: local may trail cloud's mean score by this
-    gate: {pass_rate: 0.95, min_cases: 50}   # promotion gate (docs/PLAN.md, Measurement)
-
-Reports give `passed`, `total` and `pass_rate` (share of cases passed) and a `gate` verdict:
-the gate passes when pass_rate >= gate.pass_rate on at least gate.min_cases cases. A model
-call that fails counts as a failed case. `score` (mean share of checks passed per case) is
-kept for compatibility; the gate never uses it.
+untrusted (list of text), schema | schema_file, expected (dict), checks (list).
+Check types: exact {fields}, contains {field, value}, json_schema, numeric {field, tolerance}.
+Optional `_task.yaml` in the cases dir: {threshold: 0.05}.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass, field
+import math
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,22 +21,6 @@ import yaml
 from biz_kernel.models.router import Router, Tier
 
 DEFAULT_THRESHOLD = 0.05
-DEFAULT_GATE_PASS_RATE = 0.95
-DEFAULT_GATE_MIN_CASES = 50
-_EPS = 1e-9  # 57/60 must count as 0.95
-
-# check type -> keys it must have
-CHECK_KEYS: dict[str, tuple[str, ...]] = {
-    "json_schema": (),
-    "exact": (),
-    "contains": ("field", "value"),
-    "numeric": ("field",),
-    "min": ("field", "value"),
-    "max": ("field", "value"),
-    "not_equal": ("field", "value"),
-    "not_contains": ("field", "value"),
-    "any_of": ("checks",),
-}
 
 
 @dataclass
@@ -85,56 +44,7 @@ class CaseResult:
 
     @property
     def passed(self) -> bool:
-        return self.error is None and self.score >= 1.0
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "passed": self.passed,
-            "score": self.score,
-            "failures": self.failures,
-            "output": self.output,
-            "error": self.error,
-        }
-
-
-@dataclass(frozen=True)
-class Gate:
-    """Promotion gate: at least `pass_rate` of at least `min_cases` held-out cases pass."""
-
-    pass_rate: float = DEFAULT_GATE_PASS_RATE
-    min_cases: int = DEFAULT_GATE_MIN_CASES
-
-    def verdict(self, passed: int, total: int) -> GateVerdict:
-        rate = passed / total if total else 0.0
-        reasons = []
-        if total < self.min_cases:
-            reasons.append(f"only {total} cases, the gate needs at least {self.min_cases}")
-        if rate + _EPS < self.pass_rate:
-            reasons.append(f"pass rate {rate:.1%} is below {self.pass_rate:.1%}")
-        ok = not reasons
-        if ok:
-            reasons.append(
-                f"{passed} of {total} cases passed ({rate:.1%}); "
-                f"needs {self.pass_rate:.1%} of at least {self.min_cases}"
-            )
-        return GateVerdict(ok, "; ".join(reasons), self.pass_rate, self.min_cases)
-
-
-@dataclass(frozen=True)
-class GateVerdict:
-    passed: bool
-    reason: str
-    min_pass_rate: float
-    min_cases: int
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "passed": self.passed,
-            "reason": self.reason,
-            "min_pass_rate": self.min_pass_rate,
-            "min_cases": self.min_cases,
-        }
+        return self.score >= 1.0
 
 
 @dataclass
@@ -143,39 +53,32 @@ class EvalReport:
     tier: Tier
     score: float
     results: list[CaseResult]
-    rule: Gate = field(default_factory=Gate)
-
-    @property
-    def total(self) -> int:
-        return len(self.results)
-
-    @property
-    def passed(self) -> int:
-        return sum(r.passed for r in self.results)
+    passed_cases: int = 0
+    total_cases: int = 0
+    check_score: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def pass_rate(self) -> float:
-        return self.passed / self.total if self.total else 0.0
+        return self.score
 
     @property
-    def failed(self) -> list[CaseResult]:
-        return [r for r in self.results if not r.passed]
+    def technical_gate_passed(self) -> bool:
+        return (
+            self.metadata.get("split") == "heldout"
+            and self.metadata.get("outcome_checks_complete") is True
+            and self.total_cases >= max(50, self.metadata.get("min_cases", 50))
+            and self.pass_rate >= max(0.95, self.metadata.get("required_pass_rate", 0.95))
+        )
 
     @property
-    def gate(self) -> GateVerdict:
-        return self.rule.verdict(self.passed, self.total)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "task": self.task,
-            "tier": self.tier,
-            "passed": self.passed,
-            "total": self.total,
-            "pass_rate": self.pass_rate,
-            "gate": self.gate.as_dict(),
-            "score": self.score,
-            "results": [r.as_dict() for r in self.results],
-        }
+    def deployment_ready(self) -> bool:
+        return (
+            self.technical_gate_passed
+            and self.metadata.get("owner_reviewed") is True
+            and self.metadata.get("provenance") in {"historical", "mixed"}
+            and bool(self.metadata.get("configured_model"))
+        )
 
 
 @dataclass
@@ -188,68 +91,53 @@ class ShadowReport:
 
     @property
     def ready_for_local(self) -> bool:
-        return self.local.score >= self.cloud.score - self.threshold
+        return self.local.deployment_ready and self.technical_gate_passed
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "task": self.task,
-            "local_pass_rate": self.local.pass_rate,
-            "cloud_pass_rate": self.cloud.pass_rate,
-            "agreement": self.agreement,
-            "threshold": self.threshold,
-            "ready_for_local": self.ready_for_local,
-            "local": self.local.as_dict(),
-            "cloud": self.cloud.as_dict(),
-        }
+    @property
+    def comparison_valid(self) -> bool:
+        return (
+            bool(self.local.results)
+            and len(self.local.results) == len(self.cloud.results)
+            and all(result.error is None for result in self.local.results + self.cloud.results)
+        )
 
-
-@dataclass(frozen=True)
-class TaskConfig:
-    threshold: float = DEFAULT_THRESHOLD
-    gate: Gate = field(default_factory=Gate)
+    @property
+    def technical_gate_passed(self) -> bool:
+        return (
+            self.comparison_valid
+            and self.local.technical_gate_passed
+            and self.local.pass_rate >= self.cloud.pass_rate - self.threshold
+        )
 
 
 def _read(path: Path) -> Any:
     return yaml.safe_load(path.read_text())
 
 
-def _validate_check(chk: Any, where: str) -> None:
-    if not isinstance(chk, dict) or "type" not in chk:
-        raise ValueError(f"{where}: a check must be a mapping with a type, got {chk!r}")
-    kind = chk["type"]
-    if kind not in CHECK_KEYS:
-        raise ValueError(f"{where}: unknown check type {kind!r}")
-    missing = [k for k in CHECK_KEYS[kind] if k not in chk]
-    if missing:
-        raise ValueError(f"{where}: {kind} check needs {', '.join(missing)}")
-    if kind == "any_of":
-        subs = chk["checks"]
-        if not isinstance(subs, list) or not subs:
-            raise ValueError(f"{where}: any_of needs a non-empty list of checks")
-        for sub in subs:
-            _validate_check(sub, where)
-
-
 def load_cases(cases: Path | str) -> list[Case]:
+    if not Path(cases).is_dir():
+        raise ValueError(f"case directory does not exist: {cases}")
     out = []
     for f in sorted(Path(cases).glob("*.y*ml")):
         if f.name.startswith("_"):
             continue
         d = _read(f)
+        if not isinstance(d, dict):
+            raise ValueError(f"invalid case mapping: {f.name}")
         system = d.get("system") or ""
         if d.get("system_file"):
             system = (f.parent / d["system_file"]).read_text()
         schema = d.get("schema")
         if d.get("schema_file"):
             schema = _read(f.parent / d["schema_file"])
+        if not isinstance(schema, dict):
+            raise ValueError(f"case {f.name} needs a JSON schema")
+        jsonschema.Draft202012Validator.check_schema(schema)
         messages = d.get("messages")
         if messages is None:
             messages = (
                 [] if d.get("untrusted") else [{"role": "user", "content": d.get("prompt", "")}]
             )
-        checks = d.get("checks") or [{"type": "json_schema"}]
-        for chk in checks:
-            _validate_check(chk, f.name)
         out.append(
             Case(
                 d.get("name", f.stem),
@@ -257,37 +145,79 @@ def load_cases(cases: Path | str) -> list[Case]:
                 messages,
                 schema,
                 d.get("expected") or {},
-                checks,
+                d.get("checks")
+                or (
+                    [{"type": "json_schema"}, {"type": "exact"}]
+                    if d.get("expected")
+                    else [{"type": "json_schema"}]
+                ),
                 [str(u) for u in d.get("untrusted") or []],
             )
         )
+    if not out:
+        raise ValueError(f"no evaluation cases found: {cases}")
     return out
 
 
-def load_task_config(cases: Path | str | None) -> TaskConfig:
-    """Shadow threshold and promotion gate from `_task.yaml`, with defaults."""
-    if cases is None or not (Path(cases) / "_task.yaml").exists():
-        return TaskConfig()
-    d = _read(Path(cases) / "_task.yaml") or {}
-    g = d.get("gate") or {}
-    return TaskConfig(
-        float(d.get("threshold", DEFAULT_THRESHOLD)),
-        Gate(
-            float(g.get("pass_rate", DEFAULT_GATE_PASS_RATE)),
-            int(g.get("min_cases", DEFAULT_GATE_MIN_CASES)),
-        ),
-    )
+def dataset_metadata(cases: Path | str | list[Case], loaded: list[Case]) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    if not isinstance(cases, list) and (Path(cases) / "_task.yaml").is_file():
+        raw = _read(Path(cases) / "_task.yaml")
+        if not isinstance(raw, dict):
+            raise ValueError("_task.yaml must be a mapping")
+        data = dict(raw)
+    rate, minimum = data.get("required_pass_rate", 0.95), data.get("min_cases", 50)
+    if (
+        isinstance(rate, bool)
+        or not isinstance(rate, int | float)
+        or not math.isfinite(rate)
+        or not 0 < rate <= 1
+    ):
+        raise ValueError("required_pass_rate must be finite and in (0, 1]")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
+        raise ValueError("min_cases must be a positive integer")
+    data.update(required_pass_rate=float(rate), min_cases=minimum)
+    payload = json.dumps([asdict(case) for case in loaded], sort_keys=True).encode()
+    prompts = json.dumps(
+        [{"system": c.system, "schema": c.schema} for c in loaded], sort_keys=True
+    ).encode()
+    data["dataset_sha256"] = hashlib.sha256(payload).hexdigest()
+    data["prompt_schema_sha256"] = hashlib.sha256(prompts).hexdigest()
+    # A valid JSON shape alone cannot establish a correct decision. Never trust a
+    # manifest's assertion about coverage; derive it from the loaded checks.
+    data["outcome_checks_complete"] = all(_has_outcome_check(case) for case in loaded)
+    return data
+
+
+def _has_outcome_check(case: Case) -> bool:
+    covered: set[str] = set()
+    for check in case.checks:
+        kind = check.get("type")
+        if kind == "exact":
+            covered.update(f for f in check.get("fields") or case.expected if f in case.expected)
+        elif (
+            kind in {"contains", "numeric"}
+            and "field" in check
+            and ("value" in check or check["field"] in case.expected)
+        ):
+            covered.add(check["field"])
+    if case.expected:
+        return set(case.expected) <= covered
+    return bool(covered)
 
 
 def _threshold(cases: Path | str | None) -> float:
-    return load_task_config(cases).threshold
-
-
-def _number(out: dict[str, Any], f: str) -> float | None:
-    v = out.get(f)
-    if isinstance(v, bool) or not isinstance(v, int | float):
-        return None
-    return float(v)
+    if cases is not None and (Path(cases) / "_task.yaml").exists():
+        value = _read(Path(cases) / "_task.yaml").get("threshold", DEFAULT_THRESHOLD)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise ValueError("shadow threshold must be finite and in [0, 1]")
+        return float(value)
+    return DEFAULT_THRESHOLD
 
 
 def _check(c: Case, out: dict[str, Any], chk: dict[str, Any]) -> str | None:
@@ -304,58 +234,67 @@ def _check(c: Case, out: dict[str, Any], chk: dict[str, Any]) -> str | None:
     elif kind == "contains":
         if str(chk["value"]).lower() not in str(out.get(chk["field"], "")).lower():
             return f"contains: {chk['field']} lacks {chk['value']!r}"
-    elif kind == "not_contains":
-        if str(chk["value"]).lower() in str(out.get(chk["field"], "")).lower():
-            return f"not_contains: {chk['field']} contains {chk['value']!r}"
-    elif kind == "not_equal":
-        if chk["field"] in out and out[chk["field"]] == chk["value"]:
-            return f"not_equal: {chk['field']} = {chk['value']!r}"
-    elif kind in ("min", "max"):
-        f, bound, strict = chk["field"], float(chk["value"]), bool(chk.get("exclusive"))
-        got = _number(out, f)
-        if got is None:
-            return f"{kind}: {f} missing or not a number"
-        if kind == "min" and (got < bound or (strict and got == bound)):
-            return f"min: {f} = {got} is not {'above' if strict else 'at least'} {bound}"
-        if kind == "max" and (got > bound or (strict and got == bound)):
-            return f"max: {f} = {got} is not {'below' if strict else 'at most'} {bound}"
+    elif kind == "numeric_min":
+        value, minimum = out.get(chk["field"]), chk.get("min")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or isinstance(minimum, bool)
+            or not isinstance(minimum, int | float)
+            or not math.isfinite(value)
+            or not math.isfinite(minimum)
+            or value < minimum
+        ):
+            return f"numeric_min: {chk['field']} must be at least {minimum}"
     elif kind == "numeric":
         f, tol = chk["field"], float(chk.get("tolerance", 0))
         want = chk.get("value", c.expected.get(f))
         try:
-            if abs(float(out[f]) - float(want)) > tol:  # type: ignore[arg-type]
+            actual, expected = float(out[f]), float(want)  # type: ignore[arg-type]
+            if (
+                not all(math.isfinite(v) for v in (actual, expected, tol))
+                or tol < 0
+                or abs(actual - expected) > tol
+            ):
                 return f"numeric: {f} = {out[f]} not within {tol} of {want}"
         except (KeyError, TypeError, ValueError):
             return f"numeric: {f} missing or not a number"
-    elif kind == "any_of":
-        fails = []
-        for sub in chk["checks"]:
-            msg = _check(c, out, sub)
-            if msg is None:
-                return None
-            fails.append(msg)
-        return f"any_of: none passed ({' | '.join(fails)})"
     else:
         return f"unknown check {kind}"
     return None
 
 
 def score_case(c: Case, out: dict[str, Any]) -> CaseResult:
+    try:
+        json.dumps(out, allow_nan=False)
+    except (ValueError, TypeError):
+        return CaseResult(c.name, 0.0, ["output is not finite JSON"], error="invalid JSON output")
+    if not c.checks:
+        return CaseResult(c.name, 0.0, ["case has no checks"], out)
     fails = [m for chk in c.checks if (m := _check(c, out, chk))]
     total = len(c.checks) or 1
     return CaseResult(c.name, (total - len(fails)) / total, fails, out)
 
 
 async def run_eval(
-    task: str,
-    tier: Tier,
-    router: Router,
-    cases: Path | str | list[Case],
-    gate: Gate | None = None,
+    task: str, tier: Tier, router: Router, cases: Path | str | list[Case]
 ) -> EvalReport:
+    if tier not in ("local", "cloud"):
+        raise ValueError(f"invalid evaluation tier: {tier}")
+    port = router.cloud if tier == "cloud" else router.local
+    if port is None:
+        raise ValueError(f"requested {tier} model is not configured")
     loaded = cases if isinstance(cases, list) else load_cases(cases)
-    if gate is None:
-        gate = load_task_config(None if isinstance(cases, list) else cases).gate
+    if not loaded:
+        raise ValueError("evaluation needs at least one case")
+    metadata = dataset_metadata(cases, loaded)
+    if metadata.get("task") not in (None, task):
+        raise ValueError(f"dataset is for {metadata['task']}, not {task}")
+    metadata.update(
+        actual_tier=tier,
+        backend=f"{type(port).__module__}.{type(port).__name__}",
+        configured_model=getattr(port, "model", None),
+    )
     results = []
     for c in loaded:
         try:
@@ -371,8 +310,17 @@ async def run_eval(
             results.append(score_case(c, r.output))
         except Exception as exc:  # a failed call scores zero, the run continues
             results.append(CaseResult(c.name, 0.0, [str(exc)], error=str(exc)))
-    score = sum(r.score for r in results) / len(results) if results else 0.0
-    return EvalReport(task, tier, score, results, gate)
+    passed = sum(result.passed for result in results)
+    return EvalReport(
+        task,
+        tier,
+        passed / len(results),
+        results,
+        passed,
+        len(results),
+        sum(r.score for r in results) / len(results),
+        metadata,
+    )
 
 
 def _agree(c: Case, a: CaseResult, b: CaseResult) -> bool:
@@ -387,47 +335,57 @@ async def shadow(
     router: Router,
     cases: Path | str | list[Case],
     threshold: float | None = None,
-    gate: Gate | None = None,
 ) -> ShadowReport:
-    """Run both tiers on the same cases; report each tier's pass rate and gate, agreement,
-    and readiness for local."""
+    """Run both tiers on the same cases and report agreement and readiness for local."""
     loaded = cases if isinstance(cases, list) else load_cases(cases)
-    config = load_task_config(None if isinstance(cases, list) else cases)
-    gate = gate or config.gate
-    local = await run_eval(task, "local", router, loaded, gate)
-    cloud = await run_eval(task, "cloud", router, loaded, gate)
-    agree = [_agree(c, a, b) for c, a, b in zip(loaded, local.results, cloud.results, strict=True)]
+    if router.cloud is None:
+        raise ValueError("shadow evaluation requires a configured cloud model")
+    metadata = dataset_metadata(cases, loaded)
+    if metadata.get("task") not in (None, task):
+        raise ValueError(f"dataset is for {metadata['task']}, not {task}")
     if threshold is None:
-        threshold = config.threshold
+        threshold = _threshold(None if isinstance(cases, list) else cases)
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, int | float)
+        or not math.isfinite(threshold)
+        or not 0 <= threshold <= 1
+    ):
+        raise ValueError("shadow threshold must be finite and in [0, 1]")
+    local = await run_eval(task, "local", router, loaded)
+    cloud = await run_eval(task, "cloud", router, loaded)
+    local.metadata = {
+        **metadata,
+        **{k: local.metadata[k] for k in ("actual_tier", "backend", "configured_model")},
+    }
+    cloud.metadata = {
+        **metadata,
+        **{k: cloud.metadata[k] for k in ("actual_tier", "backend", "configured_model")},
+    }
+    agree = [_agree(c, a, b) for c, a, b in zip(loaded, local.results, cloud.results, strict=True)]
     return ShadowReport(task, local, cloud, sum(agree) / len(agree) if agree else 0.0, threshold)
 
 
 def report_json(r: EvalReport | ShadowReport) -> str:
-    return json.dumps(r.as_dict(), default=str, indent=2)
+    def evaluation(value: EvalReport) -> dict[str, Any]:
+        return {
+            **asdict(value),
+            "pass_rate": value.pass_rate,
+            "technical_gate_passed": value.technical_gate_passed,
+            "deployment_ready": value.deployment_ready,
+        }
 
-
-def report_text(r: EvalReport | ShadowReport) -> str:
-    """Plain summary: pass counts, gate verdict, and each failing case with why."""
     if isinstance(r, ShadowReport):
-        lines = [
-            f"{r.task} [shadow]: agreement {r.agreement:.2f}, "
-            f"ready_for_local={r.ready_for_local} (mean score local {r.local.score:.2f}, "
-            f"cloud {r.cloud.score:.2f}, threshold {r.threshold:.2f})"
-        ]
-        for rep in (r.local, r.cloud):
-            lines += ["", *_tier_lines(rep)]
-        return "\n".join(lines)
-    return "\n".join(_tier_lines(r))
-
-
-def _tier_lines(r: EvalReport) -> list[str]:
-    g = r.gate
-    lines = [
-        f"{r.task} [{r.tier}]: {r.passed} of {r.total} cases passed ({r.pass_rate:.1%}); "
-        f"mean score {r.score:.2f}",
-        f"gate: {'PASS' if g.passed else 'FAIL'} - {g.reason}",
-    ]
-    if r.failed:
-        lines.append("failing cases:")
-        lines += [f"  {f.name}: {'; '.join(f.failures) or 'failed'}" for f in r.failed]
-    return lines
+        data = {
+            "task": r.task,
+            "local": evaluation(r.local),
+            "cloud": evaluation(r.cloud),
+            "agreement": r.agreement,
+            "threshold": r.threshold,
+            "comparison_valid": r.comparison_valid,
+            "technical_gate_passed": r.technical_gate_passed,
+            "ready_for_local": r.ready_for_local,
+        }
+    else:
+        data = evaluation(r)
+    return json.dumps(data, indent=2, allow_nan=False)

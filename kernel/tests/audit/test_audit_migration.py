@@ -1,4 +1,4 @@
-"""Migration 0021 seals the rows already in audit_log, in (at, id) order; verify is clean."""
+"""Migration 0022 seals the rows already in audit_log, in (at, id) order; verify is clean."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 
 def test_backfill_chains_existing_rows_and_verifies_clean(fresh_db: str) -> None:
-    migrations.upgrade(fresh_db, "0020")
+    migrations.upgrade(fresh_db, "0021")
     eng = create_engine(fresh_db)
     base = datetime(2026, 1, 1, tzinfo=UTC)
     # Inserted out of time order; the backfill must chain by (at, id).
@@ -58,7 +58,7 @@ def test_backfill_chains_existing_rows_and_verifies_clean(fresh_db: str) -> None
     with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:
         conn.execute(text("UPDATE audit_log SET actor = 'x'"))
 
-    migrations.downgrade(fresh_db, "0020")
+    migrations.downgrade(fresh_db, "0021")  # only the chain; 0021 guards its own data
     cols = {c["name"] for c in inspect(eng).get_columns("audit_log")}
     assert not cols & {"seq", "prev_hash", "hash"}
     with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:

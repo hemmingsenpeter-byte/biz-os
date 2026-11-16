@@ -151,7 +151,7 @@ def test_edit_keeps_idempotency_key(session, edited) -> None:  # type: ignore[no
     session.expire_all()
     assert len(tel.sent) == 1
     # the approver edits the still-approved operation: the version bumps, approval clears
-    op = staged.edit(session, op.id, edited, by="owner")
+    op = staged.edit(session, op.id, edited, by="owner", version=op.version)
     assert op.version == 2 and op.status == "pending" and op.approved_version is None
     assert op.inputs["idempotency_key"] == "run1:reply"
     assert op.inputs["body"] == "Edited"
@@ -165,4 +165,4 @@ def test_edit_keeps_idempotency_key(session, edited) -> None:  # type: ignore[no
 def test_edit_of_unkeyed_operation_adds_no_key(session) -> None:  # type: ignore[no-untyped-def]
     action = Action(actor="r", tool="t", side_effect=SideEffect.EXTERNAL, inputs={"a": 1})
     op = staged.stage(session, action, "owner")
-    assert staged.edit(session, op.id, {"a": 2}).inputs == {"a": 2}
+    assert staged.edit(session, op.id, {"a": 2}, version=op.version).inputs == {"a": 2}

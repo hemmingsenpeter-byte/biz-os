@@ -19,6 +19,7 @@ export function useData<T>(path: string) {
     try {
       const value = await api<T>(path, { signal: controller.signal });
       if (!controller.signal.aborted) setResult({ path, value });
+      if (!controller.signal.aborted) return value;
     } catch (err) {
       if (controller.signal.aborted) return;
       if (err instanceof ApiError && err.status === 401)

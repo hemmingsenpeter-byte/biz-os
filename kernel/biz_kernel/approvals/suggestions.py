@@ -48,10 +48,10 @@ def approve_suggestion(
 
     Nothing is approved while the kill switch is on (raises control.Paused).
     """
-    control.guard(session, "resume before approving")  # first: before any other write
     s = session.get(Suggestion, suggestion_id, with_for_update=True)
     if s is None or s.status != "proposed":
         raise staged.ApprovalError("suggestion is not open")
+    control.admit(session, "resume before approving")  # held to commit: no pause can land
     side_effect = registry.get(s.tool).side_effect if registry else SideEffect.EXTERNAL
     action = Action(
         actor=s.source,

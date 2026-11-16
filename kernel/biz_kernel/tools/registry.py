@@ -138,6 +138,8 @@ class ToolRegistry:
             assert self.budgets is not None
             charged = self.budgets.charge(session, actor, cost, "tool", name, self.now())
         try:
+            if tool.side_effect in GATED or tool.inner:
+                control.admit(session, name)
             output = tool.fn(session=session, **extra, **args)
         except Exception:
             if charged is not None and self.budgets is not None:

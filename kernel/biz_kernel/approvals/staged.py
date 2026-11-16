@@ -56,7 +56,10 @@ def _json(value: Any) -> Any:
 
 def _locked(session: Session, op_id: uuid.UUID) -> StagedOperation:
     op = session.scalar(
-        select(StagedOperation).where(StagedOperation.id == op_id).with_for_update()
+        select(StagedOperation)
+        .where(StagedOperation.id == op_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if op is None:
         raise ApprovalError(f"no staged operation {op_id}")
@@ -111,7 +114,6 @@ def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> Staged
 
     Nothing is approved while the kill switch is on (raises control.Paused).
     """
-    control.guard(session, "resume before approving")
     op = _locked(session, op_id)
     if op.status != "pending":
         raise ApprovalError(f"operation is {op.status}, not pending")
@@ -119,6 +121,9 @@ def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> Staged
         raise StaleVersion(f"approval names version {version}, current is {op.version}")
     if by == op.actor or by not in (op.approver, OWNER):
         raise NotAuthorised(f"{by} may not approve this operation")
+    # After the row lock, never before: a pause must not wait behind an approval that is
+    # itself waiting on a row. From here to commit no pause can land.
+    control.admit(session, "resume before approving")
     op.status, op.approved_by = "approved", by
     op.approved_version, op.approved_sha256 = op.version, op.inputs_sha256
     if op.decision_type:
@@ -145,11 +150,12 @@ def edit(
     by: str = "",
     reason: str = "",
     severity: str | None = None,
-    version: int | None = None,
+    *,
+    version: int,
 ) -> StagedOperation:
     """Change inputs: bumps the version and clears any approval.
 
-    `version` is the version the editor saw. When given and no longer current, the edit is
+    `version` is the version the editor saw. When it is no longer current, the edit is
     refused (StaleVersion), so two people editing at once can't overwrite each other.
 
     An edit by anyone but the proposing role is a correction: the draft, the edit, the
@@ -161,10 +167,10 @@ def edit(
     if severity is not None and severity not in SEVERITIES:
         raise ApprovalError(f"severity must be one of {', '.join(SEVERITIES)}")
     op = _locked(session, op_id)
+    if version != op.version:
+        raise StaleVersion(f"edit names version {version}, current is {op.version}")
     if op.status not in ("pending", "approved"):
         raise ApprovalError(f"operation is {op.status}, cannot edit")
-    if version is not None and version != op.version:
-        raise StaleVersion(f"edit names version {version}, current is {op.version}")
     inputs = _json(new_inputs)
     if IDEMPOTENCY_KEY in op.inputs:
         inputs[IDEMPOTENCY_KEY] = op.inputs[IDEMPOTENCY_KEY]

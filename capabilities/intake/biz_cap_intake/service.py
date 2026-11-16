@@ -10,7 +10,9 @@ from typing import Any
 
 from biz_kernel import db
 from biz_kernel.packets.bus import Bus, Packet
+from biz_kernel.policy.types import Deny
 from biz_kernel.records.models import Party, Person
+from biz_kernel.tools.registry import ToolRegistry
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -97,15 +99,43 @@ def normalize_address(raw: str) -> str:
     return normalize_phone(text, str(cc) if cc else None)
 
 
-def is_opted_out(session: Session, address: str) -> bool:
-    return session.get(OptOut, normalize_address(address)) is not None
+SHARED_CHECK, SHARED_RECORD = "comms.is_suppressed", "comms.opt_out"
 
 
-def add_opt_out(session: Session, address: str, source: str) -> None:
+class _NoGate:
+    """Policy for the two shared-list calls: neither tool is gated, so nothing is allowed."""
+
+    def check(self, session: Session, action: Any) -> Deny:
+        return Deny("intake calls only ungated tools")
+
+
+def _shared(session: Session, registry: ToolRegistry | None, name: str, **args: Any) -> Any:
+    """Ask the shared suppression list through its published tool, when it is loaded.
+
+    There is one opt-out list for the whole business (owned by comms). Intake keeps its own
+    rows as well, so it still honours opt-outs in a composition without comms.
+    """
+    if registry is None or name not in registry.tools:
+        return None
+    return registry.call(session, _NoGate(), actor="intake", name=name, args=args).output
+
+
+def is_opted_out(session: Session, address: str, registry: ToolRegistry | None = None) -> bool:
+    key = normalize_address(address)
+    if session.get(OptOut, key) is not None:
+        return True
+    out = _shared(session, registry, SHARED_CHECK, address=key)
+    return bool(out and out.get("suppressed"))
+
+
+def add_opt_out(
+    session: Session, address: str, source: str, registry: ToolRegistry | None = None
+) -> None:
     key = normalize_address(address)
     if session.get(OptOut, key) is None:
         session.add(OptOut(address=key, source=source))
         session.flush()
+    _shared(session, registry, SHARED_RECORD, address=key, source=source[:40])
 
 
 def recently_texted(session: Session, number: str, exclude_key: str | None = None) -> bool:
@@ -163,6 +193,7 @@ def receive(
     subject: str = "",
     body: str = "",
     provider_id: str | None = None,
+    registry: ToolRegistry | None = None,
 ) -> Received:
     """Store the enquiry (once per provider id) and publish enquiry.received (once).
 
@@ -191,14 +222,14 @@ def receive(
         session.add(enquiry)
         session.flush()
     if channel == "sms" and is_opt_out_text(body):
-        add_opt_out(session, sender, "sms_stop")
+        add_opt_out(session, sender, "sms_stop", registry)
         enquiry.status, enquiry.classified_as, enquiry.reason = "opted_out", "other", "opt_out"
         session.flush()
         return Received(enquiry, None, duplicate)
     # Only a missed call earns the templated text-back, at most once per number per 24h.
     can_text = (
         channel == "phone"
-        and not is_opted_out(session, sender)
+        and not is_opted_out(session, sender, registry)
         and not recently_texted(session, sender)
     )
     key = f"enquiry.received:{channel}:{provider_id}" if provider_id else None

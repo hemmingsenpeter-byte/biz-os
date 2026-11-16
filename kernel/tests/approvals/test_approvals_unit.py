@@ -43,7 +43,7 @@ def test_streak_resets_on_edit(session):
     reg, _, pol = setup()
     op = staged.run_or_stage(session, reg, pol, "r", "demo.send", {"a": 1}, "dt")
     staged.approve(session, op.id, "owner", 1)
-    staged.edit(session, op.id, {"a": 2})
+    staged.edit(session, op.id, {"a": 2}, version=op.version)
     staged.approve(session, op.id, "owner", 2)
     row = autonomy._row(session, "r", "dt")
     assert row.approved_unchanged_streak == 0

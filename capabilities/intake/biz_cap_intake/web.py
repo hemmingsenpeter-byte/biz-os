@@ -16,6 +16,7 @@ from typing import Any
 
 from biz_kernel import db
 from biz_kernel.auth.deps import DbSession
+from biz_kernel.contracts.ports import SenderAuth
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -151,6 +152,7 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
             sender=event.from_number,
             body=event.body or "",
             provider_id=event.provider_id,
+            registry=getattr(rt, "registry", None),
         )
         return {
             "status": "duplicate" if got.duplicate else "accepted",
@@ -176,6 +178,7 @@ def build_router(rt: Any, limiter: RateLimiter | None = None) -> APIRouter:
             subject=body.subject or (f"Form from {body.name}" if body.name else "Form enquiry"),
             body=body.message,
             provider_id=f"form:{digest}",
+            registry=getattr(rt, "registry", None),
         )
         return {"status": "accepted", "enquiry_id": str(got.enquiry.id)}
 
@@ -210,16 +213,13 @@ def match_reply(rt: Any, session: Any, sender: str, subject: str) -> dict[str, A
 
 
 def sender_verified(m: Any) -> bool:
-    """True only when the mail port reports a passing DMARC result for the message.
+    """True only when our receiving mail server reported a DMARC pass for the From domain.
 
-    The From header alone is unverified. Ports do not expose Authentication-Results today
-    (the M365 adapter drops headers), so this is false until one does.
+    The From header alone proves nothing: without the port's verdict (`m.auth`), or with a
+    pass for some other domain, the sender is unverified and gets flagged, never trusted.
     """
-    headers = getattr(m, "headers", None)
-    raw = getattr(m, "authentication_results", None)
-    if raw is None and isinstance(headers, dict):
-        raw = headers.get("Authentication-Results")
-    return "dmarc=pass" in str(raw or "").lower()
+    auth = getattr(m, "auth", None)
+    return isinstance(auth, SenderAuth) and auth.verifies(str(m.sender or ""))
 
 
 def receive_reply(session: Any, rt: Any, m: Any, thread: dict[str, Any]) -> Any:
@@ -286,6 +286,7 @@ def poll_mail(rt: Any) -> int:
                         subject=str(m.subject or "")[: service.MAX_SUBJECT],
                         body=str(m.body or "")[: service.MAX_BODY],
                         provider_id=str(m.provider_id)[: service.MAX_PROVIDER_ID],
+                        registry=getattr(rt, "registry", None),
                     )
             except Exception:
                 log.exception("mail message %r skipped", str(m.provider_id)[:80])

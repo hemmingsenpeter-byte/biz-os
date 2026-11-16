@@ -1,0 +1,11 @@
+schema_version: 1
+dataset: receptionist-handle-reply-heldout
+dataset_version: "1.0.0"
+task: receptionist.handle_reply
+decision_type: reply_drafting
+split: heldout
+provenance: synthetic
+owner_reviewed: false
+required_pass_rate: 0.95
+min_cases: 50
+threshold: 0.1

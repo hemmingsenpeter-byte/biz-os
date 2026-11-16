@@ -2459,3 +2459,32 @@ td .not-measured {
     flex-direction: column-reverse;
   }
 }
+
+.conflict-review {
+  border: 1px solid #e6d6ae;
+  border-radius: 8px;
+  background: #fffaf0;
+  padding: 16px;
+  margin-bottom: 22px;
+}
+.conflict-review > .input-list {
+  padding: 0;
+}
+.conflict-review > p {
+  margin: 8px 0 12px;
+  font-size: 11px;
+  color: #74664c;
+}
+.conflict-review .button {
+  white-space: normal;
+}
+.edit-why .notice .button {
+  margin-top: 12px;
+}
+@media (max-width: 720px) {
+  .score-table td .not-measured {
+    white-space: normal;
+    max-width: 50%;
+    text-align: right;
+  }
+}

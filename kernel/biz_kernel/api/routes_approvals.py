@@ -51,6 +51,7 @@ class RejectIn(BaseModel):
 
 
 class EditIn(BaseModel):
+    version: int
     inputs: dict[str, Any]
     reason: str = ""  # one line: why the draft was wrong
     severity: Literal["cosmetic", "factual", "policy"] | None = None
@@ -194,6 +195,7 @@ def router() -> APIRouter:
                 by=identity(user),
                 reason=body.reason,
                 severity=body.severity,
+                version=body.version,
             )
             return card(session, op)
         except staged.ApprovalError as exc:

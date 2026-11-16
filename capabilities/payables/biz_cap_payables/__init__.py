@@ -30,4 +30,5 @@ def owner_routes(rt: Any) -> Any:
 def pollers(rt: Any) -> list[Callable[[], int]]:
     """Hook: binds composition config (match tolerance); nothing to poll."""
     config.bind(rt.manifest)
+    config.tax_rate()  # a bad tax rate fails at start
     return []

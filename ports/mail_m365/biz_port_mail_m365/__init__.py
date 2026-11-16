@@ -30,6 +30,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
+from .auth_results import trusted_auth  # noqa: E402
 from .models import M365Send  # noqa: E402
 
 __all__ = ["IDEMPOTENCY_HEADER", "M365Mail", "MemoryLedger", "SendLedger", "SqlLedger", "create"]
@@ -164,6 +165,7 @@ class M365Mail:
         work_end: dtime = dtime(17, 0),
         workdays: tuple[int, ...] = (0, 1, 2, 3, 4),
         clock: Callable[[], float] = time.monotonic,
+        authserv_id: str = "",
     ) -> None:
         self.tenant_id, self.client_id, self.client_secret = tenant_id, client_id, client_secret
         self.mailbox = mailbox
@@ -174,6 +176,9 @@ class M365Mail:
         self.tz = ZoneInfo(timezone)
         self.work_start, self.work_end, self.workdays = work_start, work_end, workdays
         self._clock = clock
+        # Only Authentication-Results stamped with this authserv-id (our receiving server) is
+        # trusted; empty means every inbound sender stays unverified.
+        self.authserv_id = authserv_id.strip()
         self._token: str | None = None
         self._token_expiry = 0.0
 
@@ -291,7 +296,8 @@ class M365Mail:
         url: str | None = (
             f"/mailFolders/inbox/messages?$filter=receivedDateTime ge {stamp}"
             "&$orderby=receivedDateTime asc&$top=50"
-            "&$select=id,subject,body,from,toRecipients,receivedDateTime,conversationId"
+            "&$select=id,subject,body,from,toRecipients,receivedDateTime,conversationId,"
+            "internetMessageHeaders"
         )
         out: list[InboundMessage] = []
         while url:
@@ -312,6 +318,7 @@ class M365Mail:
                         body=text,
                         received_at=_parse_graph_dt(m["receivedDateTime"]),
                         thread_id=m.get("conversationId"),
+                        auth=trusted_auth(m.get("internetMessageHeaders") or [], self.authserv_id),
                     )
                 )
             url = data.get("@odata.nextLink")
@@ -384,7 +391,8 @@ class M365Mail:
 
 def create() -> M365Mail:
     """Build from BIZ_M365_TENANT / _CLIENT_ID / _SECRET / _MAILBOX (+ optional BIZ_M365_TZ,
-    BIZ_M365_WORK_START, BIZ_M365_WORK_END as HH:MM)."""
+    BIZ_M365_WORK_START, BIZ_M365_WORK_END as HH:MM, and BIZ_M365_AUTHSERV_ID: the
+    authserv-id of the tenant's own Authentication-Results header; unset = never verified)."""
     env = os.environ
     return M365Mail(
         env["BIZ_M365_TENANT"],
@@ -395,4 +403,5 @@ def create() -> M365Mail:
         timezone=env.get("BIZ_M365_TZ") or "UTC",
         work_start=dtime.fromisoformat(env.get("BIZ_M365_WORK_START", "09:00")),
         work_end=dtime.fromisoformat(env.get("BIZ_M365_WORK_END", "17:00")),
+        authserv_id=env.get("BIZ_M365_AUTHSERV_ID", ""),
     )

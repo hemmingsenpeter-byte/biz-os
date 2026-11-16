@@ -27,6 +27,8 @@ from biz_kernel.contracts.ports import (
     OutboundMessage,
     Party,
     Payment,
+    PostedDocument,
+    SenderAuth,
     SendResult,
     Signer,
     SignEvent,
@@ -64,6 +66,26 @@ async def check_mail_port(port: MailPort) -> None:
     fetched = await port.fetch_new(EPOCH)
     assert isinstance(fetched, list)
     assert all(isinstance(m, InboundMessage) for m in fetched)
+    for m in fetched:
+        check_sender_auth(m)
+    plain = InboundMessage(
+        provider_id="p", sender="a@example.com", to=[], subject="", body="", received_at=EPOCH
+    )
+    assert plain.auth == SenderAuth() and not plain.auth.verifies(plain.sender), "unverified"
+
+
+def check_sender_auth(m: InboundMessage) -> None:
+    """A message is verified only by a DMARC pass for its own From domain."""
+    auth = m.auth
+    assert isinstance(auth, SenderAuth), m
+    assert {auth.dmarc, auth.spf, auth.dkim} <= {"pass", "fail", "none"}, auth
+    if auth.verifies(m.sender):
+        assert auth.dmarc == "pass", auth
+        assert m.sender.rpartition("@")[2].lower().rstrip(".") == auth.from_domain.lower()
+    if auth.dmarc == "pass" and auth.from_domain:
+        spoofed = f"x@not-{auth.from_domain}"
+        assert not auth.verifies(spoofed), "a pass for one domain must not verify another"
+    assert not auth.verifies("no-at-sign"), "a sender without a domain is never verified"
 
 
 async def check_telephony_port(port: TelephonyPort, sample_webhook: Any | None = None) -> None:
@@ -85,9 +107,16 @@ async def check_accounting_port(port: AccountingPort) -> None:
     lines = [LineItem(description="Item", unit_amount=Decimal("10.00"))]
     inv = InvoiceDraft(party=party, reference="R1", lines=lines, idempotency_key="inv-1")
     ref = await port.create_invoice(inv)
-    assert isinstance(ref, ExternalRef) and ref.id
+    assert isinstance(ref, PostedDocument) and ref.id
+    assert await port.create_invoice(inv) == ref, "a repeat returns the same document and figures"
     bill = BillDraft(party=party, reference="B1", lines=lines, idempotency_key="bill-1")
-    assert isinstance(await port.create_bill(bill), ExternalRef)
+    posted_bill = await port.create_bill(bill)
+    assert isinstance(posted_bill, PostedDocument)
+    for doc in (ref, posted_bill):
+        # The system's own tax and tax-inclusive total, or None for both if it cannot say.
+        assert (doc.tax is None) == (doc.total is None)
+        if doc.tax is not None and doc.total is not None:
+            assert doc.tax >= 0 and doc.total == Decimal("10.00") + doc.tax
     payments = await port.list_payments(EPOCH)
     assert isinstance(payments, list) and all(isinstance(p, Payment) for p in payments)
     future = await port.list_payments(datetime.now(UTC) + timedelta(days=365))

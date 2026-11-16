@@ -1,0 +1,7 @@
+# Same schema as the `draft` step in sops/handle_reply.yaml.
+type: object
+required: [intent, slot_index, confidence]
+properties:
+  intent: { enum: [choose_slot, reschedule, question, decline, other] }
+  slot_index: { type: [integer, "null"] }
+  confidence: { type: number, minimum: 0, maximum: 1 }

@@ -35,4 +35,4 @@ expected: { intent: choose_slot, slot_index: 1 }
 checks:
   - { type: json_schema }
   - { type: exact, fields: [intent, slot_index] }
-  - { type: numeric, field: confidence, value: 0.85, tolerance: 0.1501 }
+  - { type: numeric_min, field: confidence, min: 0.7 }

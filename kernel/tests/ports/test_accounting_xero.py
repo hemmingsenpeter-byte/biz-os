@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import httpx
 import pytest
@@ -101,6 +102,61 @@ def test_payments_parse_xero_dates_and_skip_unauthorised() -> None:
     assert out[0].invoice_ref is not None and out[0].invoice_ref.id == "i1"
     get = [r for r in fake.requests if r.url.path.endswith("/Payments")][0]
     assert "If-Modified-Since" in get.headers
+
+
+def test_posting_returns_xeros_own_tax_and_total() -> None:
+    fake = FakeXero()
+    fake.tax_rate = Decimal("0.125")  # whatever the Xero account charges, not our estimate
+    x = _xero(fake)
+    posted = asyncio.run(x.create_invoice(_draft()))
+    assert (posted.tax, posted.total) == (Decimal("625.00"), Decimal("5625.00"))
+    # A repeat is answered from the ledger, and still carries Xero's figures.
+    again = asyncio.run(x.create_invoice(_draft()))
+    assert again == posted and len(fake.invoices) == 1
+
+
+def test_a_reconciled_create_carries_xeros_figures() -> None:
+    fake, ledger = FakeXero(), MemoryLedger()
+    x = _xero(fake, ledger)
+    fake.fail_next_post = httpx.ReadTimeout("lost the response")
+    with pytest.raises(XeroUncertain):
+        asyncio.run(x.create_invoice(_draft()))
+    ledger._data["ACCREC:k1"]["at"] -= timedelta(minutes=5)  # no longer in flight
+    posted = asyncio.run(x.create_invoice(_draft()))
+    assert len(fake.invoices) == 1
+    assert (posted.tax, posted.total) == (Decimal("750.00"), Decimal("5750.00"))
+
+
+def test_only_money_received_on_sales_invoices_counts_as_a_payment() -> None:
+    """Xero's /Payments also lists what we paid suppliers, and credit-note, prepayment
+    and overpayment entries. None of those is a customer paying an invoice."""
+    fake = FakeXero()
+    x = _xero(fake)
+    paid = datetime(2026, 11, 1, tzinfo=UTC)
+    stamp = f"/Date({int(paid.timestamp() * 1000)}+0000)/"
+
+    def row(pid: str, kind: str | None, inv_type: str | None) -> dict[str, Any]:
+        invoice = {"InvoiceID": f"i-{pid}", "CurrencyCode": "NZD"}
+        if inv_type:
+            invoice["Type"] = inv_type
+        out = {
+            "PaymentID": pid,
+            "Amount": 10,
+            "Date": stamp,
+            "Status": "AUTHORISED",
+            "Invoice": invoice,
+        }
+        return {**out, "PaymentType": kind} if kind else out
+
+    fake.payments = [
+        row("in", "ACCRECPAYMENT", "ACCREC"),
+        row("out", "ACCPAYPAYMENT", "ACCPAY"),  # we paid a supplier
+        row("credit", "ARCREDITPAYMENT", None),
+        row("prepay", "ARPREPAYMENTPAYMENT", None),
+        row("bill-untyped", None, "ACCPAY"),
+    ]
+    out = asyncio.run(x.list_payments(paid - timedelta(days=1)))
+    assert [p.ref.id for p in out] == ["in"]
 
 
 def test_bank_balance_sums_account_rows_not_the_total() -> None:

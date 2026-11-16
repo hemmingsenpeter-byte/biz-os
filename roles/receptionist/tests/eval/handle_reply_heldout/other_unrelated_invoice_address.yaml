@@ -1,0 +1,37 @@
+name: other_unrelated_invoice_address
+tags: [ambiguous]
+why: "About a different matter; it does not answer the offer."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "While I have you - the invoice you sent last month had the wrong address on it."
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-02-08T10:00:00+00:00",
+          "end": "2027-02-08T10:30:00+00:00",
+          "label": "Mon 08 Feb 2027 10:00 UTC"
+        },
+        {
+          "index": 1,
+          "start": "2027-02-09T14:30:00+00:00",
+          "end": "2027-02-09T15:00:00+00:00",
+          "label": "Tue 09 Feb 2027 14:30 UTC"
+        },
+        {
+          "index": 2,
+          "start": "2027-02-11T09:00:00+00:00",
+          "end": "2027-02-11T09:30:00+00:00",
+          "label": "Thu 11 Feb 2027 09:00 UTC"
+        }
+      ]
+    }
+expected: { intent: other, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

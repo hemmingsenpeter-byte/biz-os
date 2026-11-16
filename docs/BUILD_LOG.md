@@ -1,5 +1,167 @@
 # Build log
 
+## 2026-11-16: one line again (PR #3 merged into the working branch)
+
+`main` had PR #4. Two lines had grown apart from it: this branch (owner decisions, review
+fixes, sender verification, audit chain) and draft PR #3 `codex/reliability-integration`
+(the 2026-11-09 retry, opt-out, budget, tax and payment fixes that never reached `main`,
+plus its own hardening of pause, edits, metrics and evaluation). This merge joins them.
+PR #3 is now contained in this branch.
+
+### Decisions made (check these)
+
+- **Where the two lines did the same job differently, one design was kept:**
+  - **Evaluation: PR #3's.** Its harness, `biz eval` options (`--json`, `--output`,
+    `--gate`), dataset metadata in `_task.yaml` and `numeric_min` checks replace this
+    branch's gate report and check types (`any_of`, `not_equal`, `not_contains`,
+    `min`/`max`), which no case used. Synthetic, unreviewed sets can pass the technical
+    gate but can't claim readiness, which is what the plan wants.
+  - **Edit version: PR #3's.** `version` is required on `POST /v1/approvals/{id}/edit`
+    (this branch had it optional). The console sends the version the editor loaded and
+    keeps unsaved changes on a conflict. Deploy the API and console together.
+  - **Pause locking: both, on one lock.** Pause and resume take one advisory lock
+    exclusively. Approvals and dispatches take it shared without waiting (`control.admit`),
+    after their row and budget locks, and hold it to commit. This branch's waiting lock
+    for approvals is gone: it made a pause wait behind an approval that was itself
+    waiting on a row. Event times still come from the database clock (this branch).
+    Approving a suggestion while paused is refused (this branch).
+- **The audit chain migration is now `0022`,** after PR #3's `0021` (which reconciles the
+  two historical `0020` layouts). Nothing had been deployed with the old number.
+- **The reply-handling held-out set (57 cases) now follows PR #3's dataset format** and
+  is covered by its production-contract test, like the other three folders.
+- Statements in the two entries below that this supersedes: "the field is optional in
+  the API", the `biz eval` exit-code and check-type description, and "migration `0021`"
+  for the audit chain.
+
+### Checks
+
+Ruff, format, mypy, `biz doctor` for both apps, the full Python suite, web lint,
+typecheck and build, and the browser acceptance test all pass on the merged code.
+
+## 2026-11-13: owner decisions, review fixes, eval gate, sender verification
+
+The owner approved the three open decisions and the mail port change.
+
+### Decisions made (check these)
+
+- **Cosmetic edits keep the promotion streak.** An approval extends it when every edit
+  since the draft is a correction tagged cosmetic. The role's own rewrites, unattributed
+  edits and untagged, factual or policy corrections still reset it.
+- **Edits name the version they change.** `POST /v1/approvals/{id}/edit` takes
+  `version`; a stale one is a 409. The field is optional in the API so older clients
+  still work; the console always sends it.
+- **Complaints, refund and billing questions, and failed earlier work are
+  `service_request`.** The triage prompt now says so, matching the test set's labels.
+- **Kill switch review fixes** (a fresh-eyes review of PR #4 found four defects, each
+  proven by a failing test, now in `tests/invariants/test_kill_switch_races.py`):
+  - The pause state is the newest event by the database clock, written under an
+    exclusive advisory lock. Before, the highest uuid7 id won, so a pause from a machine
+    whose clock was behind, or two events in one millisecond, could sort the wrong way.
+  - Every approval path takes the same lock shared and refuses while paused, so a pause
+    and an approval can't interleave. Approving a suggestion while paused was possible
+    and is now refused.
+  - A tick that started paused raises no missed-schedule alerts, even if the owner
+    resumes during it.
+  - A pause now waits for approvals already in progress to commit (normally
+    milliseconds).
+- **`biz eval` reports the promotion gate.** It prints passed, total, pass rate and a
+  verdict (at least 95% of at least 50 cases, set per task in `_task.yaml`). It exits 0
+  only when the gate passes, so the tuning folders (under 50 cases) always exit 1. New
+  check types: `any_of`, `not_equal`, `not_contains`, `min`/`max`.
+- **Reply handling has a held-out set:** 57 cases (choose_slot 23, reschedule 10,
+  question 9, decline 7, other 8; 10 injection attempts).
+- **Sender verification (defect #3).** The mail port's `InboundMessage` gains `auth`
+  (DMARC, SPF and DKIM results). A sender is verified only on a DMARC pass for their own
+  From domain. The Microsoft 365 adapter trusts only the topmost `Authentication-Results`
+  header carrying `BIZ_M365_AUTHSERV_ID`; with that unset, nothing is verified. Intake
+  passes the verdict into reply handling. Unverified senders are still flagged and the
+  owner still confirms every booking.
+- **Overdue reminders never pile up.** Each poll publishes at most one reminder per
+  invoice, the latest step now due; steps that came due unseen (a pause, a stopped
+  worker) are skipped, not caught up. Nothing is published while paused. The reviewer
+  suspected this; it was real.
+- **Deploys no longer strand waiting runs.** DBOS 3.4 recovers only workflows whose
+  application version matches, and by default the version is a hash of the workflow
+  source, so any deploy touching the runner left every run waiting on an approval stuck
+  for good (the reviewer suspected this for pauses; it applied to every deploy). The
+  worker now pins `application_version` to `WORKFLOW_VERSION` ("1", overridable with
+  `BIZ_WORKFLOW_VERSION`). Bump it only when the SOP workflow's step sequence changes in
+  a way an in-flight run can't replay, and drain waiting runs before that deploy.
+  - **The first deploy of this change** still meets runs started under the old hashed
+    version. Before deploying, check for waiting runs; if any exist, set
+    `BIZ_WORKFLOW_VERSION` to the old version name (in the DBOS system database's
+    application versions table) for that deploy, or approve or reject them first.
+- **The audit log is hash-chained** (migration `0021`). Rows are written as before, with
+  no lock; each worker heartbeat seals new rows into a SHA-256 chain in its own short
+  transaction. The append-only trigger allows exactly one update: sealing an unsealed row
+  with nothing else changed. `biz audit verify <app>` seals, then reports changed rows,
+  broken links, deleted rows, gaps, and rows left unsealed over 10 minutes; it exits 1 on
+  any problem. A first design that locked on every write was rejected: it would have held
+  a global lock across mail and accounting calls.
+  - **Tamper window:** a row is unprotected until the next seal (one heartbeat, 60 s by
+    default). Deleting rows from the end of the chain can't be detected without keeping
+    a copy of the chain head somewhere else (see "Waiting on the owner").
+- **Test order fix:** the production-app test left a stub DBOS client behind, which made
+  in-process DBOS tests fail depending on order. It now restores it.
+
+### Waiting on the owner
+
+- **Exchange Online's header format.** Exchange Online may stamp `Authentication-Results`
+  with no authserv-id. If so, M365 mail can never be verified as built. Choices: confirm
+  Exchange removes sender-inserted copies and trust the topmost header without an id,
+  verify ARC instead, or accept verification stays off. Needs one real message header
+  from HIVE's tenant to decide.
+- New enquiries (not replies) carry no sender verdict, and meeting offers still go to the
+  unverified address. Changing that touches sending.
+- `reply.received/v1` does not declare `sender_verified` in its schema.
+- **Where to keep the audit chain head** so truncation is detectable: for example in the
+  daily brief to the owner, or an off-box backup. `biz audit verify` prints it.
+
+### Not done yet
+
+- **Unproven review suspicion:** `TRUNCATE` is not blocked on append-only tables.
+- No local or cloud model has been scored on the test sets.
+
+## 2026-11-12: Claude branch integration and reliability review
+
+- Integrated `claude/zen-edison-rurxg7` (`b47f688`) with
+  `claude/nifty-lamport-ixolby` (`474c3c2`), preserving controls/corrections and the
+  older retry, alert, opt-out, budget, tax and payment fixes. M7–M9 stay frozen.
+- Pause transitions now serialize and use strictly increasing event timestamps.
+  Dispatch and approval mutations coordinate with transitions, after blocking
+  preflight. Pause acknowledgement waits for already admitted transactions;
+  queued actions cannot dispatch afterwards. Workflow contention rolls back
+  before parking, releasing budget and operation locks.
+  API transactions finish before the HTTP response, so a commit failure cannot
+  acknowledge a successful transition or correction.
+- Edits require the loaded version. Stale requests return 409 without overwriting
+  another correction; the console retains unsaved changes for explicit review.
+- Scorecard acceptance uses every proposal in its denominator. Missing or partial
+  historical edit provenance remains unknown. Serious errors are unmeasured;
+  demotion events are disclosed separately. No timed baseline means no time-saving
+  claim. These corrections supersede the measurement limitations recorded below.
+- Evaluations score complete passing cases, refuse missing/empty datasets and
+  unavailable tiers, enforce exact finite confidence minima, and record reproducible
+  dataset/prompt/backend metadata. Gates require outcome checks and held-out volume;
+  synthetic unreviewed fixtures cannot claim deployment readiness. Added CI checks
+  tying all 108 fixtures to production contracts; no actual model accuracy is claimed.
+- Reconciled the historical duplicate `0020` migrations into one canonical `0020`
+  plus schema-aware `0021`. Fresh and either existing layout preserve data; existing
+  combined layouts are supported. Incompatible definitions roll back. Tax-dropping
+  downgrade requires the explicit boolean `allow_data_loss=True`.
+- Browser acceptance now covers real staff pause/owner resume, two-tab correction
+  conflicts, and genuinely missing metric baselines/legacy history, using fake ports
+  and disposable services.
+
+Upgrade/API notes, exact acknowledgement semantics and remaining business gates:
+[Reliability integration](RELIABILITY_INTEGRATION.md).
+
+Validation: the combined Python suite passes **702 tests**. Ruff, formatting,
+mypy and both composition doctors pass. The production frontend build and real
+Chromium flow pass, including staff permissions, concurrent edits and genuinely
+unmeasured metrics. All model checks use fakes; real model/business gates remain
+unproven. Packaged API/worker/web acceptance is also exercised by PR CI.
+
 ## 2026-11-12 (later): plan v2.1, kill switch, corrections, metrics
 
 PRs #1 (container packaging and smoke checks) and #2 (owner console) were merged to
@@ -156,6 +318,38 @@ bank-change screens remain future work.
 HIVE live integrations, the Mac mini deployment, owner web UI and backup acceptance
 remain open. Compose still needs the relevant provider environment variables and
 persistent storage configuration wired before enabling HIVE's real ports.
+## 2026-11-09: review fixes (CI, failed runs, lost spend, opt-outs, Xero payments)
+
+A review of M0 to M6 found four defects, each reproduced first. The owner said to fix them in this order.
+
+### Decisions made (check these)
+
+- **CI is green again.** `routes_approvals.py` was the one file `ruff format --check` flagged; that step had failed the last two pushes to `main`.
+- **A SOP run never dies silently.** A step that raised used to leave the DBOS workflow in `ERROR` and the run `running` for good, with no alert and no retry. Now a passing fault (a provider being down) is retried after 1 minute, 10 minutes and 1 hour (`MAX_ATTEMPTS = 4`). A refusal, a bad input or missing evidence is not retried. A run that cannot go on ends as **`failed`**, raises one **`sop.failed`** alert, and leaves its task open. This replaces the old behaviour where a gate-blocked message ended the run with an `EvidenceMissing` error: it now ends `failed` with the alert.
+- **A decision made before the run started waiting is seen at once**, not after the poll timeout (up to an hour).
+- **A refused cloud draft still counts against the budget.** The draft step rolled back the session the router had written its cost rows into, so paid calls that failed validation left no trace. It now commits the cost before it raises.
+- **One opt-out list.** comms owns it and publishes the new read tool **`comms.is_suppressed`**. Intake checks it before `text_back` and `reply`, and records every stop it takes through `comms.opt_out`. Intake keeps its own rows too, so it still works in a composition without comms. No packet schema or port interface changed.
+- **Xero payments are money in only.** `list_payments` keeps `ACCRECPAYMENT` rows on `ACCREC` invoices; supplier payments and credit-note, prepayment and overpayment rows are skipped.
+- **Checks:** full `pytest` green (566), `ruff check`, `ruff format --check` and `uv run mypy .` clean, `biz doctor` passes for demo and HIVE.
+
+- **Tax: stored amounts are tax-exclusive (the owner's decision), and the tax sits beside them.** New `tax.rate_pct` in `policy.yaml` (default 0; **15 in both apps, check HIVE's**). Invoices and bills gain a `tax` amount (migration `0020`). Posting to Xero is unchanged: exclusive lines, Xero adds the tax. What is *owed* now includes it: an invoice is `paid` only at amount plus tax, and reminders, `invoice.overdue`'s `outstanding_minor`, `invoicing.receivables`, `payables.due`, the payment-run total and so the cash forecast all use the tax-inclusive figure. The approval for posting, `invoice.issued`'s `total_minor` and PO matching stay tax-exclusive. `payables.bill_record` takes an optional `tax` for a supplier whose tax differs (0 for one that charges none). A bad rate fails when the runtime starts. No packet schema or port interface changed.
+
+- **Port interface change (approved by the owner): posting returns the accounting system's own figures.** `AccountingPort.create_invoice` and `create_bill` now return a **`PostedDocument`** (an `ExternalRef` plus `tax` and tax-inclusive `total`, both `None` if the system cannot say). The Xero adapter fills them from `TotalTax` and `Total`, on a fresh create, on a repeat (it reads the invoice back) and on a reconciled create. `invoice_post` and `bill_post` replace our figure with it, and the audit entry keeps both. So `tax.rate_pct` is only the estimate shown before posting; after posting, what is owed is Xero's number. The fake has a settable `tax_rate_pct`, and the contract suite checks the figures add up and a repeat returns the same ones.
+
+### Waiting on the owner
+
+- Nothing on tax: 15% is confirmed, and the tax is now read back from Xero (below).
+- A failed run has no "try again" button yet: after the alert, the owner can only act by hand.
+- Phone numbers are normalised differently by intake (country code added) and comms (punctuation stripped), so a comms opt-out typed in national format does not match intake's international form.
+
+### Still open from the review (not fixed here)
+
+- Nothing calls `comms.reconcile`, and M365 cannot report "not sent", so an uncertain send stays uncertain.
+- A signed-PDF download that fails leaves the signature at `signed_pending_copy`.
+- A mail message skipped by `poll_mail` is lost once the cursor moves on.
+- No alerter is wired: alerts are only readable at `GET /v1/health/alerts`.
+- Approval edits are not checked against the tool's schema.
+- M5 and M6 have no entry points outside tests (jobs, stages, bills, milestones).
 
 ## 2026-11-09: M6 code close-out (block 1)
 

@@ -1,0 +1,31 @@
+name: question_bring_colleague
+tags: [routine, short]
+why: "A question about the meeting; no slot is picked."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "Can I bring a colleague along?"
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-03-02T09:30:00+00:00",
+          "end": "2027-03-02T10:00:00+00:00",
+          "label": "Tue 02 Mar 2027 09:30 UTC"
+        },
+        {
+          "index": 1,
+          "start": "2027-03-04T15:00:00+00:00",
+          "end": "2027-03-04T15:30:00+00:00",
+          "label": "Thu 04 Mar 2027 15:00 UTC"
+        }
+      ]
+    }
+expected: { intent: question, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

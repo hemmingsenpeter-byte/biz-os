@@ -60,6 +60,7 @@ def op(
                 severity=severity,
             )
         )
+        row.version = n + 1
     session.flush()
     return row
 
@@ -95,7 +96,8 @@ def test_empty_data_reports_nulls_not_zeros(session: Session) -> None:
         "since": "2030-03-01T00:00:00Z",
         "until": "2030-03-29T00:00:00Z",
         "decision_types": [],
-        "serious_errors": 0,
+        "serious_errors": None,
+        "recorded_demotions": 0,
         "tasks_completed": 0,
         "cost_usd": 0.0,
         "cost_per_task_usd": None,
@@ -123,9 +125,10 @@ def test_each_bucket(session: Session) -> None:
         "approved_unchanged": 2,
         "approved_cosmetic": 1,
         "approved_with_errors": 3,
+        "approved_unknown": 0,
         "rejected": 2,
         "pending": 2,
-        "approval_without_edit_rate": 2 / 6,  # rejections are not in the denominator
+        "approval_without_edit_rate": 2 / 10,  # share of every production proposal
         "error_free_rate": 3 / 6,
     }
 
@@ -135,8 +138,52 @@ def test_rates_are_null_when_nothing_was_approved(session: Session) -> None:
     op(session, "pending")
     (row,) = report(session, SINCE, UNTIL).decision_types
     assert row.proposals == 2
-    assert row.approval_without_edit_rate is None and row.error_free_rate is None
+    assert row.approval_without_edit_rate == 0.0 and row.error_free_rate is None
     assert "not measured" in render(report(session, SINCE, UNTIL))
+
+
+def test_rejections_remain_in_the_unchanged_approval_denominator(session: Session) -> None:
+    op(session, "approved")
+    for _ in range(9):
+        op(session, "rejected")
+    (row,) = report(session, SINCE, UNTIL).decision_types
+    assert row.approval_without_edit_rate == 0.1
+    assert row.error_free_rate == 1.0
+
+
+@pytest.mark.parametrize("later_severity", [None, "cosmetic", "factual"])
+def test_legacy_edits_cannot_become_error_free_from_partial_history(
+    session: Session, later_severity: str | None
+) -> None:
+    legacy = op(session, "executed")
+    legacy.version = 2
+    if later_severity is not None:
+        session.add(
+            Correction(
+                op_id=legacy.id,
+                actor=ROLE,
+                tool="t.send",
+                decision_type=KIND,
+                from_version=2,
+                to_version=3,
+                before={},
+                after={},
+                by="owner",
+                severity=later_severity,
+            )
+        )
+        legacy.version = 3
+    session.flush()
+    rep = report(session, SINCE, UNTIL, BASELINE)
+    (row,) = rep.decision_types
+    assert row.approved_unchanged == row.approved_cosmetic == 0
+    assert row.approval_without_edit_rate == 0.0
+    if later_severity == "factual":
+        assert row.approved_with_errors == 1 and row.error_free_rate == 0.0
+    else:
+        assert row.approved_unknown == 1 and row.error_free_rate is None
+    assert rep.time_saved_minutes == -2.0
+    assert rep.serious_errors is None
 
 
 def test_groups_by_role_and_decision_type(session: Session) -> None:
@@ -182,7 +229,7 @@ def test_window_is_since_inclusive_until_exclusive(session: Session) -> None:
     assert rep.decision_types[0].proposals == 2
     assert rep.cost_usd == 3.0
     assert rep.tasks_completed == 2
-    assert rep.serious_errors == 2
+    assert rep.recorded_demotions == 2
 
 
 def test_serious_errors_count_bad_outcomes_only(session: Session) -> None:
@@ -191,11 +238,11 @@ def test_serious_errors_count_bad_outcomes_only(session: Session) -> None:
     autonomy.set_level(session, ROLE, KIND, 3, by="owner")
     autonomy.promote(session, ROLE, KIND, by="owner")
     autonomy.record_outcome(session, ROLE, KIND, good=True)
-    assert report(session, since, until).serious_errors == 0
+    assert report(session, since, until).recorded_demotions == 0
     autonomy.record_outcome(session, ROLE, KIND, good=False)
     autonomy.record_outcome(session, ROLE, "other", good=False)
-    assert report(session, since, until).serious_errors == 2
-    assert report(session, SINCE, UNTIL).serious_errors == 0
+    assert report(session, since, until).recorded_demotions == 2
+    assert report(session, SINCE, UNTIL).recorded_demotions == 0
 
 
 def test_tasks_completed_needs_a_done_task_and_a_finished_run(session: Session) -> None:

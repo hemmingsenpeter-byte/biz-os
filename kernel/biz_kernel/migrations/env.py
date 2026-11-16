@@ -6,7 +6,7 @@ import importlib
 import pkgutil
 
 from alembic import context
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 from biz_kernel.db import Base
 from biz_kernel.models_registry import import_all_models
@@ -51,6 +51,8 @@ def run() -> None:
             version_table_pk=True,
         )
         with context.begin_transaction():
+            if conn.dialect.name == "postgresql":
+                conn.execute(text("SELECT pg_advisory_xact_lock(4776437063156798791)"))
             context.run_migrations()
     engine.dispose()
 

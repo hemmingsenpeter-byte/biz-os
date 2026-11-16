@@ -29,7 +29,9 @@ def test_shadow_threshold():
     assert rep.local.score < rep.cloud.score and not rep.ready_for_local
     assert rep.agreement == 0.5
     r = Router(FakeModel(good), FakeModel(good))
-    assert asyncio.run(shadow("handle_request", r, CASES)).ready_for_local
+    perfect = asyncio.run(shadow("handle_request", r, CASES))
+    assert perfect.local.pass_rate == 1.0
+    assert not perfect.ready_for_local  # two tuning cases cannot authorize deployment
 
 
 def test_cli_help():

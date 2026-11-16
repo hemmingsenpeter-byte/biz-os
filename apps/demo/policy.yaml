@@ -30,6 +30,8 @@ quoting:
   target_margin_pct: 25
   max_discount_pct: 5
   currency: NZD
+tax:
+  rate_pct: 15   # the demo business charges 15% on top of its amounts
 invoicing:
   payment_terms_days: 20
   reminder_days: [7, 14, 30]   # days past due for each reminder

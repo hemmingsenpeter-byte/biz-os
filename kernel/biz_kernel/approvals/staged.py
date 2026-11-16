@@ -8,12 +8,13 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from biz_kernel.approvals import autonomy
 from biz_kernel.approvals.models import SEVERITIES, Correction, StagedOperation
 from biz_kernel.audit.log import record
+from biz_kernel.control import service as control
 from biz_kernel.db import utcnow
 from biz_kernel.policy.types import Action, Deny, NeedsApproval
 from biz_kernel.tools.registry import CallResult, PolicyChecker, ToolRegistry
@@ -55,7 +56,10 @@ def _json(value: Any) -> Any:
 
 def _locked(session: Session, op_id: uuid.UUID) -> StagedOperation:
     op = session.scalar(
-        select(StagedOperation).where(StagedOperation.id == op_id).with_for_update()
+        select(StagedOperation)
+        .where(StagedOperation.id == op_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if op is None:
         raise ApprovalError(f"no staged operation {op_id}")
@@ -91,8 +95,25 @@ def stage(session: Session, action: Action, approver: str, reason: str = "") -> 
     return op
 
 
+def _only_cosmetic_edits(session: Session, op: StagedOperation) -> bool:
+    """True when the approved version differs from the draft only by cosmetic corrections.
+
+    Every edit since version 1 must be a recorded correction tagged cosmetic. An edit that
+    left no correction (the role's own, an unattributed one) or an untagged, factual or
+    policy correction breaks the promotion streak.
+    """
+    edits = op.version - 1
+    if edits == 0:
+        return True
+    severities = list(session.scalars(select(Correction.severity).where(Correction.op_id == op.id)))
+    return len(severities) == edits and all(s == "cosmetic" for s in severities)
+
+
 def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> StagedOperation:
-    """Approve exactly `version`. The approver (or owner) may approve; never the actor."""
+    """Approve exactly `version`. The approver (or owner) may approve; never the actor.
+
+    Nothing is approved while the kill switch is on (raises control.Paused).
+    """
     op = _locked(session, op_id)
     if op.status != "pending":
         raise ApprovalError(f"operation is {op.status}, not pending")
@@ -100,10 +121,15 @@ def approve(session: Session, op_id: uuid.UUID, by: str, version: int) -> Staged
         raise StaleVersion(f"approval names version {version}, current is {op.version}")
     if by == op.actor or by not in (op.approver, OWNER):
         raise NotAuthorised(f"{by} may not approve this operation")
+    # After the row lock, never before: a pause must not wait behind an approval that is
+    # itself waiting on a row. From here to commit no pause can land.
+    control.admit(session, "resume before approving")
     op.status, op.approved_by = "approved", by
     op.approved_version, op.approved_sha256 = op.version, op.inputs_sha256
     if op.decision_type:
-        autonomy.record_approval(session, op.actor, op.decision_type, unchanged=op.version == 1)
+        autonomy.record_approval(
+            session, op.actor, op.decision_type, unchanged=_only_cosmetic_edits(session, op)
+        )
     session.flush()
     record(
         session,
@@ -124,8 +150,13 @@ def edit(
     by: str = "",
     reason: str = "",
     severity: str | None = None,
+    *,
+    version: int,
 ) -> StagedOperation:
     """Change inputs: bumps the version and clears any approval.
+
+    `version` is the version the editor saw. When it is no longer current, the edit is
+    refused (StaleVersion), so two people editing at once can't overwrite each other.
 
     An edit by anyone but the proposing role is a correction: the draft, the edit, the
     reason and its severity (cosmetic, factual or policy) are kept as training data.
@@ -136,6 +167,8 @@ def edit(
     if severity is not None and severity not in SEVERITIES:
         raise ApprovalError(f"severity must be one of {', '.join(SEVERITIES)}")
     op = _locked(session, op_id)
+    if version != op.version:
+        raise StaleVersion(f"edit names version {version}, current is {op.version}")
     if op.status not in ("pending", "approved"):
         raise ApprovalError(f"operation is {op.status}, cannot edit")
     inputs = _json(new_inputs)
@@ -155,6 +188,7 @@ def edit(
                 by=by,
                 reason=reason,
                 severity=severity,
+                at=func.clock_timestamp(),  # the database's clock orders corrections
             )
         )
     op.inputs, op.inputs_sha256 = inputs, digest(inputs)
@@ -265,7 +299,8 @@ def run_or_stage(
 
 def corrections(session: Session, limit: int = 100) -> list[Correction]:
     """Newest first."""
-    return list(session.scalars(select(Correction).order_by(Correction.id.desc()).limit(limit)))
+    newest = (Correction.at.desc(), Correction.id.desc())
+    return list(session.scalars(select(Correction).order_by(*newest).limit(limit)))
 
 
 def pending(session: Session, approver: str | None = None) -> list[StagedOperation]:

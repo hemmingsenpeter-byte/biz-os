@@ -1,0 +1,25 @@
+name: question_spanish_how_long
+tags: [non_english, short]
+why: "Spanish: 'Roughly how long does the meeting last?'; no slot is picked."
+system_file: ../../../prompts/handle_reply.md
+schema_file: _schema.yaml
+untrusted:
+  - |-
+    {
+      "reply": {
+        "subject": "Re: Meeting times",
+        "body": "\u00bfCu\u00e1nto tiempo dura la reuni\u00f3n, m\u00e1s o menos?"
+      },
+      "offered_slots": [
+        {
+          "index": 0,
+          "start": "2027-02-26T10:30:00+00:00",
+          "end": "2027-02-26T11:00:00+00:00",
+          "label": "Fri 26 Feb 2027 10:30 UTC"
+        }
+      ]
+    }
+expected: { intent: question, slot_index: null }
+checks:
+  - { type: json_schema }
+  - { type: exact, fields: [intent, slot_index] }

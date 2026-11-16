@@ -45,13 +45,36 @@ def ensure_database(url: str) -> None:
         admin.dispose()
 
 
+# DBOS recovers only workflows whose application version matches the running one, and by
+# default that version is a hash of the workflow source. Left to the default, any deploy
+# that touched the runner would strand every run waiting on an approval. So the version
+# is pinned. Bump WORKFLOW_VERSION only when the SOP workflow's step sequence changes in a
+# way an in-flight run can't replay, and drain waiting runs before that deploy.
+WORKFLOW_VERSION = "1"
+
+
+def dbos_config(name: str, sys_url: str) -> dict[str, Any]:
+    """DBOS settings for the worker. `BIZ_WORKFLOW_VERSION` overrides the pinned version."""
+    return {
+        "name": f"biz-{name}",
+        "system_database_url": sys_url,
+        "application_version": os.environ.get("BIZ_WORKFLOW_VERSION") or WORKFLOW_VERSION,
+    }
+
+
 def run_once(rt: Any, now: datetime | None = None) -> list[str]:
-    """One loop iteration: heartbeat tick, then the missed-schedule check. Returns woken roles."""
+    """One iteration: heartbeat tick, missed-schedule check, audit seal. Returns woken roles."""
+    from biz_kernel.audit import log as audit
+
     now = now or db.utcnow()
+    with db.session_scope() as s:
+        paused = control.is_paused(s)  # read before the tick: a resume during it changes it
     woken = rt.tick(now)
     with db.session_scope() as s:
-        if not control.is_paused(s):  # paused heartbeats are not missed runs
+        if not paused and not control.is_paused(s):  # paused heartbeats are not missed runs
             health.check_missed(s, now)
+    with db.session_scope() as s:
+        audit.seal(s)  # hash-chain the audit rows written since the last heartbeat
     return woken
 
 
@@ -73,12 +96,7 @@ def main() -> None:
     migrations.upgrade(url)
     ensure_database(sys_url)
     rt = build_runtime(app_dir, repo_root)
-    DBOS(
-        config={
-            "name": f"biz-{rt.manifest.name}",
-            "system_database_url": sys_url,
-        }
-    )
+    DBOS(config=dbos_config(rt.manifest.name, sys_url))  # type: ignore[arg-type]
     DBOS.launch()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):

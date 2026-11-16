@@ -15,7 +15,11 @@ ROOT = Path(__file__).resolve().parents[3]
 def prod_app(monkeypatch: pytest.MonkeyPatch) -> Any:
     import dbos
     from biz_kernel.api import main
+    from biz_kernel.workflows import runner
 
+    # build_app installs a module-level DBOS client; undo it after the test so later
+    # tests that run DBOS in-process don't send through this stub.
+    monkeypatch.setattr(runner, "_CLIENT", None, raising=False)
     monkeypatch.setenv("BIZ_APP_DIR", str(ROOT / "apps" / "demo"))
     monkeypatch.setenv("BIZ_REPO_ROOT", str(ROOT))
     monkeypatch.setenv("BIZ_SECRET_KEY", "test-secret-not-real")

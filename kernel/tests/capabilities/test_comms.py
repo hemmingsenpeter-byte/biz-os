@@ -102,6 +102,7 @@ def test_register_takes_gate_config_and_tools_declared() -> None:
         assert sorted(reg.tools) == [
             "comms.classify_reply",
             "comms.draft",
+            "comms.is_suppressed",
             "comms.match_reply",
             "comms.opt_out",
             "comms.queue",

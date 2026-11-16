@@ -81,7 +81,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
         return {
             "enquiry_id": str(row.id),
             "party_id": str(party_id),
-            "can_text": not service.is_opted_out(session, row.sender),
+            "can_text": not service.is_opted_out(session, row.sender, registry),
             "verified": bool(row.verified),
         }
 
@@ -122,7 +122,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             category = str(rule["category"])
             summary = (row.subject or row.body)[:500]
         if reason == "opt_out":
-            service.add_opt_out(session, row.sender, "triage")
+            service.add_opt_out(session, row.sender, "triage", registry)
         row.classified_as, row.reason, row.summary = category, reason, summary
         row.confidence = float(confidence) if isinstance(confidence, int | float) else None
         row.status = "classified"
@@ -166,7 +166,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
     def text_back(session: Session, to: str, idempotency_key: str) -> dict[str, Any]:
         to = service.normalize_address(to)
         if session.get(SentText, idempotency_key) is None:
-            if service.is_opted_out(session, to):
+            if service.is_opted_out(session, to, registry):
                 raise Suppressed(f"{to} opted out")
             if service.recently_texted(session, to):
                 raise Suppressed(f"{to} already got a text-back in the last 24h")
@@ -190,7 +190,7 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
     ) -> dict[str, Any]:
         """`contact_status` is shown to the approver: the address is a claim, not verified."""
         to = service.normalize_address(to)
-        if service.is_opted_out(session, to):
+        if service.is_opted_out(session, to, registry):
             raise Suppressed(f"{to} opted out")
         if "@" in to:
             msg = OutboundMessage(to=[to], subject=subject, body=body)

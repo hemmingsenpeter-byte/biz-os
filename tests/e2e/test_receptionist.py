@@ -16,6 +16,7 @@ from biz_kernel import db
 from biz_kernel.api.app import create_app
 from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.contracts.ports import InboundMessage
+from biz_kernel.health.models import Alert
 from biz_kernel.models_registry import import_all_models
 from biz_kernel.packets.bus import Packet
 from biz_kernel.records.models import Task
@@ -310,8 +311,11 @@ def test_blocked_reply_is_never_sent(live: Live, case: str) -> None:
     body = "Hello {{first_name}}, Tuesday 10:00 UTC?" if case == "unrendered_tag" else "Tuesday?"
     book = _qualify_and_offer(live, body, opt_out=case == "opted_out")
     # No send, so the "message.sent" evidence is missing and the task cannot complete.
-    with pytest.raises(Exception, match="missing evidence"):
-        live.finish(book)
+    # The run ends as failed (never stuck "running") and the owner gets an alert.
+    assert live.finish(book)["status"] == "failed"
+    with db.session_scope() as s:
+        alert = s.scalars(select(Alert).where(Alert.kind == "sop.failed")).one()
+        assert alert.subject == book.id and "missing evidence" in alert.message
     assert live.mail.sent == []
     assert live.packets("message.sent") == []
     with db.session_scope() as s:

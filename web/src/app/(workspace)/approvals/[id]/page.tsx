@@ -34,6 +34,7 @@ import {
 import { useControl, useUser } from "@/components/workspace";
 
 type Edit = {
+  version: number;
   inputs: Record<string, unknown>;
   reason: string;
   severity: Severity;
@@ -72,31 +73,63 @@ function rowsFor(text: string) {
 function EditForm({
   request,
   busy,
+  conflict,
+  onReload,
+  onReviewed,
   onSave,
   onCancel,
 }: {
   request: Approval;
   busy: boolean;
+  conflict: "reload" | "review" | null;
+  onReload: () => void;
+  onReviewed: () => void;
   onSave: (edit: Edit) => void;
   onCancel: () => void;
 }) {
-  const entries = Object.entries(request.inputs).filter(
+  const [baseline, setBaseline] = useState(request);
+  const initialEntries = Object.entries(baseline.inputs).filter(
     ([key]) => key !== "idempotency_key",
   );
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(
-      entries.filter(
+      initialEntries.filter(
         (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
     ),
   );
+  const entries = Object.entries({ ...baseline.inputs, ...draft })
+    .filter(([key]) => key !== "idempotency_key")
+    .map(([key, value]): [string, unknown] => [
+      key,
+      typeof baseline.inputs[key] === "string" ? baseline.inputs[key] : value,
+    ]);
   const [reason, setReason] = useState("");
   const [severity, setSeverity] = useState<Severity | "">("");
   const [problem, setProblem] = useState("");
   const changed = Object.entries(draft).some(
-    ([key, value]) => value !== request.inputs[key],
+    ([key, value]) => value !== baseline.inputs[key],
   );
+  const maySave = request.status === "pending" && !conflict;
+  function reviewLatest() {
+    const changes = Object.fromEntries(
+      Object.entries(draft).filter(
+        ([key, value]) => value !== baseline.inputs[key],
+      ),
+    );
+    const latestText = Object.fromEntries(
+      Object.entries(request.inputs).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === "string" && entry[0] !== "idempotency_key",
+      ),
+    );
+    setDraft({ ...latestText, ...changes });
+    setBaseline(request);
+    setProblem("");
+    onReviewed();
+  }
   function submit() {
+    if (!maySave) return;
     if (!changed) setProblem("Change at least one value before saving.");
     else if (!reason.trim()) setProblem("Say in one line why you changed it.");
     else if (!severity) setProblem("Choose what kind of change this was.");
@@ -104,7 +137,8 @@ function EditForm({
       setProblem("");
       // Everything is sent back; only the text values the owner typed differ.
       onSave({
-        inputs: { ...request.inputs, ...draft },
+        version: baseline.version,
+        inputs: { ...baseline.inputs, ...draft },
         reason: reason.trim(),
         severity,
       });
@@ -132,8 +166,14 @@ function EditForm({
               ) : (
                 <label className="input-label" htmlFor={`edit-${key}`}>
                   {readable(key)}
-                  <code>{key}</code>
+                  <code aria-hidden="true">{key}</code>
                 </label>
+              )}
+              {!Object.hasOwn(baseline.inputs, key) && (
+                <p className="field-hint">
+                  The latest version omitted this field. Saving will include
+                  your visible value.
+                </p>
               )}
               {original === null ? (
                 <>
@@ -150,18 +190,20 @@ function EditForm({
                   rows={rowsFor(original)}
                   value={draft[key]}
                   disabled={busy}
-                  onChange={(event) =>
-                    setDraft({ ...draft, [key]: event.target.value })
-                  }
+                  onChange={(event) => {
+                    setDraft({ ...draft, [key]: event.target.value });
+                    setProblem("");
+                  }}
                 />
               ) : (
                 <input
                   id={`edit-${key}`}
                   value={draft[key]}
                   disabled={busy}
-                  onChange={(event) =>
-                    setDraft({ ...draft, [key]: event.target.value })
-                  }
+                  onChange={(event) => {
+                    setDraft({ ...draft, [key]: event.target.value });
+                    setProblem("");
+                  }}
                 />
               )}
             </div>
@@ -169,10 +211,59 @@ function EditForm({
         })}
       </div>
       <div className="edit-why">
+        {conflict === "reload" && (
+          <div className="notice notice-error">
+            <div>
+              <p>
+                Your unsaved changes, reason and change type are kept. Load the
+                current proposal before saving again.
+              </p>
+              <button
+                type="button"
+                className="button button-secondary"
+                disabled={busy}
+                onClick={onReload}
+              >
+                Load latest version
+              </button>
+            </div>
+          </div>
+        )}
+        {conflict === "review" && (
+          <section
+            className="conflict-review"
+            aria-label="Latest saved proposal"
+          >
+            <h3>Latest saved version {request.version}</h3>
+            <p>
+              Review these current values. Only fields you changed will be
+              carried forward; other fields will use this latest version.
+            </p>
+            <InputFields
+              entries={Object.entries(request.inputs).filter(
+                ([key]) => key !== "idempotency_key",
+              )}
+            />
+            {request.status === "pending" ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                disabled={busy}
+                onClick={reviewLatest}
+              >
+                Use latest version and keep my changes
+              </button>
+            ) : (
+              <p>
+                This proposal is no longer pending. Your unsaved changes remain
+                above for reference; you can copy them or cancel.
+              </p>
+            )}
+          </section>
+        )}
         <h3>Why did you change it?</h3>
         <p>
-          Your corrections are how this role learns. A short, honest answer
-          helps it get the next one right.
+          A short reason records why the proposal needed changing.
         </p>
         <label className="field-label" htmlFor="edit-reason">
           Reason, in one line
@@ -183,7 +274,10 @@ function EditForm({
           maxLength={300}
           disabled={busy}
           placeholder="What was wrong with the draft?"
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) => {
+            setReason(event.target.value);
+            setProblem("");
+          }}
         />
         <fieldset className="severity-choice" disabled={busy}>
           <legend className="field-label">What kind of change was it?</legend>
@@ -194,7 +288,10 @@ function EditForm({
                 name="severity"
                 value={option.value}
                 checked={severity === option.value}
-                onChange={() => setSeverity(option.value)}
+                onChange={() => {
+                  setSeverity(option.value);
+                  setProblem("");
+                }}
               />
               <span>
                 <strong>{option.label}</strong>
@@ -216,10 +313,10 @@ function EditForm({
           <button
             className="button button-primary"
             type="submit"
-            disabled={busy}
+            disabled={busy || !maySave}
           >
             <Check size={16} />
-            {busy ? "Saving…" : `Save as version ${request.version + 1}`}
+            {busy ? "Saving…" : `Save as version ${baseline.version + 1}`}
           </button>
         </div>
         <p className="field-hint">
@@ -247,6 +344,9 @@ export default function ApprovalPage({
   const control = useControl();
   const paused = Boolean(control.state?.paused);
   const [editing, setEditing] = useState(false);
+  const [editConflict, setEditConflict] = useState<"reload" | "review" | null>(
+    null,
+  );
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [decisionError, setDecisionError] = useState("");
@@ -302,6 +402,7 @@ export default function ApprovalPage({
         { method: "POST", body: JSON.stringify(edit) },
       );
       setEditing(false);
+      setEditConflict(null);
       setNotice(
         `Your changes are saved as version ${saved.version}. Nothing has been approved yet: review this version, then approve it.`,
       );
@@ -309,10 +410,9 @@ export default function ApprovalPage({
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setDecisionError(
-          "This request can no longer be edited. Its latest details are shown below.",
+          "This proposal changed while you were editing it. Your unsaved changes are kept. Load and review the latest version before saving again.",
         );
-        setEditing(false);
-        await reload();
+        setEditConflict("reload");
       } else if (err instanceof ApiError && err.status === 401)
         router.replace("/auth/login");
       else setDecisionError(errorMessage(err));
@@ -321,6 +421,12 @@ export default function ApprovalPage({
     }
   }
   const mayDecide = user?.role === "owner" || user?.email === request?.approver;
+  async function loadLatestForEdit() {
+    setBusy(true);
+    const latest = await reload();
+    if (latest) setEditConflict("review");
+    setBusy(false);
+  }
   return (
     <>
       <Link className="back-link" href="/approvals">
@@ -378,13 +484,23 @@ export default function ApprovalPage({
                     <RefreshCw size={17} />
                   </button>
                 </div>
-                {editing && request.status === "pending" && mayDecide ? (
+                {editing ? (
                   <EditForm
-                    key={request.version}
+                    key={request.id}
                     request={request}
                     busy={busy}
+                    conflict={editConflict}
+                    onReload={() => void loadLatestForEdit()}
+                    onReviewed={() => {
+                      setEditConflict(null);
+                      setDecisionError("");
+                    }}
                     onSave={(edit) => void saveEdit(edit)}
-                    onCancel={() => setEditing(false)}
+                    onCancel={() => {
+                      setEditing(false);
+                      setEditConflict(null);
+                      setDecisionError("");
+                    }}
                   />
                 ) : (
                   <InputFields

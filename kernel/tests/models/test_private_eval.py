@@ -24,6 +24,7 @@ from biz_kernel.models.eval.private import (
 )
 from biz_kernel.models.router import Router
 from biz_port_fakes import FakeModel
+from click import unstyle
 from typer.testing import CliRunner
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -173,7 +174,7 @@ def test_private_cli_rejects_missing_evidence_before_using_models(
     _, heldout = reviewed
     args = ["eval", TASK, "--cases", str(heldout), "--output", str(tmp_path / "report.json")]
     result = CliRunner().invoke(app, args + extra)
-    assert result.exit_code == 2 and message in result.output
+    assert result.exit_code == 2 and message in unstyle(result.output)
 
 
 def test_baseline_preserves_absent_review_measurements(tmp_path: Path) -> None:

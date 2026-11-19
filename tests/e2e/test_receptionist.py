@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from biz_cap_comms.models import OptOut as CommsOptOut
@@ -15,12 +17,16 @@ from biz_cap_intake.models import Enquiry, OptOut
 from biz_kernel import db
 from biz_kernel.api.app import create_app
 from biz_kernel.approvals.models import StagedOperation
+from biz_kernel.audit.log import AuditEntry
 from biz_kernel.contracts.ports import InboundMessage
+from biz_kernel.evidence.models import EvidenceEvent
 from biz_kernel.health.models import Alert
 from biz_kernel.models_registry import import_all_models
 from biz_kernel.packets.bus import Packet
 from biz_kernel.records.models import Task
 from biz_kernel.runtime import build_runtime, capability_routes
+from biz_kernel.tools.shadow import SHADOW_EVIDENCE, ExecutionMode
+from biz_kernel.workflows import runner
 from biz_kernel.workflows.gate import decide
 from biz_kernel.workflows.models import SopRun
 from biz_port_fakes import (
@@ -105,12 +111,11 @@ class Live:
         decide(op.id, op.approver, approve=True, version=op.version)
 
 
-@pytest.fixture(params=[("demo", "demo_owner"), ("hive", "owner")], ids=["demo", "hive"])
-def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
+@contextmanager
+def _live(fresh_db: str, monkeypatch, app: str, approver: str):  # type: ignore[no-untyped-def]
     import biz_cap_booking  # noqa: F401
     import biz_cap_demo_desk  # noqa: F401
 
-    app, approver = request.param
     eng = create_engine(fresh_db)
     import_all_models()
     db.Base.metadata.create_all(eng)
@@ -138,9 +143,25 @@ def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
     rt = build_runtime(ROOT / "apps" / app, ROOT, ports=ports, approval_poll_seconds=1)
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
     DBOS.launch()
-    yield Live(rt, app, approver)
-    DBOS.destroy(destroy_registry=False)
-    eng.dispose()
+    try:
+        yield Live(rt, app, approver)
+    finally:
+        DBOS.destroy(destroy_registry=False)
+        eng.dispose()
+
+
+@pytest.fixture(params=[("demo", "demo_owner"), ("hive", "owner")], ids=["demo", "hive"])
+def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("BIZ_EXECUTION_MODE", "supervised")
+    with _live(fresh_db, monkeypatch, *request.param) as runtime:
+        yield runtime
+
+
+@pytest.fixture
+def shadow_live(fresh_db: str, monkeypatch):  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("BIZ_EXECUTION_MODE", raising=False)
+    with _live(fresh_db, monkeypatch, "hive", "owner") as runtime:
+        yield runtime
 
 
 def test_missed_call_text_back_exactly_once(live: Live) -> None:
@@ -304,6 +325,48 @@ def _qualify_and_offer(live: Live, body: str, opt_out: bool = False) -> SopRun:
             s.add(CommsOptOut(address="lead@example.com", source="test"))
     live.rt.tick()
     return live.run_for("book_meeting", live.packets("opportunity.qualified")[0].id)
+
+
+def test_shadow_inbox_classifies_and_drafts_without_dispatch(
+    shadow_live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live = shadow_live
+    assert live.rt.registry.execution_mode == ExecutionMode.SHADOW
+    operations = [(live.mail, "send"), (live.phone, "send_sms"), (live.cal, "book")]
+    providers = []
+    for port, method in operations:
+        spy = AsyncMock(wraps=getattr(port, method))
+        monkeypatch.setattr(port, method, spy)
+        providers.append(spy)
+
+    body = "We can offer Tuesday at 10:00 UTC."
+    run = _qualify_and_offer(live, body)
+    assert live.finish(run)["status"] == "shadowed"
+    assert run.packet_id is not None
+    runner.start_for_packet("receptionist", run.packet_id, "opportunity.qualified")
+    assert live.finish(run)["status"] == "shadowed"
+
+    with db.session_scope() as s:
+        assert s.scalars(select(Enquiry.classified_as)).one() == "enquiry"
+        draft = s.scalars(select(Outbox)).one()
+        assert draft.to == "lead@example.com" and body in draft.body and draft.status != "sent"
+        assert s.get(Task, run.task_id).status == "open"
+        assert not s.scalars(select(StagedOperation)).all()
+        evidence = s.scalars(
+            select(EvidenceEvent).where(
+                EvidenceEvent.task_id == run.task_id, EvidenceEvent.kind == SHADOW_EVIDENCE
+            )
+        ).one()
+        assert evidence.ref is not None
+        audit = s.get(AuditEntry, uuid.UUID(evidence.ref))
+        assert audit is not None and audit.subject == "comms.send"
+        assert audit.detail["recipients"] == [draft.to]
+        assert (
+            len(s.scalars(select(AuditEntry).where(AuditEntry.kind == SHADOW_EVIDENCE)).all()) == 1
+        )
+    assert live.packets("message.sent") == [] and live.packets("meeting.booked") == []
+    for provider in providers:
+        provider.assert_not_called()
 
 
 @pytest.mark.parametrize("case", ["unrendered_tag", "opted_out"])

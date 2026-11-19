@@ -15,7 +15,9 @@ from biz_kernel.packets.bus import Bus, SchemaRegistry
 from biz_kernel.policy.types import Allow, SideEffect
 from biz_kernel.records.models import Note
 from biz_kernel.tools.registry import Tool, ToolRegistry
+from biz_kernel.tools.shadow import ExecutionMode, configured_mode
 from biz_kernel.workflows import runner
+from biz_kernel.workflows.gate import KernelGate
 from dbos import DBOS
 from sqlalchemy import select
 
@@ -25,14 +27,15 @@ OBJ = {"type": "object"}
 def main() -> None:
     url, sys_url, mode, packet_id, marker = sys.argv[1:6]
     db.configure(url)
-    reg = ToolRegistry()
+    reg = ToolRegistry(execution_mode=configured_mode())
+    shadow = reg.execution_mode == ExecutionMode.SHADOW
 
     def step_one(session: Any) -> dict[str, Any]:
         session.add(Note(author="t.step_one", body="ran", source="system"))
         return {"n": 1}
 
     def maybe_crash(session: Any) -> dict[str, Any]:
-        if mode == "crash" and not Path(marker).exists():
+        if not shadow and mode == "crash" and not Path(marker).exists():
             Path(marker).write_text("crashed")
             os._exit(17)  # simulate the worker being killed mid-SOP
         return {"ok": True}
@@ -40,31 +43,23 @@ def main() -> None:
     reg.register(Tool("t.step_one", "t", SideEffect.DRAFT, OBJ, step_one))
     reg.register(Tool("t.maybe_crash", "t", SideEffect.DRAFT, OBJ, maybe_crash))
 
+    def fake_external(session: Any) -> dict[str, Any]:
+        Path(marker).with_suffix(".provider").write_text("called")
+        return {"sent": True}
+
+    reg.register(Tool("t.external", "t", SideEffect.EXTERNAL, OBJ, fake_external))
+
     class Policy:
         def check(self, session: Any, action: Any) -> Allow:
             return Allow()
 
-    class Gate:
-        def call_or_stage(
-            self,
-            session: Any,
-            *,
-            actor: str,
-            tool: str,
-            args: dict,
-            allow_list: set[str],
-            decision_type: str | None,
-        ) -> dict:
-            res = reg.call(
-                session, Policy(), actor=actor, name=tool, args=args, allow_list=allow_list
-            )
-            return {"status": "ran", "output": res.output}
-
-        def request(self, *a: Any, **k: Any) -> str:
-            raise NotImplementedError
-
-        def execute(self, *a: Any, **k: Any) -> Any:
-            raise NotImplementedError
+    class Gate(KernelGate):
+        def call_or_stage(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            result = super().call_or_stage(*args, **kwargs)
+            if mode == "crash" and result["status"] == "shadowed":
+                Path(marker).write_text("crashed")
+                os._exit(17)  # the suppression transaction has yet to commit
+            return result
 
     class Evidence:  # the real evidence service: done only with declared evidence
         def note(self, session: Any, kind: str, ref: str, *, task_id: Any, job_id: Any) -> None:
@@ -76,7 +71,7 @@ def main() -> None:
     schemas = SchemaRegistry()
     schemas.register("demo.ping", 1, OBJ)
     schemas.register("demo.done", 1, OBJ)
-    sop = {
+    sop: dict[str, Any] = {
         "name": "s",
         "trigger": "demo.ping",
         "steps": [
@@ -90,15 +85,15 @@ def main() -> None:
             },
         ],
     }
+    if shadow:
+        sop["steps"].insert(2, {"id": "external", "kind": "tool", "tool": "t.external"})
     runner.install(
         runner.RunnerContext(
             bus=Bus(schemas),
             router=Router(local=None),  # type: ignore[arg-type]
-            gate=Gate(),
+            gate=Gate(reg, Policy()),
             evidence=Evidence(),
-            roles={
-                "r": runner.RoleSpec("r", {"t.step_one", "t.maybe_crash"}, {"s": sop}, Path("."))
-            },
+            roles={"r": runner.RoleSpec("r", set(reg.tools), {"s": sop}, Path("."))},
         )
     )
     DBOS(

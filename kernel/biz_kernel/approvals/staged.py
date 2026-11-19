@@ -232,6 +232,11 @@ def execute(
         raise NotApproved(f"operation is {op.status}")
     if digest(op.inputs) != op.inputs_sha256 or op.inputs_sha256 != op.approved_sha256:
         raise NotApproved("inputs do not match the approved version")
+    suppressed = registry.suppress_in_shadow(
+        session, actor=op.actor, name=op.tool, args=op.inputs, decision_type=op.decision_type
+    )
+    if suppressed is not None:
+        return suppressed
     action = Action(
         actor=op.actor,
         tool=op.tool,
@@ -254,6 +259,8 @@ def execute(
         decision_type=op.decision_type,
         pre_approved=True,
     )
+    if not result.ran:
+        return result
     op.status, op.executed_at = "executed", utcnow()
     op.result = _json({"output": result.output})
     session.flush()

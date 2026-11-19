@@ -28,6 +28,7 @@ from biz_kernel.heartbeats.service import BUDGET_RESUME  # wake-up reason: resum
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
+from biz_kernel.tools.shadow import SHADOW_EVIDENCE, Suppression
 from biz_kernel.workflows.escalation import CONFIDENCE, Condition, check
 from biz_kernel.workflows.models import SopRun, SopStep
 from biz_kernel.workflows.templating import TemplateError, holds, render
@@ -46,7 +47,7 @@ class Gate(Protocol):
         allow_list: set[str],
         decision_type: str | None,
     ) -> dict[str, Any]:
-        """Return {"status": "ran", "output": ...} or {"status": "staged", "op_id": "..."}."""
+        """Return a ran, staged or shadowed result."""
         ...
 
     def request(
@@ -249,6 +250,8 @@ def _run(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, Any
                 if _await_decision(run_id, res["op_id"]) != "approved":
                     return do(_end, run_id, "rejected")
                 res = do(_execute_staged, run_id, role, step["id"], res["op_id"])
+            if res["status"] == "shadowed":
+                return do(_end, run_id, "shadowed")  # the task stays open without send evidence
             state["steps"][step["id"]] = {"output": res["output"]}
             if why := check(conds[step["id"]], kind=kind, output=res["output"]):
                 return _escalate(run_id, role, state, why)
@@ -315,7 +318,7 @@ def _step_failed(run_id: str, role: str, error: str, final: bool) -> None:
         record(s, role, "sop.step_failed", sop, run_id=run_id, error=error, final=final)
         if not final:
             return
-        if run is not None and run.status not in ("done", "rejected"):
+        if run is not None and run.status not in ("done", "rejected", "shadowed"):
             run.status, run.waiting_op_id, run.finished_at = "failed", None, db.utcnow()
         raise_alert(s, FAILED_ALERT, run_id, f"{role} could not finish {sop}: {error}", db.utcnow())
 
@@ -522,6 +525,8 @@ def _tool_step(
         )
         if res["status"] == "staged":
             return _save(s, run_id, f"{step['id']}:staged", res)  # execute step owns the outcome
+        if res["status"] == "shadowed":
+            return _save_suppression(s, run_id, step["id"], res["audit_id"])
         return _save(s, run_id, step["id"], {"status": "ran", "output": res["output"]})
 
 
@@ -546,8 +551,17 @@ def _execute_staged(run_id: str, role: str, step_id: str, op_id: str) -> dict[st
                 output = c.gate.execute(s, op_id)
         except NotApproved:
             return {"status": "staged", "op_id": op_id}
+        if isinstance(output, Suppression):
+            return _save_suppression(s, run_id, step_id, str(output.audit_id))
         _note_approval(s, run_id, op_id)
         return dict(_save(s, run_id, step_id, {"status": "ran", "output": output}))
+
+
+def _save_suppression(s: Session, run_id: str, step_id: str, audit_id: str) -> dict[str, Any]:
+    run = s.get(SopRun, run_id)
+    assert run is not None
+    ctx().evidence.note(s, SHADOW_EVIDENCE, audit_id, task_id=run.task_id, job_id=run.job_id)
+    return dict(_save(s, run_id, step_id, {"status": "shadowed", "audit_id": audit_id}))
 
 
 @DBOS.step(name="biz.sop.approval")
@@ -710,7 +724,7 @@ def _end(run_id: str, status: str) -> dict[str, Any]:
     with db.session_scope() as s:
         run = s.get(SopRun, run_id)
         assert run is not None
-        if run.status in ("done", "rejected", "failed"):
+        if run.status in ("done", "rejected", "failed", "shadowed"):
             return {"run_id": run_id, "status": run.status}
         if status == "done" and run.task_id is not None:
             c.evidence.complete(s, run.task_id)  # raises if declared evidence is missing

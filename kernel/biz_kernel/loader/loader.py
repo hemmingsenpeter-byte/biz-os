@@ -120,6 +120,7 @@ class Manifest:
     policy: dict[str, Any]
     goals: dict[str, Any]
     registry: SchemaRegistry = field(repr=False, default_factory=SchemaRegistry)
+    execution_mode: str = "supervised"
 
     def role_budget(self, role: str) -> float:
         budgets = self.policy.get("budgets_usd_month") or {}
@@ -450,6 +451,7 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
         policy,
         goals_doc,
         registry,
+        comp.get("execution_mode", "supervised"),
     )
 
 

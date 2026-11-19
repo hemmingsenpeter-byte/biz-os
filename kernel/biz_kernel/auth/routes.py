@@ -15,6 +15,8 @@ from biz_kernel.auth import config, passkeys, tokens
 from biz_kernel.auth.deps import CurrentUser, DbSession
 from biz_kernel.auth.models import User
 from biz_kernel.contracts.ports import OutboundMessage
+from biz_kernel.policy.types import SideEffect
+from biz_kernel.tools.shadow import ExecutionMode, record_suppression
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -64,6 +66,15 @@ async def magic_request(body: MagicRequest, request: Request, session: DbSession
         raise HTTPException(503, "mail is not configured")
     user = session.scalar(select(User).where(User.email == body.email.strip().lower()))
     if user is not None and user.active and user.role == "staff":
+        if request.app.state.execution_mode == ExecutionMode.SHADOW:
+            record_suppression(
+                session,
+                f"user:{user.id}",
+                "auth.magic_link",
+                {SideEffect.EXTERNAL},
+                {"to": user.email},
+            )
+            return {"status": "accepted"}
         token = tokens.issue_magic(user.id)
         link = f"{config.origin()}/auth/magic?token={token}"
         msg = OutboundMessage(

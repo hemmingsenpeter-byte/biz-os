@@ -1,5 +1,17 @@
 # Build log
 
+## 2026-11-20 Receptionist shadow mode
+
+- HIVE defaults to shadow mode, with the receptionist and on-appliance
+  Ollama. API and worker take the same mode from Compose.
+- The dispatch guard blocks gated and composite effects even when replaying
+  prior approvals. Suppressions are audited, with recipient details when
+  present, and linked to workflow evidence. Staff magic-link delivery is also
+  suppressed. Tasks without send evidence stay open.
+- Fake-provider tests verify inbound classification and a saved draft with
+  zero outbound sends. A crash before recording the suppression can replay
+  without making a provider call.
+
 ## 2026-11-20 Compose configuration and ingress
 
 - The API and worker share a durable, restricted document bind mount and use

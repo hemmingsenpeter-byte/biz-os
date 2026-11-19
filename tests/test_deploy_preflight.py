@@ -133,6 +133,21 @@ def test_preflight_requires_agreement_on_execution_mode(
     ]
 
 
+def test_shadow_preflight_requires_the_appliance_model(
+    compose_config: Callable[[str], dict[str, Any]],
+) -> None:
+    config = compose_config("hive")
+    for name in ("biz-api", "biz-worker"):
+        config["services"][name]["environment"].update(
+            BIZ_OLLAMA_URL="https://remote.example.invalid",
+            BIZ_OLLAMA_MODEL="fixture:cloud",
+        )
+    assert preflight.validate(config, preflight.ROOT) == [
+        "Shadow Ollama must use the appliance host.docker.internal endpoint",
+        "BIZ_OLLAMA_MODEL cannot use a cloud model in shadow mode",
+    ]
+
+
 def test_preflight_requires_the_database_and_local_path_captured_by_backups(
     compose_config: Callable[[str], dict[str, Any]],
 ) -> None:

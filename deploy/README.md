@@ -289,7 +289,10 @@ evidence timeline and leave the task open for owner review. Use an owner
 passkey to access the console.
 
 External provider credentials are provisioned separately at the approved access
-and pilot gates. Change execution mode only after reviewing pending work and
-with both application processes stopped. Update and restart the API and worker
-together. The supervised transition requires the pilot exit evidence and the
-owner's authorization.
+and pilot gates. Preflight requires on-appliance Ollama for shadow Compose
+deployments. Verify the approved model is installed on the Mac mini before
+connecting a mailbox. Before replacing an older release, settle in-flight work
+for the inactive roles and stop the old API and workers. Update and restart
+both application services together. The supervised transition requires pilot
+exit evidence and the owner's authorization. Exclude approvals for suppressed
+actions from supervised quality and autonomy evidence.

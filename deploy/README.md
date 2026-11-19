@@ -81,8 +81,8 @@ CI runs the same core startup and smoke script in the `docker-smoke` job. The
 Dockerfile accepts an optional BuildKit `proxy_ca` secret containing a CA bundle
 for the dependency download step when building behind a TLS-inspecting proxy.
 
-This verifies the packaged demo. HIVE's live integrations, Mac mini deployment,
-backup acceptance and customer portal still need their own acceptance checks.
+This verifies the packaged demo. HIVE's live integrations, Mac mini deployment
+and the customer portal still need their own acceptance checks.
 The current Compose environment mapping also needs the relevant provider variables
 from `.env` wired into the API and worker before enabling HIVE's real ports.
 
@@ -183,7 +183,7 @@ databases, or a separate document store requires a different recovery procedure.
    window's services according to the install's runbook. A failed run exits nonzero
    and names the failed stage on stderr. Alert on nonzero status or a missing success
    marker. Retention runs after full download and byte comparison (14 daily, 8
-   weekly, 12 monthly by default, with at least one per host/tag group). Disk space
+   weekly, 12 monthly by default, with at least one per host/path group). Disk space
    reclamation via `restic prune` is separate repository maintenance.
 
 The launchd plist is a scheduling template. Use it only when the maintenance window
@@ -200,7 +200,7 @@ running and remove the stale staging directory and lock before retrying.
    `services.postgres.environment.POSTGRES_DB: postgres` so Compose creates no
    application databases. Set the same absolute `BIZ_STORAGE_ROOT` and make it empty.
    Start only PostgreSQL, then create the stopped DocuSeal container with
-   `docker compose ... create --no-deps docuseal`. Use the same project/env/file
+   `docker compose ... create docuseal`. Use the same project/env/file
    selections for those commands and the restore script.
 3. Run `bash deploy/backups/restore.sh FULL_SNAPSHOT_ID`. It verifies the snapshot
    and requires empty target databases and file stores before writing. On failure,
@@ -211,6 +211,21 @@ running and remove the stale staging directory and lock before retrying.
    Check provider state for external actions since the snapshot before enabling any
    recovered dispatch. An older snapshot can lack evidence about actions already
    accepted by a provider. Resume ingress after the operator has reconciled them.
+
+### Disposable acceptance drill
+
+Run `uv sync --locked` and then `uv run python -m deploy.restore_drill` from the
+repository root with Docker Compose v2 and restic on PATH. The command uses
+disposable PostgreSQL/DBOS projects, a local encrypted restic repository and
+fake delivery. It kills the source workflow while approval is pending, destroys
+the source project and empties its object root, then restores all three
+databases and both file stores. It verifies the audit chain and approval, then
+approves and replays the workflow and checks for exactly one fake delivery.
+On 20 November 2026, the drill measured a 7.42 s recovery-point age at simulated
+loss and 30.85 s from simulated loss through verified recovery and replay. There
+were zero fixture writes after the recorded checkpoint. These measurements used
+a small synthetic workload and local restic. Measure again with the appliance,
+off-box destination and representative data before setting production targets.
 
 ## 6. Whisper (M4)
 

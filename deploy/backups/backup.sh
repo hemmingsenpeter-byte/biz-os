@@ -31,7 +31,8 @@ done
 require_stopped_writers
 manifest_for "$STAGE" >"$STAGE/recovery.txt" 2>/dev/null || fail "cannot checksum staging files"
 
-restic backup --json --tag biz-nightly "$STAGE" >"$TEMP/backup.json" 2>/dev/null ||
+snapshot_tag="backup-${TEMP##*/}"
+restic backup --json --tag "biz-nightly,$snapshot_tag" "$STAGE" >"$TEMP/backup.json" 2>/dev/null ||
   fail "encrypted snapshot upload failed"
 snapshot_id="$(python3 -c '
 import json, sys
@@ -52,10 +53,13 @@ restic check >/dev/null 2>&1 || fail "restic repository integrity check failed"
 
 # Forget only after full verification. Reclaiming unreferenced bytes is a separate
 # maintenance operation, so this job never prunes data or rotates local legacy dumps.
-restic forget --tag biz-nightly --group-by host,tags --keep-last 1 \
+# Keep the verified snapshot by its unique tag even if the system clock moved.
+restic forget --tag biz-nightly --group-by host,paths --keep-tag "$snapshot_tag" --keep-last 1 \
   --keep-daily "${KEEP_DAILY:-14}" --keep-weekly "${KEEP_WEEKLY:-8}" \
   --keep-monthly "${KEEP_MONTHLY:-12}" >/dev/null 2>&1 ||
   fail "verified snapshot uploaded, but snapshot retention failed"
+restic cat snapshot "$snapshot_id" >/dev/null 2>&1 ||
+  fail "verified snapshot is unavailable after retention"
 
 # Finish cleanup before emitting the success marker.
 trap - EXIT

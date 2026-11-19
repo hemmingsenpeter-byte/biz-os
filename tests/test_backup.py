@@ -71,7 +71,7 @@ elif tool == "restic":
         shutil.copytree(snapshot, restored_stage)
         if os.environ.get("BIZ_TEST_CORRUPT"):
             (restored_stage / "biz_dbos.dump").write_text("corrupt backup")
-    elif command not in {"backup", "check", "forget", "init", "snapshots"}:
+    elif command not in {"backup", "cat", "check", "forget", "init", "snapshots"}:
         sys.exit("unexpected restic invocation")
 """
 
@@ -180,12 +180,22 @@ def test_verified_snapshot_contains_the_recovery_boundary(
     assert backup.result.returncode == 0, backup.result.stderr
     assert backup.result.stdout.strip() == f"backup ok {SNAPSHOT_ID}"
     calls = backup.restic_calls()
-    assert [args[0] for args in calls] == ["snapshots", "backup", "restore", "check", "forget"]
+    assert [args[0] for args in calls] == [
+        "snapshots",
+        "backup",
+        "restore",
+        "check",
+        "forget",
+        "cat",
+    ]
     assert "--verify" in calls[2]
     assert calls[2][1] == SNAPSHOT_ID
     assert "--tag" in calls[4] and "biz-nightly" in calls[4]
     assert "--keep-last" in calls[4]
+    tag = calls[4][calls[4].index("--keep-tag") + 1]
+    assert calls[1][calls[1].index("--tag") + 1] == f"biz-nightly,{tag}"
     assert "--prune" not in calls[4]
+    assert calls[5] == ["cat", "snapshot", SNAPSHOT_ID]
 
     dumps = {path.name: path.read_text().strip() for path in backup.snapshot.rglob("*.dump")}
     assert dumps == {f"{db}.dump": f"fake dump for {db}" for db in ("biz", "biz_dbos", "docuseal")}
@@ -214,6 +224,7 @@ def test_verified_snapshot_contains_the_recovery_boundary(
         ("restore", "restore"),
         ("check", "check"),
         ("forget", "forget"),
+        ("cat", "cat"),
     ],
 )
 def test_failures_never_report_success_or_remove_known_good_data(
@@ -251,6 +262,7 @@ def test_active_writer_prevents_capture(run_backup: Callable[..., BackupRun]) ->
     assert "backup ok" not in backup.result.stdout
     assert all("pg_dump" not in args for args in backup.commands)
     assert all(args[0] != "backup" for args in backup.restic_calls())
+    assert any("--all" in args for args in backup.commands if "--status" in args)
 
 
 def test_missing_local_object_store_prevents_capture(run_backup: Callable[..., BackupRun]) -> None:

@@ -52,7 +52,7 @@ dc() {
 
 require_stopped_writers() {
   local active
-  active="$(dc ps --status running --status restarting --status paused -q \
+  active="$(dc ps --all --status running --status restarting --status paused -q \
     biz-api biz-worker docuseal 2>/dev/null)" || fail "cannot check Compose writer status"
   [[ -z "$active" ]] || fail "stop biz-api, biz-worker and docuseal before proceeding"
 }

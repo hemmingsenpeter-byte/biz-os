@@ -9,8 +9,16 @@ from typing import Annotated, Any
 
 import typer
 
-from biz_kernel.models.eval.harness import ShadowReport, report_json, run_eval, shadow
-from biz_kernel.models.router import Router
+from biz_kernel.models.eval.harness import (
+    ShadowReport,
+    is_private,
+    read_task,
+    report_json,
+    run_eval,
+    shadow,
+)
+from biz_kernel.models.eval.private import private_path, write_private
+from biz_kernel.models.router import Router, Tier
 
 app = typer.Typer(help="Score model tasks against golden cases.", no_args_is_help=True)
 
@@ -23,7 +31,6 @@ def evaluation_commands() -> None:
 def build_router() -> Router:
     """Router from the environment (BIZ_OLLAMA_*, ANTHROPIC_API_KEY)."""
     import importlib
-    import os
 
     local = importlib.import_module("biz_port_model_ollama").OllamaModel.create()
     cloud: Any = None
@@ -41,26 +48,43 @@ def eval_cmd(
     json_output: bool = False,
     output: Path | None = None,
     gate: bool = False,
+    allow_cloud_data: bool = False,
+    local_model_version: str = "",
+    cloud_model_version: str = "",
 ) -> None:
     """Score complete cases; --gate additionally requires reviewed held-out readiness."""
     if tier not in ("local", "cloud", "shadow"):
         raise typer.BadParameter("tier must be local, cloud or shadow")
-    r = router or build_router()
+    versions: dict[Tier, str] = {}
+    if local_model_version.strip():
+        versions["local"] = local_model_version.strip()
+    if cloud_model_version.strip():
+        versions["cloud"] = cloud_model_version.strip()
     try:
+        private = is_private(read_task(cases))
+        if private:
+            cases = private_path(cases)
+            if output is None or json_output:
+                raise ValueError("private evaluations require --output and omit --json")
+            output = private_path(output)
+            if output.is_relative_to(cases):
+                raise ValueError("write the evaluation report outside the case directory")
+            if tier in ("cloud", "shadow") and not allow_cloud_data:
+                raise ValueError("private cloud evaluation requires --allow-cloud-data")
+            required = {"local", "cloud"} if tier == "shadow" else {tier}
+            if not required.issubset(versions):
+                raise ValueError("supply the explicit model version for each requested tier")
+        r = router or build_router()
         rep = (
-            asyncio.run(shadow(task, r, cases))
+            asyncio.run(shadow(task, r, cases, model_versions=versions))
             if tier == "shadow"
-            else asyncio.run(run_eval(task, tier, r, cases))
+            else asyncio.run(run_eval(task, tier, r, cases, model_version=versions.get(tier)))
         )  # type: ignore[arg-type]
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     serialized = report_json(rep)
     if output is not None:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(serialized + "\n")
+        write_private(output, serialized + "\n")
     if json_output:
         typer.echo(serialized)
     elif isinstance(rep, ShadowReport):
@@ -76,11 +100,12 @@ def eval_cmd(
             f"({rep.pass_rate:.2%}); diagnostic check score {rep.check_score:.2%}; "
             f"deployment_ready={rep.deployment_ready}"
         )
-        for result in rep.results:
-            typer.echo(
-                f"  {'ok  ' if result.passed else 'FAIL'} {result.name} "
-                f"{'; '.join(result.failures)}"
-            )
+        if not private:
+            for result in rep.results:
+                typer.echo(
+                    f"  {'ok  ' if result.passed else 'FAIL'} {result.name} "
+                    f"{'; '.join(result.failures)}"
+                )
     if isinstance(rep, ShadowReport):
         passed = rep.technical_gate_passed and (not gate or rep.ready_for_local)
     else:
@@ -102,5 +127,18 @@ def run_command(
     json_output: Annotated[bool, typer.Option("--json")] = False,
     output: Annotated[Path | None, typer.Option("--output")] = None,
     gate: Annotated[bool, typer.Option("--gate")] = False,
+    allow_cloud_data: Annotated[bool, typer.Option("--allow-cloud-data")] = False,
+    local_model_version: str = "",
+    cloud_model_version: str = "",
 ) -> None:
-    eval_cmd(task, tier, cases, json_output=json_output, output=output, gate=gate)
+    eval_cmd(
+        task,
+        tier,
+        cases,
+        json_output=json_output,
+        output=output,
+        gate=gate,
+        allow_cloud_data=allow_cloud_data,
+        local_model_version=local_model_version,
+        cloud_model_version=cloud_model_version,
+    )

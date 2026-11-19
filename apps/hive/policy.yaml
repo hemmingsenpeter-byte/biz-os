@@ -1,4 +1,8 @@
 # M0 placeholder; real parts arrive M2+.
+# Stage 1 (docs/PLAN.md): practice mode. The roles read real mail and draft, but nothing
+# is sent, booked or posted, approved or not; `biz shadow apps/hive` shows what they would
+# have done. Owner: change to `live` only after the Stage 1 gate passes.
+mode: shadow
 objective: >-
   HIVE: a commercial fit-out business. Win and deliver office fit-out projects profitably,
   with the owner approving anything that sends, pays or signs.

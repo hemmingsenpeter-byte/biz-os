@@ -245,6 +245,8 @@ def _run(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, Any
             continue
         if kind == "tool":
             res = do(_tool_step, run_id, role, step, state)
+            if res["status"] == "shadowed":  # shadow mode: proposed, not run; task stays open
+                return do(_end, run_id, "shadowed")
             while res["status"] == "staged":
                 if _await_decision(run_id, res["op_id"]) != "approved":
                     return do(_end, run_id, "rejected")
@@ -520,6 +522,20 @@ def _tool_step(
             allow_list=c.roles[role].allow_list,
             decision_type=step.get("decision_type"),
         )
+        if res["status"] == "shadowed":
+            run = s.get(SopRun, run_id)
+            record(
+                s,
+                role,
+                "shadow",
+                step["tool"],
+                inputs=res["args"],
+                decision_type=step.get("decision_type"),
+                run_id=run_id,
+                task_id=str(run.task_id) if run is not None and run.task_id else None,
+                sop=run.sop if run is not None else None,
+            )
+            return _save(s, run_id, step["id"], {"status": "shadowed"})
         if res["status"] == "staged":
             return _save(s, run_id, f"{step['id']}:staged", res)  # execute step owns the outcome
         return _save(s, run_id, step["id"], {"status": "ran", "output": res["output"]})

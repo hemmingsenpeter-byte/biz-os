@@ -63,6 +63,7 @@ def test_anyone_signed_in_pauses_only_the_owner_resumes(client, session):
         "by": None,
         "reason": "",
         "at": None,
+        "mode": "live",  # no composition loaded: live
     }
     r = client.post("/v1/control/pause", json={"reason": "odd replies"})
     assert r.status_code == 200

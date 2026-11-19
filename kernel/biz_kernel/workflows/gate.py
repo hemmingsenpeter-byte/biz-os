@@ -60,6 +60,9 @@ class KernelGate:
         """Run or stage a tool call. BudgetExceeded and PolicyDenied propagate to the caller."""
         if tool not in allow_list:
             raise PermissionError(f"{actor} may not call {tool}")
+        if self.registry.shadow and self.registry.outside_effect(tool):
+            # Shadow mode: nothing is run or staged; the caller records what would have been.
+            return {"status": "shadowed", "tool": tool, "args": args}
         res = staged.run_or_stage(
             session, self.registry, self.policy, actor, tool, args, decision_type
         )

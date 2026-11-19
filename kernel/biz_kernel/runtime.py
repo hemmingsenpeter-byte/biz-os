@@ -28,6 +28,7 @@ from biz_kernel.memory import tools as memory_tools
 from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.policy.engine import PolicyEngine
+from biz_kernel.policy.mode import SHADOW, mode_of, mode_problems
 from biz_kernel.tools.registry import ToolRegistry
 from biz_kernel.workflows import runner
 from biz_kernel.workflows.escalation import parse
@@ -216,7 +217,9 @@ def build_runtime(
     ports: dict[str, Any] | None = None,
     approval_poll_seconds: float = 3600.0,
     retry_seconds: float = 60.0,
+    mode: str | None = None,
 ) -> Runtime:
+    """Assemble a composition. `mode` overrides policy.yaml's `mode` (tests only)."""
     manifest = load_composition(app_dir, repo_root)
     overrides = ports or {}
     resolved = {
@@ -225,6 +228,9 @@ def build_runtime(
     resolved.update(overrides)
 
     registry = ToolRegistry()
+    if problems := mode_problems(manifest.policy):
+        raise CompositionError("; ".join(problems))
+    registry.shadow = (mode or mode_of(manifest.policy)) == SHADOW
     embedder = _embedder(resolved.get("model_local"))
     memory_tools.register(
         registry, {name: list(r.sources) for name, r in manifest.roles.items()}, embedder

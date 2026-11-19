@@ -135,7 +135,13 @@ def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
         "speech": FakeSpeech(),
         "accounting": FakeAccounting(),
     }
-    rt = build_runtime(ROOT / "apps" / app, ROOT, ports=ports, approval_poll_seconds=1)
+    rt = build_runtime(
+        ROOT / "apps" / app,
+        ROOT,
+        ports=ports,
+        approval_poll_seconds=1,
+        mode="live",  # HIVE ships in shadow mode; these tests exercise the live path
+    )
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
     DBOS.launch()
     yield Live(rt, app, approver)

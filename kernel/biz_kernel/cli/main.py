@@ -117,6 +117,14 @@ def doctor_cmd(
 
     problems = limit_problems(manifest.policy.get("limits") or {})
     report(not problems, "money limits are usable" + "".join(f"\n  {p}" for p in problems))
+    from biz_kernel.policy.mode import SHADOW, mode_of, mode_problems
+
+    if mode_problems(manifest.policy):
+        report(False, "".join(mode_problems(manifest.policy)))
+    elif mode_of(manifest.policy) == SHADOW:
+        report(True, "mode: shadow (practice): roles draft, nothing outside is ever done")
+    else:
+        report(True, "mode: live")
     from biz_kernel.metrics import config_problems
 
     metrics_cfg = manifest.policy.get("metrics")
@@ -307,6 +315,30 @@ def metrics_cmd(
     finally:
         engine.dispose()
     typer.echo(rep.model_dump_json(indent=2) if as_json else metrics.render(rep))
+
+
+@app.command("shadow")
+def shadow_cmd(
+    app_dir: Path,
+    days: Annotated[int, typer.Option(help="Window in days")] = 14,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON")] = False,
+    repo_root: RepoRoot = None,
+    url: Annotated[str | None, typer.Option("--url", envvar="BIZ_DATABASE_URL")] = None,
+) -> None:
+    """Shadow report: proposals recorded and outside actions taken. Exit 1 if any were
+    taken while the composition is in shadow mode (the Stage 1 gate)."""
+    from biz_kernel import db
+    from biz_kernel.policy import shadow_report
+    from biz_kernel.policy.mode import SHADOW, mode_of
+
+    manifest, _ = _load(app_dir, repo_root)
+    mode = mode_of(manifest.policy)
+    db.configure(url or db.database_url())
+    with db.session_scope() as s:
+        rep = shadow_report.report(s, mode, days)
+    typer.echo(rep.model_dump_json(indent=2) if as_json else shadow_report.render(rep))
+    if mode == SHADOW and rep.external_actions:
+        raise typer.Exit(1)
 
 
 @app.command("worker")

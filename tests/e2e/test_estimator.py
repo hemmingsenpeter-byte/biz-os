@@ -111,7 +111,13 @@ def rt(fresh_db: str, monkeypatch, app_name: str):  # type: ignore[no-untyped-de
         "model_cloud": FakeModel(),
     }
     ports = {k: fakes.get(k) or _generic(k) for k in manifest_ports}
-    runtime = build_runtime(APP, ROOT, ports=ports, approval_poll_seconds=1)
+    runtime = build_runtime(
+        APP,
+        ROOT,
+        ports=ports,
+        approval_poll_seconds=1,
+        mode="live",  # HIVE ships in shadow mode; these tests exercise the live path
+    )
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
     DBOS.launch()
     yield runtime

@@ -16,6 +16,7 @@ from biz_kernel.api import (
     routes_approvals,
     routes_control,
     routes_metrics,
+    routes_shadow,
     routes_status,
     routes_suggestions,
 )
@@ -95,6 +96,7 @@ def _v1() -> APIRouter:
     router.include_router(routes_approvals.router())
     router.include_router(routes_approvals.corrections_router())
     router.include_router(routes_control.router())
+    router.include_router(routes_shadow.router())
     router.include_router(routes_metrics.router())
     router.include_router(routes_suggestions.router())
     router.include_router(routes_status.router())

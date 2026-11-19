@@ -18,6 +18,7 @@ from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook
 from biz_kernel.control import service as control
 from biz_kernel.policy import spend
+from biz_kernel.policy.mode import ShadowMode
 from biz_kernel.policy.types import GATED, Action, Allow, Decision, SideEffect
 
 
@@ -60,6 +61,7 @@ class ToolRegistry:
     tools: dict[str, Tool] = field(default_factory=dict)
     budgets: BudgetBook | None = None  # set => paid tools are checked and charged per actor
     now: Callable[[], datetime] = db.utcnow
+    shadow: bool = False  # shadow mode: no outside-effect tool ever runs (policy/mode.py)
 
     def register(self, tool: Tool) -> None:
         if tool.name in self.tools:
@@ -99,6 +101,10 @@ class ToolRegistry:
             raise NotAllowed(f"{actor} may not call {name}")
         tool = self.get(name)
         jsonschema.validate(args, tool.schema)
+        if self.shadow and self.outside_effect(name):
+            # Backstop for every path (SOPs stop earlier, at the gate): in shadow mode an
+            # outside effect never runs, not even one replaying an approval.
+            raise ShadowMode(name)
         if (tool.side_effect in GATED or tool.inner) and control.is_paused(session):
             # The kill switch outranks everything, including an approval being replayed.
             raise control.Paused(name)
@@ -148,7 +154,7 @@ class ToolRegistry:
                 with contextlib.suppress(SQLAlchemyError):
                     self.budgets.refund(session, charged)
             raise
-        record(session, actor, "tool_call", name, args=args)
+        record(session, actor, "tool_call", name, args=args, outside=self.outside_effect(name))
         if self.moves_money(name) and args.get("amount") is not None:
             # Feeds limits.max_daily. Policy already refused an unusable amount.
             spend.add(
@@ -160,6 +166,18 @@ class ToolRegistry:
                 now=self.now(),
             )
         return CallResult(decision, output)
+
+    def outside_effect(self, name: str, depth: int = 0) -> bool:
+        """The tool, or any tool it wraps, acts outside the system (external or money).
+
+        An unknown inner tool counts as outside, the strictest reading.
+        """
+        tool = self.tools.get(name)
+        if tool is None or depth > 8:
+            return True
+        return tool.side_effect in GATED or any(
+            self.outside_effect(i, depth + 1) for i in tool.inner
+        )
 
     def moves_money(self, name: str, depth: int = 0) -> bool:
         """The tool, or any tool it wraps, is a money action."""

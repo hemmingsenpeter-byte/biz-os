@@ -48,9 +48,10 @@ routine and adversarial examples alongside the historical sample.
 
    The command seals the version under `v1/confirmed/`. Each split includes the
    prompt and schema and a dated local owner attestation with the dataset and
-   source digests. Keep the confirmed files intact. The attestation records an
-   explicit owner action on this machine, so restrict workspace access to the
-   owner and the evaluator designated by the owner.
+   source digests. Keep the confirmed files at their original paths in the
+   workspace. Evaluation checks case membership against the split ledger and
+   source cohort. Restrict workspace access to the owner and the evaluator
+   designated by the owner.
 
 To give the owner a reviewable copy of the packaged synthetic sets, use one
 `review-sheet` export per split. Inspect the `message` and `expected` columns and use
@@ -92,7 +93,9 @@ using its installed Ollama digest and the cloud model using the exact provider
 revision selected for the run. Set `BIZ_OLLAMA_MODEL` and, for authorised cloud
 evaluation, `BIZ_CLAUDE_MODEL` and `ANTHROPIC_API_KEY` as for the existing model
 CLI. Check that the version evidence corresponds to the configured model before
-recording it.
+recording it. Private runs that include the local tier require a loopback
+`BIZ_OLLAMA_URL` and an installed noncloud model. The evaluator connects directly
+to the loopback address without using inherited HTTP proxies.
 
 ```sh
 uv run biz eval receptionist.triage --tier local \
@@ -121,6 +124,7 @@ least 50 held-out cases with outcome checks. Triage scores also check the existi
 0.6 confidence threshold. The evaluation deployment flag also
 requires owner-confirmed historical evidence and a configured real adapter and
 recorded model revision. A local-versus-cloud recommendation requires a valid
-comparison. The model gate is one input to the pilot decision in the build plan.
+comparison with a real cloud adapter and recorded cloud model revision. The model
+gate is one input to the pilot decision in the build plan.
 
 Offline tests exercise these paths with fake ports and synthetic data.

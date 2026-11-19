@@ -24,10 +24,14 @@ from typing import Any
 import jsonschema
 import yaml
 
-from biz_kernel.models.eval.private import OPAQUE_ID, private_path
+from biz_kernel.models.eval.private import OPAQUE_ID, private_path, sha_json
 from biz_kernel.models.router import Router, Tier
 
 DEFAULT_THRESHOLD = 0.05
+REAL_BACKEND: dict[Tier, str] = {
+    "local": "biz_port_model_ollama.OllamaModel",
+    "cloud": "biz_port_model_claude.ClaudeModel",
+}
 
 
 @dataclass
@@ -86,8 +90,14 @@ class EvalReport:
             self.technical_gate_passed
             and self.metadata.get("owner_reviewed") is True
             and self.metadata.get("provenance") in ("historical", "mixed")
+            and self.has_model_evidence
+        )
+
+    @property
+    def has_model_evidence(self) -> bool:
+        return (
+            self.metadata.get("backend") == REAL_BACKEND.get(self.tier)
             and bool(self.metadata.get("configured_model"))
-            and self.metadata.get("backend") in REAL_ADAPTERS
             and bool(self.metadata.get("model_version"))
         )
 
@@ -102,7 +112,11 @@ class ShadowReport:
 
     @property
     def ready_for_local(self) -> bool:
-        return self.local.deployment_ready and self.technical_gate_passed
+        return (
+            self.local.deployment_ready
+            and self.cloud.has_model_evidence
+            and self.technical_gate_passed
+        )
 
     @property
     def comparison_valid(self) -> bool:
@@ -249,12 +263,35 @@ def _verify_owner_review(
         or len({case.name for case in cases}) != len(cases)
     ):
         raise ValueError("owner review receipt does not match the labelled dataset")
+    _verify_review_split(directory, data, receipt, cases)
     try:
         if datetime.fromisoformat(receipt["confirmed_at"]).utcoffset() is None:
             raise ValueError("confirmation needs a timezone")
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("owner review receipt must include a dated confirmation") from exc
     return {key: receipt[key] for key in ("owner", "confirmed_at", "case_count", "source_sha256")}
+
+
+def _verify_review_split(
+    directory: Path, data: dict[str, Any], receipt: dict[str, Any], cases: list[Case]
+) -> None:
+    split = data.get("split")
+    version_dir = directory.parent.parent
+    if (
+        split not in ("tuning", "heldout")
+        or directory.name != split
+        or directory.parent.name != "confirmed"
+        or version_dir.name != data.get("dataset_version")
+    ):
+        raise ValueError("evaluate the canonical confirmed dataset in its original split directory")
+    try:
+        prepared = json.loads((version_dir / "prepared.json").read_text())
+        ledger = json.loads((version_dir.parent / "splits.json").read_text())["splits"]
+        members = {case_id for case_id in prepared if ledger[case_id] == split}
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("canonical split evidence is missing or invalid") from exc
+    if sha_json(prepared) != receipt["source_sha256"] or members != {c.name for c in cases}:
+        raise ValueError("reviewed cases do not match their reserved cohort and split")
 
 
 def _has_outcome_check(case: Case) -> bool:
@@ -345,8 +382,8 @@ def score_case(c: Case, out: dict[str, Any]) -> CaseResult:
 
 
 REAL_ADAPTERS = {
-    "biz_port_model_ollama.OllamaModel": "biz-port-model-ollama",
-    "biz_port_model_claude.ClaudeModel": "biz-port-model-claude",
+    REAL_BACKEND["local"]: "biz-port-model-ollama",
+    REAL_BACKEND["cloud"]: "biz-port-model-claude",
 }
 
 

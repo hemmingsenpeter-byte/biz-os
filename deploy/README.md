@@ -166,6 +166,9 @@ databases, or a separate document store requires a different recovery procedure.
    space if needed (default `~/biz-backups/dumps`). Leave free space for staging and
    one full download verification under `TMPDIR`. `BIZ_ENV_FILE`, `BIZ_COMPOSE_FILE`,
    `BIZ_COMPOSE_OVERRIDE_FILE` and `COMPOSE_PROJECT_NAME` select an alternate install.
+   `BIZ_BACKUP_HELPER_IMAGE` optionally selects a locally available image with
+   `tar` and `find` for the network-isolated volume helper. It defaults to the
+   running PostgreSQL container's image.
 4. In a maintenance window, disable ingress, drain active work, and stop the API,
    worker and DocuSeal. Keep PostgreSQL running. Keep the stopped DocuSeal container
    so the script can identify its named volume. Suspend any other process that can

@@ -66,8 +66,13 @@ find_docuseal_volume() {
   [[ "$docuseal_id" =~ ^[0-9a-f]+$ && "$postgres_id" =~ ^[0-9a-f]+$ ]] ||
     fail "expected one created DocuSeal container and one running PostgreSQL container"
 
-  IMAGE="$(docker inspect --format '{{.Image}}' "$postgres_id" 2>/dev/null)" ||
-    fail "cannot determine the local archive helper image"
+  if [[ -n "${BIZ_BACKUP_HELPER_IMAGE:-}" ]]; then
+    IMAGE="$(docker image inspect --format '{{.Id}}' "$BIZ_BACKUP_HELPER_IMAGE" 2>/dev/null)" ||
+      fail "cannot find the configured local archive helper image"
+  else
+    IMAGE="$(docker inspect --format '{{.Image}}' "$postgres_id" 2>/dev/null)" ||
+      fail "cannot determine the local archive helper image"
+  fi
   VOLUME="$(docker inspect --format \
     '{{range .Mounts}}{{if and (eq .Destination "/data/docuseal") (eq .Type "volume")}}{{.Name}}{{end}}{{end}}' \
     "$docuseal_id" 2>/dev/null)" || fail "cannot inspect the DocuSeal container"

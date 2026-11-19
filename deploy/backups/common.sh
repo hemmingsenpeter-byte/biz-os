@@ -15,12 +15,13 @@ set -a
 set +a
 
 DUMP_DIR="${BIZ_DUMP_DIR:-$HOME/biz-backups/dumps}"
-[[ "${BIZ_STORAGE_ROOT:-}" == /* && -d "$BIZ_STORAGE_ROOT" ]] ||
-  fail "BIZ_STORAGE_ROOT must name an existing absolute directory"
+HOST_OBJECTS="${BIZ_STORAGE_HOST_ROOT:-${BIZ_STORAGE_ROOT:-}}"
+[[ "$HOST_OBJECTS" == /* && -d "$HOST_OBJECTS" ]] ||
+  fail "BIZ_STORAGE_HOST_ROOT must name an existing absolute directory"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || fail "RESTIC_REPOSITORY is required"
 mkdir -p -- "$DUMP_DIR" || fail "cannot create the backup working directory"
 DUMP_DIR="$(cd "$DUMP_DIR" && pwd -P)"
-STORAGE="$(cd "$BIZ_STORAGE_ROOT" && pwd -P)"
+STORAGE="$(cd "$HOST_OBJECTS" && pwd -P)"
 # Quiescing protects consistency only if the archive cannot pick up our own writes.
 [[ "$STORAGE" != / && "$DUMP_DIR" != / && "$DUMP_DIR/" != "$STORAGE/"* &&
    "$STORAGE/" != "$DUMP_DIR/"* ]] || fail "backup and object directories must be disjoint"

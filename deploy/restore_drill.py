@@ -104,7 +104,11 @@ class Project:
         return run([*self.command, *args], self.env)
 
     def start(self) -> URL:
-        self.compose("up", "-d", "--wait", "--wait-timeout", "75", "postgres")
+        try:
+            self.compose("up", "-d", "--wait", "--wait-timeout", "75", "postgres")
+        except RuntimeError:
+            print(self.compose("logs", "--no-color", "--tail", "30", "postgres"), file=sys.stderr)
+            raise
         self.compose("create", "docuseal")
         port = self.compose("port", "postgres", "5432").split(":")[-1]
         return URL.create(
@@ -312,6 +316,7 @@ def drill(root: Path, tmp: Path) -> None:
     objects = tmp / "objects"
     objects.mkdir(mode=0o700)
     env.update(
+        BIZ_BACKUP_HELPER_IMAGE="busybox:1.37.0",
         BIZ_COMPOSE_FILE=str(compose_file),
         BIZ_DUMP_DIR=str(tmp / "dumps"),
         BIZ_STORAGE_ROOT=str(objects),

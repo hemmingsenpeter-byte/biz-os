@@ -1,5 +1,20 @@
 # Build log
 
+## 2026-11-20 Backup and recovery
+
+- The backup command covers `biz`, `biz_dbos`, `docuseal`, local documents and
+  DocuSeal files. Capture requires a quiesced Compose install. The job verifies a
+  byte-for-byte download before retention, pins the verified generation during
+  retention, and checks that its snapshot ID remains available before reporting success.
+- The clean-target command restores the same data at the original absolute
+  document path. Operators recover deployment settings and credentials from
+  their separate off-box records.
+- The disposable Docker/PostgreSQL/DBOS and restic drill recovered the pending
+  approval, in-flight workflow, sealed audit chain and both file stores. After
+  approval and replay, the fake mail adapter logged one call total. The quiesced
+  recovery point was 7.42 s old at simulated loss. Verified recovery and replay
+  took 30.85 s. The fixture used local restic and no live provider credentials.
+
 ## 2026-11-16: one line again (PR #3 merged into the working branch)
 
 `main` had PR #4. Two lines had grown apart from it: this branch (owner decisions, review

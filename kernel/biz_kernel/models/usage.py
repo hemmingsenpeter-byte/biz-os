@@ -33,8 +33,11 @@ def report(usage: Usage) -> None:
     last_usage.set(usage)
 
 
-def take() -> Usage:
-    """Usage of the call just made (zero if the adapter reported none)."""
+def take() -> Usage | None:
+    """Usage of the call just made, or None if the adapter reported none.
+
+    None is distinct from a reported all-zero Usage: callers count it as unmetered.
+    """
     u = last_usage.get()
     last_usage.set(None)
-    return u or Usage()
+    return u

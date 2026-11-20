@@ -42,11 +42,14 @@ def confirm_command(
     workspace: Path,
     version: str,
     owner: Annotated[str, typer.Option(help="Owner attesting to every category in this version")],
-    repo_root: Annotated[Path, typer.Option("--repo-root")] = Path("."),
+    template: Annotated[
+        Path,
+        typer.Option(help="The role's packaged evaluation directory for the task"),
+    ],
 ) -> None:
     """Record explicit owner confirmation and seal the two case sets."""
     try:
-        result = confirm(workspace, version, owner, repo_root)
+        result = confirm(workspace, version, owner, template)
     except (ValueError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(result))

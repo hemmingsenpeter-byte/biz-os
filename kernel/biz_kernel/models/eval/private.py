@@ -1,4 +1,9 @@
-"""Owner-controlled, offline preparation of private historical triage cohorts."""
+"""Owner-controlled, offline preparation of private historical classification cohorts.
+
+The kernel names no role. `confirm` reads the task, label field, categories, prompt and
+schema from a role's packaged evaluation directory: its `_schema.yaml` and the
+`historical` block of its `_task.yaml`.
+"""
 
 from __future__ import annotations
 
@@ -20,8 +25,6 @@ from typing import Any, TypedDict
 
 import yaml
 
-TASK = "receptionist.triage"
-CATEGORIES = {"enquiry", "service_request", "supplier", "spam", "other"}
 MIN_CASES = 100
 MIN_HELDOUT = 50
 SOURCE_FIELDS = ("thread_key", "channel", "subject", "body")
@@ -31,6 +34,17 @@ OPAQUE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", re.UNICODE)
 URL = re.compile(r"(?:https?://|www\.)[^\s<>]+", re.IGNORECASE)
 PHONE = re.compile(r"(?<!\w)\+?\d[\d ()\-.]{5,}\d(?!\w)")
+
+
+class Template(TypedDict):
+    task: dict[str, Any]
+    dataset: str
+    prompt: str
+    schema: str
+    label_field: str
+    categories: set[str]
+    payload_key: str
+    checks: list[dict[str, Any]]
 
 
 class SplitLedger(TypedDict):
@@ -205,16 +219,66 @@ def prepare(source: Path, workspace: Path, version: str) -> dict[str, int]:
     return {"imported": len(cases), "heldout": heldout_count, "duplicates": len(raw) - len(cases)}
 
 
-def confirm(workspace: Path, version: str, owner: str, repo_root: Path) -> dict[str, int]:
-    """Bind explicit owner-confirmed labels to immutable case payloads."""
+def read_template(template: Path) -> Template:
+    """Read a role's packaged evaluation directory as the template for private cases."""
+    try:
+        task = yaml.safe_load((template / "_task.yaml").read_text())
+        schema = (template / "_schema.yaml").read_text()
+        parsed = yaml.safe_load(schema)
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError("template needs readable _task.yaml and _schema.yaml files") from exc
+    spec = task.get("historical") if isinstance(task, dict) else None
+    if not isinstance(spec, dict) or not isinstance(parsed, dict):
+        raise ValueError("template _task.yaml needs a historical block")
+    if not all(isinstance(task.get(key), str) for key in ("task", "decision_type")):
+        raise ValueError("template _task.yaml must name its task and decision_type")
+    keys = ("dataset", "prompt_file", "label_field", "payload_key")
+    if not all(isinstance(spec.get(key), str) and spec[key] for key in keys):
+        raise ValueError(f"template historical block needs {', '.join(keys)}")
+    label = spec["label_field"]
+    categories = (parsed.get("properties") or {}).get(label, {}).get("enum")
+    if (
+        not isinstance(categories, list)
+        or not categories
+        or label not in parsed.get("required", [])
+    ):
+        raise ValueError(f"template schema must require {label} as an enum")
+    checks = spec.get("checks") or []
+    if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
+        raise ValueError("template historical checks must be a list of mappings")
+    try:
+        prompt = (template / spec["prompt_file"]).read_text()
+    except OSError as exc:
+        raise ValueError("template prompt_file is not readable") from exc
+    return {
+        "task": {k: task[k] for k in ("schema_version", "task", "decision_type") if k in task},
+        "dataset": spec["dataset"],
+        "prompt": prompt,
+        "schema": schema,
+        "label_field": label,
+        "categories": {str(c) for c in categories},
+        "payload_key": spec["payload_key"],
+        "checks": [
+            {"type": "json_schema"},
+            {"type": "exact", "fields": [label]},
+            *checks,
+        ],
+    }
+
+
+def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[str, int]:
+    """Bind explicit owner-confirmed labels to immutable case payloads.
+
+    `template` is the role's packaged evaluation directory for the task.
+    """
     from biz_kernel.models.eval.harness import dataset_metadata, load_cases
 
     root = private_path(workspace)
     version_dir = _version_dir(root, version)
     if not OPAQUE_ID.fullmatch(owner):
         raise ValueError("owner must be a non-personal identifier")
-    prompt = (repo_root / "roles/receptionist/prompts/triage.md").read_text()
-    schema = (repo_root / "roles/receptionist/tests/eval/triage_heldout/_schema.yaml").read_text()
+    spec = read_template(template)
+    prompt, schema, label = spec["prompt"], spec["schema"], spec["label_field"]
     with _workspace(root):
         ledger = json.loads((root / "splits.json").read_text())["splits"]
         cases = json.loads((version_dir / "prepared.json").read_text())
@@ -237,8 +301,8 @@ def confirm(workspace: Path, version: str, owner: str, repo_root: Path) -> dict[
             }
             if expected != reviewed or len(reviewed) != len(rows):
                 raise ValueError("review sheet changed outside the category column")
-            if any(row["category"] not in CATEGORIES for row in rows):
-                raise ValueError("owner must confirm a valid category for every case")
+            if any(row["category"] not in spec["categories"] for row in rows):
+                raise ValueError(f"owner must confirm a valid {label} for every case")
             datasets[split] = rows
 
         with tempfile.TemporaryDirectory(dir=version_dir, prefix=".confirm-") as temporary:
@@ -254,24 +318,24 @@ def confirm(workspace: Path, version: str, owner: str, repo_root: Path) -> dict[
                         "schema_file": "_schema.yaml",
                         "untrusted": [
                             json.dumps(
-                                {"enquiry": {"from": "[redacted]", **cases[row["case_id"]]}},
+                                {
+                                    spec["payload_key"]: {
+                                        "from": "[redacted]",
+                                        **cases[row["case_id"]],
+                                    }
+                                },
                                 ensure_ascii=False,
                             )
                         ],
-                        "expected": {"category": row["category"]},
-                        "checks": [
-                            {"type": "json_schema"},
-                            {"type": "exact", "fields": ["category"]},
-                            {"type": "numeric_min", "field": "confidence", "min": 0.6},
-                        ],
+                        "expected": {label: row["category"]},
+                        "checks": spec["checks"],
                     }
                     write_private(split_dir / f"{row['case_id']}.yaml", yaml.safe_dump(case))
                 task = {
                     "schema_version": 1,
-                    "dataset": "historical-receptionist-triage",
+                    **spec["task"],
+                    "dataset": spec["dataset"],
                     "dataset_version": version,
-                    "task": TASK,
-                    "decision_type": "enquiry_classification",
                     "split": split,
                     "provenance": "historical",
                     "private": True,

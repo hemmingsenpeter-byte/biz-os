@@ -43,10 +43,13 @@ routine and adversarial examples alongside the historical sample.
    confirms the labels using an opaque reviewer ID.
 
    ```sh
-   uv run biz eval-data confirm "$BIZ_EVAL_WORKSPACE" v1 --owner owner-01
+   uv run biz eval-data confirm "$BIZ_EVAL_WORKSPACE" v1 --owner owner-01 \
+     --template roles/receptionist/tests/eval/triage_heldout
    ```
 
-   The command seals the version under `v1/confirmed/`. Each split includes the
+   The command seals the version under `v1/confirmed/`. The task, categories,
+   prompt, schema and checks come from the template's `_schema.yaml` and the
+   `historical` block of its `_task.yaml`. Each split includes the
    prompt and schema and a dated local owner attestation with the dataset and
    source digests. Keep the confirmed files at their original paths in the
    workspace. Evaluation checks case membership against the split ledger and

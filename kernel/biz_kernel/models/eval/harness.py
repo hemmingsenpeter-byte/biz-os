@@ -442,11 +442,15 @@ async def _run_loaded(
                 escalate=False,
             )
             result = score_case(c, r.output)
-            result.usage = {
-                **asdict(r.usage),
-                "cost_usd": str(r.cost_usd),
-                "attempts": r.attempts,
-            }
+            # An adapter that reported nothing leaves no usage record; a zero-filled one
+            # would read as measured. Partly reported cases keep the known figures.
+            if r.unmetered_calls < r.attempts:
+                result.usage = {
+                    **asdict(r.usage),
+                    "cost_usd": str(r.cost_usd),
+                    "attempts": r.attempts,
+                    "unmetered_calls": r.unmetered_calls,
+                }
         except Exception as exc:  # a failed call scores zero, the run continues
             result = CaseResult(c.name, 0.0, [str(exc)], error=str(exc))
         result.latency_ms = (time.perf_counter() - start) * 1000
@@ -463,7 +467,9 @@ async def _run_loaded(
         model_version=model_version,
         total_latency_ms=sum(result.latency_ms or 0 for result in results),
         recorded_model_api_cost_usd=str(recorded_cost),
-        unmetered_cases=sum(result.usage is None for result in results),
+        unmetered_cases=sum(
+            result.usage is None or bool(result.usage.get("unmetered_calls")) for result in results
+        ),
     )
     passed = sum(result.passed for result in results)
     return EvalReport(

@@ -15,7 +15,6 @@ from biz_kernel.models.eval.baseline import FIELDS, baseline
 from biz_kernel.models.eval.private import (
     REVIEW_FIELDS,
     SOURCE_FIELDS,
-    TASK,
     confirm,
     csv_rows,
     csv_text,
@@ -28,6 +27,8 @@ from click import unstyle
 from typer.testing import CliRunner
 
 ROOT = Path(__file__).resolve().parents[3]
+TEMPLATE = ROOT / "roles/receptionist/tests/eval/triage_heldout"
+TASK = yaml.safe_load((TEMPLATE / "_task.yaml").read_text())["task"]
 
 
 def source_rows(count: int = 100) -> list[dict[str, str]]:
@@ -54,7 +55,7 @@ def reviewed(tmp_path: Path) -> tuple[Path, Path]:
         for row in rows:
             row["category"] = "enquiry"
         write_private(path, csv_text(REVIEW_FIELDS, rows))
-    assert confirm(workspace, "v1", "owner-01", ROOT) == {"tuning": 50, "heldout": 50}
+    assert confirm(workspace, "v1", "owner-01", TEMPLATE) == {"tuning": 50, "heldout": 50}
     version = workspace / "v1" / "confirmed"
     return version / "tuning", version / "heldout"
 
@@ -88,14 +89,42 @@ def test_confirm_requires_every_label_and_rejects_changed_measurements(tmp_path:
     write_private(source, csv_text(SOURCE_FIELDS, source_rows()))
     prepare(source, workspace, "v1")
     with pytest.raises(ValueError, match="every case"):
-        confirm(workspace, "v1", "owner-01", ROOT)
+        confirm(workspace, "v1", "owner-01", TEMPLATE)
     assert not (workspace / "v1" / "confirmed").exists()
     sheet = workspace / "v1" / "tuning" / "review.csv"
     rows = csv_rows(sheet, REVIEW_FIELDS)
     rows[0]["body"] = "changed"
     write_private(sheet, csv_text(REVIEW_FIELDS, rows))
     with pytest.raises(ValueError, match="outside the category"):
-        confirm(workspace, "v1", "owner-01", ROOT)
+        confirm(workspace, "v1", "owner-01", TEMPLATE)
+
+
+def test_confirm_takes_task_labels_and_checks_from_the_role_template(
+    reviewed: tuple[Path, Path],
+) -> None:
+    _, heldout = reviewed
+    task = yaml.safe_load((heldout / "_task.yaml").read_text())
+    assert task["task"] == TASK and task["decision_type"] == "enquiry_classification"
+    assert (heldout / "_schema.yaml").read_text() == (TEMPLATE / "_schema.yaml").read_text()
+    case = load_cases(heldout)[0]
+    assert {"type": "numeric_min", "field": "confidence", "min": 0.6} in case.checks
+    assert json.loads(case.untrusted[0])["enquiry"]["from"] == "[redacted]"
+
+
+def test_confirm_rejects_a_category_outside_the_role_schema(tmp_path: Path) -> None:
+    source, workspace = tmp_path / "source.csv", tmp_path / "review"
+    write_private(source, csv_text(SOURCE_FIELDS, source_rows()))
+    prepare(source, workspace, "v1")
+    for split in ("tuning", "heldout"):
+        path = workspace / "v1" / split / "review.csv"
+        rows = csv_rows(path, REVIEW_FIELDS)
+        for row in rows:
+            row["category"] = "not_in_schema"
+        write_private(path, csv_text(REVIEW_FIELDS, rows))
+    with pytest.raises(ValueError, match="valid category for every case"):
+        confirm(workspace, "v1", "owner-01", TEMPLATE)
+    with pytest.raises(ValueError, match="historical block"):
+        confirm(workspace, "v1", "owner-01", ROOT / "roles/receptionist/tests/eval/triage")
 
 
 def test_historical_receipt_is_bound_to_the_scored_cases(reviewed: tuple[Path, Path]) -> None:

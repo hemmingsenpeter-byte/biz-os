@@ -9,3 +9,11 @@ owner_reviewed: false
 required_pass_rate: 0.95
 min_cases: 50
 threshold: 0.1
+# Template for owner-confirmed historical cases (`biz eval-data confirm --template`).
+historical:
+  dataset: historical-receptionist-triage
+  prompt_file: ../../../prompts/triage.md
+  label_field: category
+  payload_key: enquiry
+  checks:
+    - { type: numeric_min, field: confidence, min: 0.6 }

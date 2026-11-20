@@ -323,6 +323,9 @@ def worker_cmd(app_dir: Path, repo_root: RepoRoot = None) -> None:
 # ---- biz eval: provided by biz_kernel.models.eval.cli (a Typer sub-app) -----------------
 try:
     from biz_kernel.models.eval.cli import eval_cmd as _eval_cmd
+    from biz_kernel.models.eval.data_cli import app as _eval_data
+
+    app.add_typer(_eval_data, name="eval-data")
 
     @app.command("eval")
     def eval_task(
@@ -332,9 +335,22 @@ try:
         json_output: Annotated[bool, typer.Option("--json")] = False,
         output: Annotated[Path | None, typer.Option("--output")] = None,
         gate: Annotated[bool, typer.Option("--gate")] = False,
+        allow_cloud_data: Annotated[bool, typer.Option("--allow-cloud-data")] = False,
+        local_model_version: str = "",
+        cloud_model_version: str = "",
     ) -> None:
         """Score a model task on golden cases."""
-        _eval_cmd(task, tier, cases, json_output=json_output, output=output, gate=gate)
+        _eval_cmd(
+            task,
+            tier,
+            cases,
+            json_output=json_output,
+            output=output,
+            gate=gate,
+            allow_cloud_data=allow_cloud_data,
+            local_model_version=local_model_version,
+            cloud_model_version=cloud_model_version,
+        )
 except ImportError:  # eval harness not installed yet
     pass
 

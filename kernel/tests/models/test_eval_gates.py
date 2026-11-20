@@ -79,6 +79,43 @@ def test_confidence_boundary_is_exact(value, passed: bool) -> None:
     assert score_case(case, output).passed is passed
 
 
+class ReportingModel(FakeModel):
+    """A fake adapter that reports (all-zero) usage, as the real adapters do."""
+
+    async def structured(self, system, messages, schema, tier):  # type: ignore[no-untyped-def]
+        from biz_kernel.models import usage
+
+        out = await super().structured(system, messages, schema, tier)
+        usage.report(usage.Usage())
+        return out
+
+
+def test_adapter_without_usage_is_counted_as_unmetered() -> None:
+    cases = load_cases(EVAL / "triage_heldout")
+    # FakeModel never reports usage; the report must not present those cases as metered.
+    rep = asyncio.run(
+        run_eval(
+            "receptionist.triage",
+            "local",
+            Router(FakeModel(answers(cases))),
+            EVAL / "triage_heldout",
+        )
+    )
+    assert rep.metadata["unmetered_cases"] == len(cases)
+    assert all(result.usage is None for result in rep.results)
+    # Reported zero usage is metered: distinct from no usage reported at all.
+    rep = asyncio.run(
+        run_eval(
+            "receptionist.triage",
+            "local",
+            Router(ReportingModel(answers(cases))),
+            EVAL / "triage_heldout",
+        )
+    )
+    assert rep.metadata["unmetered_cases"] == 0
+    assert all(result.usage and result.usage["input_tokens"] == 0 for result in rep.results)
+
+
 def test_requested_cloud_cannot_fall_back_to_local() -> None:
     local = FakeModel()
     with pytest.raises(ValueError, match="cloud model"):

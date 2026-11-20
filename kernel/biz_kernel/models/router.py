@@ -70,6 +70,8 @@ class RoutedResult:
     escalated: list[str] = field(default_factory=list)
     flagged: bool = False
     usage: usage_mod.Usage = field(default_factory=usage_mod.Usage)
+    # Calls whose adapter reported no usage at all (distinct from reporting zero).
+    unmetered_calls: int = 0
 
     @property
     def cost_usd(self) -> Decimal:
@@ -89,7 +91,7 @@ class Router:
         if tier_hint:
             return tier_hint
         default = self.task_tiers.get(task, "local")  # rule 1
-        # rule 2: the list may name the full task ("estimator.pricing") or the topic ("pricing")
+        # rule 2: the list may name the full task ("<role>.<topic>") or the topic alone
         topic = task.rsplit(".", 1)[-1]
         if (task in self.high_stakes or topic in self.high_stakes) and self.cloud is not None:
             return "cloud"
@@ -138,7 +140,10 @@ class Router:
             port = self.cloud if tier == "cloud" and self.cloud else self.local
             usage_mod.take()
             out = await port.structured(system, messages, schema, tier)
-            used = usage_mod.take()
+            reported = usage_mod.take()
+            if reported is None:
+                result.unmetered_calls += 1
+            used = reported or usage_mod.Usage()
             if tier == "local":
                 used.cost_usd = Decimal(0)
             result.usage = result.usage + used

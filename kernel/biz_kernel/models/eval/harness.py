@@ -11,16 +11,27 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from decimal import Decimal
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 import yaml
 
+from biz_kernel.models.eval.private import OPAQUE_ID, private_path, sha_json
 from biz_kernel.models.router import Router, Tier
 
 DEFAULT_THRESHOLD = 0.05
+REAL_BACKEND: dict[Tier, str] = {
+    "local": "biz_port_model_ollama.OllamaModel",
+    "cloud": "biz_port_model_claude.ClaudeModel",
+}
 
 
 @dataclass
@@ -41,6 +52,8 @@ class CaseResult:
     failures: list[str]
     output: dict[str, Any] | None = None
     error: str | None = None
+    latency_ms: float | None = None
+    usage: dict[str, int | str] | None = None
 
     @property
     def passed(self) -> bool:
@@ -76,8 +89,16 @@ class EvalReport:
         return (
             self.technical_gate_passed
             and self.metadata.get("owner_reviewed") is True
-            and self.metadata.get("provenance") in {"historical", "mixed"}
+            and self.metadata.get("provenance") in ("historical", "mixed")
+            and self.has_model_evidence
+        )
+
+    @property
+    def has_model_evidence(self) -> bool:
+        return (
+            self.metadata.get("backend") == REAL_BACKEND.get(self.tier)
             and bool(self.metadata.get("configured_model"))
+            and bool(self.metadata.get("model_version"))
         )
 
 
@@ -91,7 +112,11 @@ class ShadowReport:
 
     @property
     def ready_for_local(self) -> bool:
-        return self.local.deployment_ready and self.technical_gate_passed
+        return (
+            self.local.deployment_ready
+            and self.cloud.has_model_evidence
+            and self.technical_gate_passed
+        )
 
     @property
     def comparison_valid(self) -> bool:
@@ -111,7 +136,26 @@ class ShadowReport:
 
 
 def _read(path: Path) -> Any:
-    return yaml.safe_load(path.read_text())
+    try:
+        return yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid evaluation YAML in {path.name}") from exc
+
+
+def is_private(data: dict[str, Any]) -> bool:
+    return data.get("private") is True or data.get("provenance") in ("historical", "mixed")
+
+
+def read_task(cases: Path | str) -> dict[str, Any]:
+    directory = Path(cases)
+    path = directory / "_task.yaml"
+    raw = _read(path) if path.is_file() else {}
+    if not isinstance(raw, dict):
+        raise ValueError("_task.yaml must be a mapping")
+    data = dict(raw)
+    if (directory / "_owner_review.json").is_file():
+        data["private"] = True
+    return data
 
 
 def load_cases(cases: Path | str) -> list[Case]:
@@ -160,12 +204,7 @@ def load_cases(cases: Path | str) -> list[Case]:
 
 
 def dataset_metadata(cases: Path | str | list[Case], loaded: list[Case]) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    if not isinstance(cases, list) and (Path(cases) / "_task.yaml").is_file():
-        raw = _read(Path(cases) / "_task.yaml")
-        if not isinstance(raw, dict):
-            raise ValueError("_task.yaml must be a mapping")
-        data = dict(raw)
+    data = {} if isinstance(cases, list) else read_task(cases)
     rate, minimum = data.get("required_pass_rate", 0.95), data.get("min_cases", 50)
     if (
         isinstance(rate, bool)
@@ -186,7 +225,73 @@ def dataset_metadata(cases: Path | str | list[Case], loaded: list[Case]) -> dict
     # A valid JSON shape alone cannot establish a correct decision. Never trust a
     # manifest's assertion about coverage; derive it from the loaded checks.
     data["outcome_checks_complete"] = all(_has_outcome_check(case) for case in loaded)
+    data["owner_reviewed"] = False
+    if is_private(data):
+        assert not isinstance(cases, list)
+        data["review"] = _verify_owner_review(private_path(Path(cases)), data, loaded)
+        data["owner_reviewed"] = True
     return data
+
+
+def _verify_owner_review(
+    directory: Path, data: dict[str, Any], cases: list[Case]
+) -> dict[str, Any]:
+    path = directory / "_owner_review.json"
+    try:
+        receipt = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ValueError("private dataset requires a readable owner review receipt") from exc
+    keys = (
+        "schema_version",
+        "dataset",
+        "dataset_version",
+        "task",
+        "decision_type",
+        "split",
+        "provenance",
+        "private",
+        "dataset_sha256",
+    )
+    if (
+        not isinstance(receipt, dict)
+        or any(key not in receipt or receipt[key] != data.get(key) for key in keys)
+        or receipt.get("case_count") != len(cases)
+        or not isinstance(receipt.get("owner"), str)
+        or not OPAQUE_ID.fullmatch(receipt["owner"])
+        or not isinstance(receipt.get("source_sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", receipt["source_sha256"])
+        or len({case.name for case in cases}) != len(cases)
+    ):
+        raise ValueError("owner review receipt does not match the labelled dataset")
+    _verify_review_split(directory, data, receipt, cases)
+    try:
+        if datetime.fromisoformat(receipt["confirmed_at"]).utcoffset() is None:
+            raise ValueError("confirmation needs a timezone")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("owner review receipt must include a dated confirmation") from exc
+    return {key: receipt[key] for key in ("owner", "confirmed_at", "case_count", "source_sha256")}
+
+
+def _verify_review_split(
+    directory: Path, data: dict[str, Any], receipt: dict[str, Any], cases: list[Case]
+) -> None:
+    split = data.get("split")
+    version_dir = directory.parent.parent
+    if (
+        split not in ("tuning", "heldout")
+        or directory.name != split
+        or directory.parent.name != "confirmed"
+        or version_dir.name != data.get("dataset_version")
+    ):
+        raise ValueError("evaluate the canonical confirmed dataset in its original split directory")
+    try:
+        prepared = json.loads((version_dir / "prepared.json").read_text())
+        ledger = json.loads((version_dir.parent / "splits.json").read_text())["splits"]
+        members = {case_id for case_id in prepared if ledger[case_id] == split}
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("canonical split evidence is missing or invalid") from exc
+    if sha_json(prepared) != receipt["source_sha256"] or members != {c.name for c in cases}:
+        raise ValueError("reviewed cases do not match their reserved cohort and split")
 
 
 def _has_outcome_check(case: Case) -> bool:
@@ -276,27 +381,56 @@ def score_case(c: Case, out: dict[str, Any]) -> CaseResult:
     return CaseResult(c.name, (total - len(fails)) / total, fails, out)
 
 
+REAL_ADAPTERS = {
+    REAL_BACKEND["local"]: "biz-port-model-ollama",
+    REAL_BACKEND["cloud"]: "biz-port-model-claude",
+}
+
+
+def _adapter_version(backend: str) -> str | None:
+    distribution = REAL_ADAPTERS.get(backend)
+    if distribution is None:
+        return None
+    try:
+        return version(distribution)
+    except PackageNotFoundError:
+        return None
+
+
 async def run_eval(
-    task: str, tier: Tier, router: Router, cases: Path | str | list[Case]
+    task: str,
+    tier: Tier,
+    router: Router,
+    cases: Path | str | list[Case],
+    *,
+    model_version: str | None = None,
 ) -> EvalReport:
     if tier not in ("local", "cloud"):
         raise ValueError(f"invalid evaluation tier: {tier}")
-    port = router.cloud if tier == "cloud" else router.local
-    if port is None:
-        raise ValueError(f"requested {tier} model is not configured")
     loaded = cases if isinstance(cases, list) else load_cases(cases)
     if not loaded:
         raise ValueError("evaluation needs at least one case")
     metadata = dataset_metadata(cases, loaded)
     if metadata.get("task") not in (None, task):
         raise ValueError(f"dataset is for {metadata['task']}, not {task}")
-    metadata.update(
-        actual_tier=tier,
-        backend=f"{type(port).__module__}.{type(port).__name__}",
-        configured_model=getattr(port, "model", None),
-    )
+    return await _run_loaded(task, tier, router, loaded, metadata, model_version)
+
+
+async def _run_loaded(
+    task: str,
+    tier: Tier,
+    router: Router,
+    loaded: list[Case],
+    metadata: dict[str, Any],
+    model_version: str | None,
+) -> EvalReport:
+    port = router.cloud if tier == "cloud" else router.local
+    if port is None:
+        raise ValueError(f"requested {tier} model is not configured")
+    backend = f"{type(port).__module__}.{type(port).__name__}"
     results = []
     for c in loaded:
+        start = time.perf_counter()
         try:
             r = await router.generate(
                 task,
@@ -307,9 +441,36 @@ async def run_eval(
                 untrusted=c.untrusted or None,
                 escalate=False,
             )
-            results.append(score_case(c, r.output))
+            result = score_case(c, r.output)
+            # An adapter that reported nothing leaves no usage record; a zero-filled one
+            # would read as measured. Partly reported cases keep the known figures.
+            if r.unmetered_calls < r.attempts:
+                result.usage = {
+                    **asdict(r.usage),
+                    "cost_usd": str(r.cost_usd),
+                    "attempts": r.attempts,
+                    "unmetered_calls": r.unmetered_calls,
+                }
         except Exception as exc:  # a failed call scores zero, the run continues
-            results.append(CaseResult(c.name, 0.0, [str(exc)], error=str(exc)))
+            result = CaseResult(c.name, 0.0, [str(exc)], error=str(exc))
+        result.latency_ms = (time.perf_counter() - start) * 1000
+        results.append(result)
+    recorded_cost = sum(
+        (Decimal(str(result.usage["cost_usd"])) for result in results if result.usage),
+        Decimal(0),
+    )
+    metadata.update(
+        actual_tier=tier,
+        backend=backend,
+        adapter_version=_adapter_version(backend),
+        configured_model=getattr(port, "model", None),
+        model_version=model_version,
+        total_latency_ms=sum(result.latency_ms or 0 for result in results),
+        recorded_model_api_cost_usd=str(recorded_cost),
+        unmetered_cases=sum(
+            result.usage is None or bool(result.usage.get("unmetered_calls")) for result in results
+        ),
+    )
     passed = sum(result.passed for result in results)
     return EvalReport(
         task,
@@ -335,6 +496,8 @@ async def shadow(
     router: Router,
     cases: Path | str | list[Case],
     threshold: float | None = None,
+    *,
+    model_versions: Mapping[Tier, str] | None = None,
 ) -> ShadowReport:
     """Run both tiers on the same cases and report agreement and readiness for local."""
     loaded = cases if isinstance(cases, list) else load_cases(cases)
@@ -352,16 +515,9 @@ async def shadow(
         or not 0 <= threshold <= 1
     ):
         raise ValueError("shadow threshold must be finite and in [0, 1]")
-    local = await run_eval(task, "local", router, loaded)
-    cloud = await run_eval(task, "cloud", router, loaded)
-    local.metadata = {
-        **metadata,
-        **{k: local.metadata[k] for k in ("actual_tier", "backend", "configured_model")},
-    }
-    cloud.metadata = {
-        **metadata,
-        **{k: cloud.metadata[k] for k in ("actual_tier", "backend", "configured_model")},
-    }
+    versions = model_versions or {}
+    local = await _run_loaded(task, "local", router, loaded, dict(metadata), versions.get("local"))
+    cloud = await _run_loaded(task, "cloud", router, loaded, dict(metadata), versions.get("cloud"))
     agree = [_agree(c, a, b) for c, a, b in zip(loaded, local.results, cloud.results, strict=True)]
     return ShadowReport(task, local, cloud, sum(agree) / len(agree) if agree else 0.0, threshold)
 

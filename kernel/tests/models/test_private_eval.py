@@ -9,13 +9,16 @@ from pathlib import Path
 
 import pytest
 import yaml
+from biz_cap_intake.tools import LOW_CONFIDENCE
 from biz_kernel.cli.main import app
 from biz_kernel.models.eval import load_cases, run_eval
 from biz_kernel.models.eval.baseline import FIELDS, baseline
+from biz_kernel.models.eval.harness import score_case
 from biz_kernel.models.eval.private import (
     REVIEW_FIELDS,
     SOURCE_FIELDS,
     TASK,
+    TRIAGE_ROUTING_MIN_CONFIDENCE,
     confirm,
     csv_rows,
     csv_text,
@@ -44,19 +47,42 @@ def source_rows(count: int = 100) -> list[dict[str, str]]:
 
 
 @pytest.fixture
-def reviewed(tmp_path: Path) -> tuple[Path, Path]:
+def reviewed(tmp_path: Path, request: pytest.FixtureRequest) -> tuple[Path, Path]:
     source, workspace = tmp_path / "source.csv", tmp_path / "review"
     write_private(source, csv_text(SOURCE_FIELDS, source_rows()))
     prepare(source, workspace, "v1")
+    categories = getattr(request, "param", ("enquiry",))
     for split in ("tuning", "heldout"):
         path = workspace / "v1" / split / "review.csv"
         rows = csv_rows(path, REVIEW_FIELDS)
-        for row in rows:
-            row["category"] = "enquiry"
+        for index, row in enumerate(rows):
+            row["category"] = categories[index % len(categories)]
         write_private(path, csv_text(REVIEW_FIELDS, rows))
     assert confirm(workspace, "v1", "owner-01", ROOT) == {"tuning": 50, "heldout": 50}
     version = workspace / "v1" / "confirmed"
     return version / "tuning", version / "heldout"
+
+
+@pytest.mark.parametrize("reviewed", [("enquiry", "other", "spam")], indirect=True)
+def test_historical_triage_checks_confidence_when_it_changes_routing(
+    reviewed: tuple[Path, Path],
+) -> None:
+    _, heldout = reviewed
+    cases = {case.expected["category"]: case for case in load_cases(heldout)}
+    assert TRIAGE_ROUTING_MIN_CONFIDENCE == LOW_CONFIDENCE
+    examples: list[tuple[str, dict[str, object], bool]] = [
+        ("enquiry", {"category": "enquiry", "confidence": 0.59}, False),
+        ("enquiry", {"category": "enquiry", "confidence": 0.60}, True),
+        ("other", {"category": "other", "confidence": 0.25}, True),
+        ("other", {"category": "spam", "confidence": 0.25}, False),
+        ("spam", {"category": "spam", "confidence": 0.25}, False),
+        ("other", {"category": "other", "confidence": "0.25"}, False),
+        ("other", {"category": "other"}, False),
+        ("other", {"category": "invalid", "confidence": 0.25}, False),
+    ]
+    for expected, output, passed in examples:
+        result = score_case(cases[expected], {"summary": "Fictional", **output})
+        assert result.passed is passed, (expected, output, result.failures)
 
 
 def test_prepare_redacts_deduplicates_and_preserves_existing_split(tmp_path: Path) -> None:

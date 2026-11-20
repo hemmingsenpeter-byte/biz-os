@@ -24,6 +24,8 @@ TASK = "receptionist.triage"
 CATEGORIES = {"enquiry", "service_request", "supplier", "spam", "other"}
 MIN_CASES = 100
 MIN_HELDOUT = 50
+# Mirror the intake routing boundary for categories that would otherwise become "other".
+TRIAGE_ROUTING_MIN_CONFIDENCE = 0.6
 SOURCE_FIELDS = ("thread_key", "channel", "subject", "body")
 REVIEW_FIELDS = ("case_id", "channel", "subject", "body", "category")
 VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
@@ -248,6 +250,19 @@ def confirm(workspace: Path, version: str, owner: str, repo_root: Path) -> dict[
                 write_private(split_dir / "_prompt.md", prompt)
                 write_private(split_dir / "_schema.yaml", schema)
                 for row in rows:
+                    category = row["category"]
+                    checks: list[dict[str, Any]] = [
+                        {"type": "json_schema"},
+                        {"type": "exact", "fields": ["category"]},
+                    ]
+                    if category != "other":
+                        checks.append(
+                            {
+                                "type": "numeric_min",
+                                "field": "confidence",
+                                "min": TRIAGE_ROUTING_MIN_CONFIDENCE,
+                            }
+                        )
                     case = {
                         "name": row["case_id"],
                         "system_file": "_prompt.md",
@@ -258,12 +273,8 @@ def confirm(workspace: Path, version: str, owner: str, repo_root: Path) -> dict[
                                 ensure_ascii=False,
                             )
                         ],
-                        "expected": {"category": row["category"]},
-                        "checks": [
-                            {"type": "json_schema"},
-                            {"type": "exact", "fields": ["category"]},
-                            {"type": "numeric_min", "field": "confidence", "min": 0.6},
-                        ],
+                        "expected": {"category": category},
+                        "checks": checks,
                     }
                     write_private(split_dir / f"{row['case_id']}.yaml", yaml.safe_dump(case))
                 task = {

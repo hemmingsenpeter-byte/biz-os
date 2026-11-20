@@ -18,7 +18,8 @@ from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook
 from biz_kernel.control import service as control
 from biz_kernel.policy import spend
-from biz_kernel.policy.types import GATED, Action, Allow, Decision, SideEffect
+from biz_kernel.policy.types import GATED, Action, Allow, Decision, Deny, SideEffect
+from biz_kernel.tools.shadow import SHADOW_REASON, ExecutionMode, Suppression, record_suppression
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class PolicyChecker(Protocol):
 class CallResult:
     decision: Decision
     output: Any = None
+    suppression: Suppression | None = None
 
     @property
     def ran(self) -> bool:
@@ -60,6 +62,7 @@ class ToolRegistry:
     tools: dict[str, Tool] = field(default_factory=dict)
     budgets: BudgetBook | None = None  # set => paid tools are checked and charged per actor
     now: Callable[[], datetime] = db.utcnow
+    execution_mode: ExecutionMode = ExecutionMode.SUPERVISED
 
     def register(self, tool: Tool) -> None:
         if tool.name in self.tools:
@@ -82,6 +85,34 @@ class ToolRegistry:
         q = query.lower()
         return [t for t in self.tools.values() if q in t.name or q in t.description.lower()]
 
+    def _gated_effects(self, name: str, parents: frozenset[str] = frozenset()) -> set[SideEffect]:
+        tool = self.tools.get(name)
+        if tool is None or name in parents:
+            return {SideEffect.EXTERNAL}  # an unresolved composite cannot prove it is safe
+        effects = {tool.side_effect} if tool.side_effect in GATED else set()
+        for inner in tool.inner:
+            effects.update(self._gated_effects(inner, parents | {name}))
+        return effects
+
+    def suppress_in_shadow(
+        self,
+        session: Session,
+        *,
+        actor: str,
+        name: str,
+        args: dict[str, Any],
+        decision_type: str | None = None,
+    ) -> CallResult | None:
+        if self.execution_mode != ExecutionMode.SHADOW:
+            return None
+        effects = self._gated_effects(name)
+        if not effects:
+            return None
+        if control.is_paused(session):
+            raise control.Paused(name)
+        suppression = record_suppression(session, actor, name, effects, args, decision_type)
+        return CallResult(Deny(SHADOW_REASON), suppression=suppression)
+
     def call(
         self,
         session: Session,
@@ -102,6 +133,11 @@ class ToolRegistry:
         if (tool.side_effect in GATED or tool.inner) and control.is_paused(session):
             # The kill switch outranks everything, including an approval being replayed.
             raise control.Paused(name)
+        suppressed = self.suppress_in_shadow(
+            session, actor=actor, name=name, args=args, decision_type=decision_type
+        )
+        if suppressed is not None:
+            return suppressed
         cost = tool.cost_for(args)
         metered = cost > 0 and self.budgets is not None
         if metered:  # approval never bypasses the budget: checked before policy and execution

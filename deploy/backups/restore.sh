@@ -11,6 +11,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/common.sh"
 
 require_stopped_writers
+verify_installed_object_mounts
 find_docuseal_volume
 require_empty_target() {
   local databases objects docuseal

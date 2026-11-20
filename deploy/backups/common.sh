@@ -9,18 +9,25 @@ fail() {
 
 ENV_FILE="${BIZ_ENV_FILE:-$HERE/../.env}"
 COMPOSE_FILE="${BIZ_COMPOSE_FILE:-$HERE/../docker-compose.yml}"
+# Compose gives the caller's environment priority over its env file.
+HOST_ROOT_SET="${BIZ_STORAGE_HOST_ROOT+x}"
+HOST_ROOT_OVERRIDE="${BIZ_STORAGE_HOST_ROOT:-}"
 # The operator-owned environment file also supplies restic credentials.
 set -a
 . "$ENV_FILE" >/dev/null 2>&1 || fail "cannot load the environment file"
 set +a
+if [[ -n "$HOST_ROOT_SET" ]]; then
+  export BIZ_STORAGE_HOST_ROOT="$HOST_ROOT_OVERRIDE"
+fi
 
 DUMP_DIR="${BIZ_DUMP_DIR:-$HOME/biz-backups/dumps}"
-[[ "${BIZ_STORAGE_ROOT:-}" == /* && -d "$BIZ_STORAGE_ROOT" ]] ||
-  fail "BIZ_STORAGE_ROOT must name an existing absolute directory"
+HOST_OBJECTS="${BIZ_STORAGE_HOST_ROOT:-${BIZ_STORAGE_ROOT:-}}"
+[[ "$HOST_OBJECTS" == /* && -d "$HOST_OBJECTS" ]] ||
+  fail "BIZ_STORAGE_HOST_ROOT must name an existing absolute directory"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || fail "RESTIC_REPOSITORY is required"
 mkdir -p -- "$DUMP_DIR" || fail "cannot create the backup working directory"
 DUMP_DIR="$(cd "$DUMP_DIR" && pwd -P)"
-STORAGE="$(cd "$BIZ_STORAGE_ROOT" && pwd -P)"
+STORAGE="$(cd "$HOST_OBJECTS" && pwd -P)"
 # Quiescing protects consistency only if the archive cannot pick up our own writes.
 [[ "$STORAGE" != / && "$DUMP_DIR" != / && "$DUMP_DIR/" != "$STORAGE/"* &&
    "$STORAGE/" != "$DUMP_DIR/"* ]] || fail "backup and object directories must be disjoint"
@@ -55,6 +62,28 @@ require_stopped_writers() {
   active="$(dc ps --all --status running --status restarting --status paused -q \
     biz-api biz-worker docuseal 2>/dev/null)" || fail "cannot check Compose writer status"
   [[ -z "$active" ]] || fail "stop biz-api, biz-worker and docuseal before proceeding"
+}
+
+verify_installed_object_mounts() {
+  [[ -n "${BIZ_STORAGE_HOST_ROOT:-}" ]] || return 0  # legacy custom topology
+  local ids id mount canonical
+  ids="$(dc ps -a -q biz-api biz-worker 2>/dev/null)" ||
+    fail "cannot check the installed object mounts"
+  [[ -n "$ids" ]] || return 0  # clean recovery may have no application containers
+  while IFS= read -r id; do
+    [[ "$id" =~ ^[0-9a-f]+$ ]] || fail "invalid application container ID"
+    mount="$(docker inspect --format \
+      '{{range .Mounts}}{{if and (eq .Destination "/var/lib/biz-os/objects") (eq .Type "bind")}}{{.Source}}{{end}}{{end}}' \
+      "$id" 2>/dev/null)" || fail "cannot inspect the installed object mount"
+    if [[ "$OSTYPE" == darwin* ]]; then
+      mount="${mount#/host_mnt}"
+    fi
+    [[ "$mount" == /* ]] || fail "installed application lacks a bind mount for its objects"
+    canonical="$(cd "$mount" 2>/dev/null && pwd -P)" ||
+      fail "cannot resolve the installed object mount"
+    [[ "$canonical" == "$STORAGE" ]] ||
+      fail "installed application object mount differs from BIZ_STORAGE_HOST_ROOT"
+  done <<<"$ids"
 }
 
 find_docuseal_volume() {

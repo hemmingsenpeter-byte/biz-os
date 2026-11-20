@@ -6,6 +6,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/common.sh"
 
 require_stopped_writers
+verify_installed_object_mounts
 find_docuseal_volume
 restic snapshots >/dev/null 2>&1 || fail "cannot access the provisioned restic repository"
 

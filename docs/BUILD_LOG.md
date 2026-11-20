@@ -1,5 +1,31 @@
 # Build log
 
+## 2026-11-20 Receptionist shadow mode
+
+- HIVE defaults to shadow mode, with the receptionist and on-appliance
+  Ollama. API and worker take the same mode from Compose.
+- The dispatch guard blocks gated and composite effects even when replaying
+  prior approvals. Suppressions are audited, with recipient details when
+  present, and linked to workflow evidence. Staff magic-link delivery is also
+  suppressed. Tasks without send evidence stay open.
+- Fake-provider tests verify inbound classification and a saved draft with
+  zero outbound sends. A crash before recording the suppression can replay
+  without making a provider call.
+
+## 2026-11-20 Compose configuration and ingress
+
+- The API and worker share a durable, restricted document bind mount and use
+  the same adapter configuration. Backups check the installed bind against the
+  configured host source. Installed container images and base images have
+  multi-platform digest pins.
+- The owner listener is loopback-only for Tailscale Serve. The Cloudflare
+  profile attaches only to its dedicated gateway, which forwards the two
+  inbound intake POST routes. The CI smoke checks both origins using fake
+  providers and recreates the API container to verify storage persistence.
+- The offline preflight verifies composition, policy, active adapter settings,
+  database topology, storage and public bridge selection without starting
+  services or printing configured values.
+
 ## 2026-11-20 Backup and recovery
 
 - The backup command covers `biz`, `biz_dbos`, `docuseal`, local documents and

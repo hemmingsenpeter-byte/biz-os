@@ -33,19 +33,48 @@ jobs:
       BIZ_SECRET_KEY: disposable-ci-secret-never-for-production
       BIZ_RP_ID: localhost
       BIZ_ORIGIN: http://localhost:3000
-      BIZ_DOMAIN: localhost
       BIZ_APP_DIR: /app/apps/demo
       DOCUSEAL_SECRET_KEY_BASE: disposable-ci-docuseal-secret
       CLOUDFLARE_TUNNEL_TOKEN: ""
     steps:
       - uses: actions/checkout@v4
+      - name: Provision a private document directory
+        run: |
+          BIZ_SMOKE_OBJECTS="$RUNNER_TEMP/biz-smoke-objects"
+          sudo install -d -m 0700 -o 1000 "$BIZ_SMOKE_OBJECTS"
+          echo "BIZ_STORAGE_HOST_ROOT=$BIZ_SMOKE_OBJECTS" >> "$GITHUB_ENV"
       - name: Build and start the demo core
-        run: docker compose up --build -d --wait --wait-timeout 120 postgres biz-api biz-worker biz-web
+        run: |
+          docker compose up --build -d --wait --wait-timeout 120 \
+            postgres biz-api biz-worker biz-web caddy tunnel-ingress
       - name: Check the owner console and same-origin API proxy
         run: |
           curl --fail --silent http://localhost:3000/auth/login > /dev/null
           test "$(curl --fail --silent http://localhost:3000/v1/health)" = '{"status":"ok"}'
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:3000/v1/auth/me)" = '401'
+      - name: Check the private owner and public webhook boundaries
+        run: |
+          test "$(curl --fail --silent --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/v1/health)" = '{"status":"ok"}'
+          docker compose exec -T biz-api python - <<'PY'
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          origin = "http://tunnel-ingress:8081"
+          for path, method, status in (
+              ("/v1/health", "GET", 404),
+              ("/v1/health", "POST", 404),
+              ("/auth/login", "GET", 404),
+              ("/webhooks/form", "GET", 404),
+              ("/webhooks/form", "POST", 422),
+          ):
+              request = Request(origin + path, method=method)
+              try:
+                  with urlopen(request, timeout=5) as response:
+                      actual = response.status
+              except HTTPError as error:
+                  actual = error.code
+              assert actual == status, (path, method, status, actual)
+          PY
       - name: Wait for the packaged worker to finish startup
         run: |
           worker_id=$(docker compose ps -q biz-worker)
@@ -67,12 +96,19 @@ jobs:
           docker compose cp deploy/smoke_demo.py biz-api:/tmp/smoke_demo.py
           docker compose exec -T biz-api python /tmp/smoke_demo.py --repo-root /app
           test "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' "$(docker compose ps -q biz-worker)")" = "true 0"
+      - name: Verify document persistence across API replacement
+        run: |
+          docker compose exec -T biz-api python -c 'from biz_port_storage_local import create; assert create().put(b"synthetic", "smoke.txt", "text/plain").size == 9'
+          docker compose up -d --force-recreate --no-deps --wait --wait-timeout 120 biz-api
+          for service in biz-api biz-worker; do
+            docker compose exec -T "$service" python -c 'from biz_port_storage_local import create; storage = create(); path, = storage.root.glob("*/*.txt"); assert storage.get(path.as_uri()) == b"synthetic"'
+          done
       - name: Container logs
         if: always()
         run: docker compose logs --no-color --tail 100
       - name: Remove disposable containers and volumes
         if: always()
-        run: docker compose down --volumes --remove-orphans
+        run: docker compose --profile public down --volumes --remove-orphans
 
   web:
     runs-on: ubuntu-24.04

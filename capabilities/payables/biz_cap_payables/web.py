@@ -15,7 +15,7 @@ from typing import Any
 from biz_kernel.approvals import staged
 from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.auth.deps import DbSession, OwnerUser
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -69,7 +69,11 @@ def build_owner_router(rt: Any) -> APIRouter:
 
     @router.post("/bank_changes/{change_id}/confirm", status_code=202)
     def confirm(
-        change_id: uuid.UUID, body: ConfirmIn, user: OwnerUser, session: DbSession
+        change_id: uuid.UUID,
+        body: ConfirmIn,
+        user: OwnerUser,
+        session: DbSession,
+        response: Response,
     ) -> dict[str, Any]:
         existing = _op(session, change_id)
         if existing is not None:
@@ -89,11 +93,16 @@ def build_owner_router(rt: Any) -> APIRouter:
         }
         res = staged.run_or_stage(session, rt.registry, rt.policy, ACTOR, CONFIRM, args)
         if not isinstance(res, staged.StagedOperation):  # policy must always ask the owner
+            if res.suppression is not None:
+                response.status_code = 403  # commit the suppression audit for this denied action
+                return {"detail": getattr(res.decision, "reason", "blocked")}
             raise HTTPException(500, "bank change confirmation was not sent for approval")
         return {"op_id": str(res.id), "status": res.status}
 
     @router.post("/bank_changes/{change_id}/apply")
-    def apply(change_id: uuid.UUID, user: OwnerUser, session: DbSession) -> dict[str, Any]:
+    def apply(
+        change_id: uuid.UUID, user: OwnerUser, session: DbSession, response: Response
+    ) -> dict[str, Any]:
         op = _op(session, change_id)
         if op is None:
             raise HTTPException(404, "no confirmation for this change")
@@ -105,6 +114,9 @@ def build_owner_router(rt: Any) -> APIRouter:
             raise HTTPException(409, str(exc)) from exc
         except (LookupError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        if result.suppression is not None:
+            response.status_code = 403
+            return {"detail": getattr(result.decision, "reason", "blocked")}
         if not result.ran:
             raise HTTPException(403, getattr(result.decision, "reason", "blocked"))
         return dict(result.output)

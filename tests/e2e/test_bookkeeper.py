@@ -46,7 +46,7 @@ def _wait(pred, timeout: float = 30.0):  # type: ignore[no-untyped-def]
 
 
 @pytest.fixture(params=["demo", "hive"])
-def rt(fresh_db: str, monkeypatch, request):  # type: ignore[no-untyped-def]
+def rt(fresh_db: str, monkeypatch, request, full_hive: Path):  # type: ignore[no-untyped-def]
     import biz_cap_booking.models  # noqa: F401
     import biz_cap_comms.models  # noqa: F401
     import biz_cap_documents.models  # noqa: F401
@@ -81,7 +81,10 @@ def rt(fresh_db: str, monkeypatch, request):  # type: ignore[no-untyped-def]
     ports["accounting"].balance = (Decimal("50000"), "NZD")
     ports["accounting"].tax_rate_pct = Decimal(15)  # it adds the tax; we read it back
     runtime = build_runtime(
-        ROOT / "apps" / request.param, ROOT, ports=ports, approval_poll_seconds=1
+        full_hive if request.param == "hive" else ROOT / "apps" / request.param,
+        ROOT,
+        ports=ports,
+        approval_poll_seconds=1,
     )
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
     DBOS.launch()

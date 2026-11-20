@@ -19,6 +19,9 @@
     "kernel": {
       "type": "string"
     },
+    "execution_mode": {
+      "enum": ["shadow", "supervised"]
+    },
     "capabilities": {
       "type": "array",
       "items": {

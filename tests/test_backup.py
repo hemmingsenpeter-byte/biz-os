@@ -44,10 +44,16 @@ if tool == "docker":
         if "--status" in args:
             if os.environ.get("BIZ_TEST_ACTIVE"):
                 print("active-writer")
+        elif args[-2:] == ["biz-api", "biz-worker"]:
+            if os.environ.get("BIZ_TEST_INSTALLED_ROOT"):
+                print("e" * 12)
         elif args[-1] in {"postgres", "docuseal"}:
             print("b" * 12 if args[-1] == "postgres" else "d" * 12)
     elif args[0] == "inspect":
-        print("sha256:" + "b" * 64 if args[-1] == "b" * 12 else "docuseal-volume")
+        if args[-1] == "e" * 12:
+            print(os.environ["BIZ_TEST_INSTALLED_ROOT"])
+        else:
+            print("sha256:" + "b" * 64 if args[-1] == "b" * 12 else "docuseal-volume")
     elif args[0] == "run":
         fail("docuseal-archive")
         sys.stdout.buffer.write(Path(os.environ["BIZ_TEST_DOCUSEAL_ARCHIVE"]).read_bytes())
@@ -113,6 +119,14 @@ def run_backup(tmp_path: Path) -> Callable[..., BackupRun]:
         document_root = tmp_path / "documents"
         document_root.mkdir()
         (document_root / "saved.txt").write_text("synthetic local content\n")
+        if overrides.get("BIZ_TEST_USE_HOST_ROOT"):
+            obsolete = tmp_path / "obsolete"
+            obsolete.mkdir()
+            with config.open("a") as env_file:
+                env_file.write(f"BIZ_STORAGE_HOST_ROOT={obsolete}\n")
+            overrides["BIZ_STORAGE_HOST_ROOT"] = str(document_root)
+            installed = obsolete if overrides.get("BIZ_TEST_MOUNT_DRIFT") else document_root
+            overrides["BIZ_TEST_INSTALLED_ROOT"] = str(installed)
         docuseal_root = tmp_path / "docuseal"
         docuseal_root.mkdir()
         (docuseal_root / "signed.pdf").write_text("synthetic signature file\n")
@@ -271,6 +285,23 @@ def test_missing_local_object_store_prevents_capture(run_backup: Callable[..., B
     assert "backup ok" not in backup.result.stdout
     assert all("pg_dump" not in args for args in backup.commands)
     assert all(args[0] != "backup" for args in backup.restic_calls())
+
+
+def test_storage_root_follows_compose_precedence(run_backup: Callable[..., BackupRun]) -> None:
+    backup = run_backup(BIZ_TEST_USE_HOST_ROOT="1")
+    assert backup.result.returncode == 0, backup.result.stderr
+    with tarfile.open(backup.snapshot / "objects.tar") as archive:
+        assert "./saved.txt" in archive.getnames()
+
+
+def test_installed_storage_mount_drift_prevents_capture(
+    run_backup: Callable[..., BackupRun],
+) -> None:
+    backup = run_backup(BIZ_TEST_USE_HOST_ROOT="1", BIZ_TEST_MOUNT_DRIFT="1")
+    assert backup.result.returncode != 0
+    assert "object mount differs" in backup.result.stderr
+    assert all("pg_dump" not in args for args in backup.commands)
+    assert not backup.restic_calls()
 
 
 def test_failed_staging_cleanup_prevents_success(run_backup: Callable[..., BackupRun]) -> None:

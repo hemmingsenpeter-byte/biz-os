@@ -2,7 +2,7 @@
 
 Everything in `docker-compose.yml` runs in containers except Ollama (native, uses the Apple
 GPU) and Tailscale (native). The same compose file runs on any Linux server; only the Ollama
-address changes (`OLLAMA_HOST`).
+address may change (`BIZ_OLLAMA_URL`).
 
 ## Local demo smoke check
 
@@ -22,7 +22,6 @@ print("DOCUSEAL_SECRET_KEY_BASE=" + secrets.token_urlsafe(48))
 print("BIZ_APP_DIR=/app/apps/demo")
 print("BIZ_RP_ID=localhost")
 print("BIZ_ORIGIN=http://localhost:3000")
-print("BIZ_DOMAIN=localhost")
 print("CLOUDFLARE_TUNNEL_TOKEN=")
 print("ANTHROPIC_API_KEY=")
 PY
@@ -81,10 +80,8 @@ CI runs the same core startup and smoke script in the `docker-smoke` job. The
 Dockerfile accepts an optional BuildKit `proxy_ca` secret containing a CA bundle
 for the dependency download step when building behind a TLS-inspecting proxy.
 
-This verifies the packaged demo. HIVE's live integrations, Mac mini deployment
-and the customer portal still need their own acceptance checks.
-The current Compose environment mapping also needs the relevant provider variables
-from `.env` wired into the API and worker before enabling HIVE's real ports.
+This verifies the packaged demo using disposable credentials and fake providers.
+HIVE's live integrations and deployment on the Mac mini have separate acceptance gates.
 
 ## 1. macOS setup (once)
 
@@ -104,34 +101,80 @@ from `.env` wired into the API and worker before enabling HIVE's real ports.
   Containers reach it at `http://host.docker.internal:11434` (set in compose).
   Bind it to `OLLAMA_HOST=0.0.0.0` only if Docker cannot reach the loopback address.
 
-## 2. Configure and start
+## 2. Configure and preflight
 
+Copy `deploy/.env.example` to `deploy/.env` and restrict it to the operator.
+Set `BIZ_APP_DIR` to one composition path inside the image. Set the secrets and
+provider settings required by that composition. The stock demo uses fakes.
+Use a URL-safe PostgreSQL password such as a generated hexadecimal value.
+
+Set `BIZ_STORAGE_HOST_ROOT` to an existing private directory for a local-storage
+composition. Use mode 0700 and grant the API/worker user write access through
+the bind mount. The stock images run as UID 1000. Test permissions on the
+target Docker installation before using the directory with real documents.
+Both application services see the directory at `/var/lib/biz-os/objects`; the
+worker and API share this location and backup reads its host path. For an
+existing deployment, copy its objects while the writers are stopped and retain
+the adapter's existing in-container path if database file URIs already use it.
+Changing that path requires a separate migration.
+
+Run the offline preflight from the repository root with Docker Compose v2
+available. It resolves the stack's configuration without starting services or
+contacting providers:
+
+```sh
+uv sync --locked
+uv run python -m deploy.preflight --env-file deploy/.env
 ```
-cp deploy/.env.example deploy/.env      # fill in every value; never commit .env
+
+Start PostgreSQL first. For a fresh installation using DocuSeal, initialize
+its database once before starting the service:
+
+```sh
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --wait postgres
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec postgres createdb -U biz docuseal
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
-curl -s http://localhost/v1/health      # via Caddy
+curl --fail http://127.0.0.1:8080/v1/health
 ```
 
-Create the DocuSeal database once: `docker compose exec postgres createdb -U biz docuseal`.
+The owner console is accessed via the Tailscale Serve HTTPS hostname.
+`BIZ_RP_ID` and `BIZ_ORIGIN` must match that hostname and origin for WebAuthn.
+Run `biz owner-invite` inside the API container with the selected composition
+and open the invitation from an authorized tailnet device.
 
-First owner: run `biz owner-invite` inside the API container against the migrated
-database, then open the printed invitation and enrol a passkey. For example:
-`docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec biz-api biz owner-invite apps/hive --email <owner-email> --name <owner-name>`.
-`BIZ_RP_ID` and `BIZ_ORIGIN` must match the hostname and full origin you browse to
-or WebAuthn will refuse. `BIZ_ORIGIN` also guards browser API mutations, including
-requests that reach the API directly through Caddy.
+Update image pins deliberately. Inspect the replacement image's multi-platform
+manifest and record its digest, confirm Linux amd64 and arm64, back up the
+current installation, then rerun preflight, container smoke, and restore
+acceptance against the proposed versions. Keep the previous release and pins
+for rollback. The application Dockerfiles also pin their base images.
 
-## 3. Public access (Cloudflare Tunnel)
+## 3. Owner and public ingress
 
-Create a tunnel in Cloudflare Zero Trust, put its token in `CLOUDFLARE_TUNNEL_TOKEN`, and add
-public hostnames following `cloudflared.config.example.yml`: webhooks and link pages only.
-`/v1` stays private (Tailscale). Missed-call text-back is also configured inside Twilio, so
-callers get a reply even when the Mac is down.
+The private Caddy listener is bound to host loopback at port 8080. On the host,
+run `tailscale serve --bg http://127.0.0.1:8080` and grant access only to
+authorized owner devices in the tailnet ACL. Keep Tailscale Funnel disabled.
+PostgreSQL, the demo web port, DocuSeal administration and Kuma also bind
+only to loopback. Verify these bindings on the appliance, and use no router
+port forwards.
+
+When inbound webhooks are approved, configure the Cloudflare hostname to
+use `http://tunnel-ingress:8081`. Start the separate profile with
+`docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile public up -d`.
+The tunnel container shares a bridge with the public gateway and has no
+attachment to the application network. The public gateway exposes only
+`POST /webhooks/telephony` and `POST /webhooks/form`. All other paths return 404,
+including `/v1`, the owner console, and signing links. Verify the public
+hostname fails closed and that the tailnet origin serves `/v1/health`.
+Configure provider URLs against the public hostname only when connecting
+the corresponding inbound provider. A DocuSeal service in this Compose
+project uses the internal callback `http://biz-api:8000/webhooks/documents/sign`
+with its configured shared-secret header.
 
 ## 4. Monitoring
 
-Uptime Kuma at `http://<tailscale-name>:3001`. Add monitors for `/v1/health`, Postgres, Caddy
-and the tunnel hostname; send alerts to the owner by SMS or push.
+Uptime Kuma binds to `http://127.0.0.1:3001`. Access it locally or over a
+tailnet-authorized proxy. Monitor private health and the public webhook
+boundary independently, and configure operator alerts in the install's runbook.
 
 ## 5. Back up and recover the Compose install
 
@@ -140,7 +183,7 @@ and the tunnel hostname; send alerts to the owner by SMS or push.
 | `biz` | Application dump, including approvals, passkeys, audit, and dispatch ledgers |
 | `biz_dbos` | DBOS system dump, including workflow state and step results |
 | `docuseal` and its `/data/docuseal` named volume | Database dump and file archive |
-| Local documents under `BIZ_STORAGE_ROOT` | File archive; keep the same absolute adapter path so stored file URIs resolve |
+| Local documents mounted from `BIZ_STORAGE_HOST_ROOT` | File archive; preserve the container adapter path so stored file URIs resolve |
 | Release, composition, Compose overrides, Caddy/tunnel routing, and monitor definitions | Retain the deployed Git revision, image versions or digests, and non-secret site overrides in the operator's off-box release records |
 | Database credentials, signing/encryption keys, restic access and password, tunnel and provider credentials | Re-provision from the owner's off-box secret store. Keep the existing application and DocuSeal keys and WebAuthn origin/RP ID for recovery |
 | Database cluster, container layers, Ollama model cache, Caddy state and Kuma state | Recreate from the release, re-pull the chosen models, reissue certificates, and rebuild monitoring using the saved configuration |
@@ -155,12 +198,10 @@ databases, or a separate document store requires a different recovery procedure.
    the encrypted off-box repository once with `restic init` using the intended
    credentials. The backup job checks that it can open the repository and reports
    an error if it cannot.
-2. Set `BIZ_STORAGE_ROOT` to the absolute host directory containing the adapter's
-   documents. For a container install, configure a persistent bind mount on the API
-   and worker at that same absolute path and pass it as `BIZ_STORAGE_ROOT` inside
-   both containers. Keep the directory private and writable by the service user.
-   The base Compose file still requires provider wiring for HIVE. For a demo with
-   fake storage, provision an empty private directory.
+2. Set `BIZ_STORAGE_HOST_ROOT` to the absolute host directory mounted into the
+   API and worker. For a demo with fake storage, provision an empty private
+   directory. The backup script also supports the legacy host variable
+   `BIZ_STORAGE_ROOT` for a Compose override that still uses that layout.
 3. Put the restic settings and document path in the trusted, shell-compatible
    `deploy/.env` and restrict its permissions. Set `BIZ_DUMP_DIR` for private working
    space if needed (default `~/biz-backups/dumps`). Leave free space for staging and
@@ -229,5 +270,29 @@ off-box destination and representative data before setting production targets.
 
 ## 6. Whisper (M4)
 
-The `whisper` service is commented out in compose. Uncomment it when the speech capability
-lands, or run faster-whisper natively.
+The speech adapter runs inside the application. Transcribing audio requires the
+optional `whisper` extra and a locally available model. The standard demo
+uses the fake speech adapter.
+
+## 7. Receptionist shadow mode
+
+HIVE starts in shadow mode with the receptionist as its active role. Compose
+passes the same execution mode to the API and worker. An empty
+`BIZ_EXECUTION_MODE` selects the composition default. The demo retains its
+supervised fake-provider behavior.
+
+In shadow mode, the runtime can collect enquiries, classify them and prepare
+internal drafts. The dispatch guard stops external and money actions, including
+a previously approved staged action. Suppressions are recorded as
+`shadow.suppressed` audit events. Workflow suppressions appear on the task
+evidence timeline and leave the task open for owner review. Use an owner
+passkey to access the console.
+
+External provider credentials are provisioned separately at the approved access
+and pilot gates. Preflight requires on-appliance Ollama for shadow Compose
+deployments. Verify the approved model is installed on the Mac mini before
+connecting a mailbox. Before replacing an older release, settle in-flight work
+for the inactive roles and stop the old API and workers. Update and restart
+both application services together. The supervised transition requires pilot
+exit evidence and the owner's authorization. Exclude approvals for suppressed
+actions from supervised quality and autonomy evidence.

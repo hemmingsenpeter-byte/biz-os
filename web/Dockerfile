@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f web/Dockerfile -t biz-os-web .
-FROM node:24-bookworm-slim AS build
+FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS build
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app/web
 # Package stores stay cached when source files change. Installing and building in
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.npm \
     && cp -r public .next/standalone/ \
     && cp -r .next/static .next/standalone/.next/
 
-FROM node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 WORKDIR /app
 COPY --from=build --chown=node:node /app/web/.next/standalone ./

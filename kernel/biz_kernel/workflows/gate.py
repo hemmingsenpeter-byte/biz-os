@@ -65,6 +65,8 @@ class KernelGate:
         )
         if isinstance(res, StagedOperation):
             return {"status": "staged", "op_id": str(res.id)}
+        if res.suppression is not None:
+            return {"status": "shadowed", "audit_id": str(res.suppression.audit_id)}
         if isinstance(res.decision, Deny):
             raise PolicyDenied(res.decision.reason)
         return {"status": "ran", "output": res.output}
@@ -83,6 +85,8 @@ class KernelGate:
             res = staged.execute(session, uuid.UUID(op_id), self.registry, self.policy)
         except staged.AlreadyExecuted as done:
             return (done.result or {}).get("output") if hasattr(done, "result") else None
+        if res.suppression is not None:
+            return res.suppression
         if not isinstance(res.decision, Allow):
             raise PolicyDenied(getattr(res.decision, "reason", "blocked"))
         return res.output

@@ -13,10 +13,13 @@ from biz_cap_payables import config
 from biz_cap_payables.models import BankAccount
 from biz_cap_payables.tools import register
 from biz_kernel.approvals import autonomy, staged
+from biz_kernel.audit.log import AuditEntry
 from biz_kernel.policy.engine import PolicyEngine
 from biz_kernel.records.models import Party, Person
 from biz_kernel.tools.registry import ToolRegistry
+from biz_kernel.tools.shadow import SHADOW_EVIDENCE, ExecutionMode
 from biz_port_fakes import FakeAccounting
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -293,7 +296,8 @@ def test_payment_run_only_includes_verified_suppliers(session: Session, stack: A
     assert _call(reg, session, "payables.prepare_run", currency="NZD")["bill_ids"] == []  # once
 
 
-def test_owner_bank_change_routes(session: Session, stack: Any) -> None:
+@pytest.mark.parametrize("shadow", [False, True], ids=["supervised", "shadow"])
+def test_owner_bank_change_routes(session: Session, stack: Any, shadow: bool) -> None:
     from types import SimpleNamespace
 
     from biz_cap_payables import owner_routes
@@ -322,6 +326,11 @@ def test_owner_bank_change_routes(session: Session, stack: Any) -> None:
     base = f"/v1/payables/bank_changes/{change['change_id']}"
     bad = client.post(f"{base}/confirm", json={"called_number": "+64 9 999 9999"})
     assert bad.status_code == 422
+    if shadow:
+        reg.execution_mode = ExecutionMode.SHADOW
+        shadowed = client.post(f"{base}/confirm", json={"called_number": change["callback_phone"]})
+        assert shadowed.status_code == 403 and not staged.pending(session)
+        reg.execution_mode = ExecutionMode.SUPERVISED  # seed an approval made before shadow
     staged_out = client.post(
         f"{base}/confirm", json={"called_number": change["callback_phone"]}
     ).json()
@@ -329,6 +338,18 @@ def test_owner_bank_change_routes(session: Session, stack: Any) -> None:
     assert client.post(f"{base}/apply").status_code == 409  # not approved yet
     assert session.get(BankAccount, uuid.UUID(sup)) is None
     staged.approve(session, uuid.UUID(staged_out["op_id"]), "owner", 1)
+    if shadow:
+        reg.execution_mode = ExecutionMode.SHADOW
+        assert client.post(f"{base}/apply").status_code == 403
+        assert session.get(BankAccount, uuid.UUID(sup)) is None
+        evidence = session.scalars(
+            select(AuditEntry).where(AuditEntry.kind == SHADOW_EVIDENCE)
+        ).all()
+        assert len(evidence) == 2
+        assert all(
+            event.detail["references"]["change_id"] == change["change_id"] for event in evidence
+        )
+        return
     assert client.post(f"{base}/apply").json()["status"] == "applied"
     assert client.post(f"{base}/apply").json()["replayed"] is True
     assert session.get(BankAccount, uuid.UUID(sup)) is not None

@@ -304,6 +304,27 @@ def test_installed_storage_mount_drift_prevents_capture(
     assert not backup.restic_calls()
 
 
+def test_legacy_storage_root_with_drifted_mount_prevents_capture(
+    run_backup: Callable[..., BackupRun], tmp_path: Path
+) -> None:
+    # A pre-PR-02 .env sets only BIZ_STORAGE_ROOT while Compose mounts ../var/objects.
+    installed = tmp_path / "var-objects"
+    installed.mkdir()
+    backup = run_backup(BIZ_TEST_INSTALLED_ROOT=str(installed))
+    assert backup.result.returncode != 0, "backed up a directory the containers do not use"
+    assert "object mount" in backup.result.stderr
+    assert f"BIZ_STORAGE_HOST_ROOT={installed.resolve()}" in backup.result.stderr
+    assert all("pg_dump" not in args for args in backup.commands)
+    assert not backup.restic_calls()
+
+
+def test_legacy_storage_root_matching_the_mount_still_backs_up(
+    run_backup: Callable[..., BackupRun], tmp_path: Path
+) -> None:
+    backup = run_backup(BIZ_TEST_INSTALLED_ROOT=str(tmp_path / "documents"))
+    assert backup.result.returncode == 0, backup.result.stderr
+
+
 def test_failed_staging_cleanup_prevents_success(run_backup: Callable[..., BackupRun]) -> None:
     backup = run_backup(BIZ_TEST_FAILURE="cleanup")
     assert backup.result.returncode != 0, backup.result.stdout

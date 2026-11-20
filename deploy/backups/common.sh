@@ -65,7 +65,8 @@ require_stopped_writers() {
 }
 
 verify_installed_object_mounts() {
-  [[ -n "${BIZ_STORAGE_HOST_ROOT:-}" ]] || return 0  # legacy custom topology
+  # Always compare against the live mount: a legacy .env with only BIZ_STORAGE_ROOT
+  # may name a directory the containers no longer use.
   local ids id mount canonical
   ids="$(dc ps -a -q biz-api biz-worker 2>/dev/null)" ||
     fail "cannot check the installed object mounts"
@@ -82,7 +83,9 @@ verify_installed_object_mounts() {
     canonical="$(cd "$mount" 2>/dev/null && pwd -P)" ||
       fail "cannot resolve the installed object mount"
     [[ "$canonical" == "$STORAGE" ]] ||
-      fail "installed application object mount differs from BIZ_STORAGE_HOST_ROOT"
+      fail "installed application object mount differs from $HOST_OBJECTS (it is $canonical);" \
+        "set BIZ_STORAGE_HOST_ROOT=$canonical in the environment file (or recreate the" \
+        "containers with the intended mount) before proceeding"
   done <<<"$ids"
 }
 

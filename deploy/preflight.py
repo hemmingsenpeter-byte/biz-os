@@ -280,6 +280,11 @@ def _validate_routes(
             not _loopback(port.get("host_ip", "")) for port in service.get("ports", [])
         ):
             problems.append(f"{name} may publish host ports only on loopback")
+        # Joining another namespace inherits its networks and bypasses the checks below;
+        # container names cannot be mapped back to services, so reject both forms.
+        mode = str(service.get("network_mode", ""))
+        if mode.startswith(("service:", "container:")):
+            problems.append(f"{name} must not join another network namespace ({mode})")
         if service.get("image") and not re.fullmatch(r".+@sha256:[0-9a-f]{64}", service["image"]):
             problems.append(f"{name} image must be pinned by digest")
 

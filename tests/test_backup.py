@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 BACKUP = Path(__file__).resolve().parents[1] / "deploy" / "backups" / "backup.sh"
+RESTORE = BACKUP.with_name("restore.sh")
 SNAPSHOT_ID = "a" * 64
 
 FAKE_TOOLS = """
@@ -49,6 +50,14 @@ if tool == "docker":
                 print("e" * 12)
         elif args[-1] in {"postgres", "docuseal"}:
             print("b" * 12 if args[-1] == "postgres" else "d" * 12)
+    elif "config" in args:
+        # Mirror Compose: ${BIZ_STORAGE_HOST_ROOT:-../var/objects}, unless an override differs.
+        source = os.environ.get("BIZ_TEST_COMPOSE_ROOT") or os.environ.get(
+            "BIZ_STORAGE_HOST_ROOT"
+        ) or str(Path(os.environ["BIZ_TEST_FIXTURE"]) / "var" / "objects")
+        mount = {"type": "bind", "source": source, "target": "/var/lib/biz-os/objects"}
+        services = {name: {"volumes": [mount]} for name in ("biz-api", "biz-worker")}
+        print(json.dumps({"services": services}))
     elif args[0] == "inspect":
         if args[-1] == "e" * 12:
             print(os.environ["BIZ_TEST_INSTALLED_ROOT"])
@@ -119,6 +128,12 @@ def run_backup(tmp_path: Path) -> Callable[..., BackupRun]:
         document_root = tmp_path / "documents"
         document_root.mkdir()
         (document_root / "saved.txt").write_text("synthetic local content\n")
+        if overrides.get("BIZ_TEST_LEGACY_ROOT"):
+            # A pre-PR-02 .env: only the legacy BIZ_STORAGE_ROOT names the objects.
+            overrides.setdefault("BIZ_STORAGE_ROOT", str(document_root))
+        elif not overrides.get("BIZ_TEST_USE_HOST_ROOT"):
+            with config.open("a") as env_file:
+                env_file.write(f"BIZ_STORAGE_HOST_ROOT={document_root}\n")
         if overrides.get("BIZ_TEST_USE_HOST_ROOT"):
             obsolete = tmp_path / "obsolete"
             obsolete.mkdir()
@@ -149,7 +164,6 @@ def run_backup(tmp_path: Path) -> Callable[..., BackupRun]:
                 "HOME": str(tmp_path),
                 "BIZ_ENV_FILE": str(config),
                 "BIZ_DUMP_DIR": str(dump_root),
-                "BIZ_STORAGE_ROOT": str(document_root),
                 "BIZ_TEST_COMMANDS": str(log),
                 "BIZ_TEST_PYTHON": sys.executable,
                 "BIZ_TEST_FAKE": str(fake_tools),
@@ -280,7 +294,7 @@ def test_active_writer_prevents_capture(run_backup: Callable[..., BackupRun]) ->
 
 
 def test_missing_local_object_store_prevents_capture(run_backup: Callable[..., BackupRun]) -> None:
-    backup = run_backup(BIZ_STORAGE_ROOT="")
+    backup = run_backup(BIZ_STORAGE_HOST_ROOT="")
     assert backup.result.returncode != 0, backup.result.stdout
     assert "backup ok" not in backup.result.stdout
     assert all("pg_dump" not in args for args in backup.commands)
@@ -308,21 +322,85 @@ def test_legacy_storage_root_with_drifted_mount_prevents_capture(
     run_backup: Callable[..., BackupRun], tmp_path: Path
 ) -> None:
     # A pre-PR-02 .env sets only BIZ_STORAGE_ROOT while Compose mounts ../var/objects.
-    installed = tmp_path / "var-objects"
-    installed.mkdir()
-    backup = run_backup(BIZ_TEST_INSTALLED_ROOT=str(installed))
+    installed = tmp_path / "var" / "objects"
+    installed.mkdir(parents=True)
+    backup = run_backup(BIZ_TEST_LEGACY_ROOT="1", BIZ_TEST_INSTALLED_ROOT=str(installed))
     assert backup.result.returncode != 0, "backed up a directory the containers do not use"
-    assert "object mount" in backup.result.stderr
-    assert f"BIZ_STORAGE_HOST_ROOT={installed.resolve()}" in backup.result.stderr
+    assert f"object mount differs from {tmp_path / 'documents'}" in backup.result.stderr
+    assert f"(it is {installed.resolve()})" in backup.result.stderr
+    assert "set BIZ_STORAGE_HOST_ROOT" in backup.result.stderr
     assert all("pg_dump" not in args for args in backup.commands)
     assert not backup.restic_calls()
 
 
-def test_legacy_storage_root_matching_the_mount_still_backs_up(
+def test_legacy_storage_root_without_app_containers_prevents_capture(
+    run_backup: Callable[..., BackupRun],
+) -> None:
+    # After `compose rm biz-api biz-worker`, Compose would still mount ../var/objects.
+    backup = run_backup(BIZ_TEST_LEGACY_ROOT="1")
+    assert backup.result.returncode != 0, "backed up a directory Compose does not mount"
+    assert "Compose object mount differs" in backup.result.stderr
+    assert "set BIZ_STORAGE_HOST_ROOT" in backup.result.stderr
+    assert all("pg_dump" not in args for args in backup.commands)
+    assert not backup.restic_calls()
+
+
+def test_legacy_storage_root_with_matching_override_still_backs_up(
     run_backup: Callable[..., BackupRun], tmp_path: Path
 ) -> None:
-    backup = run_backup(BIZ_TEST_INSTALLED_ROOT=str(tmp_path / "documents"))
+    documents = str(tmp_path / "documents")
+    backup = run_backup(
+        BIZ_TEST_LEGACY_ROOT="1",
+        BIZ_TEST_COMPOSE_ROOT=documents,
+        BIZ_TEST_INSTALLED_ROOT=documents,
+    )
     assert backup.result.returncode == 0, backup.result.stderr
+
+
+def test_compose_without_one_object_bind_mount_prevents_capture(
+    run_backup: Callable[..., BackupRun],
+) -> None:
+    backup = run_backup(BIZ_TEST_COMPOSE_ROOT="relative/objects")
+    assert backup.result.returncode != 0
+    assert "absolute host path" in backup.result.stderr
+    assert not backup.restic_calls()
+
+
+def test_restore_fails_closed_when_compose_would_mount_another_directory(
+    tmp_path: Path,
+) -> None:
+    # README recovery with only the legacy BIZ_STORAGE_ROOT and no application containers.
+    env_file = tmp_path / "backup.env"
+    env_file.write_text("RESTIC_REPOSITORY=x\nRESTIC_PASSWORD=y\n")
+    legacy = tmp_path / "legacy-objects"
+    legacy.mkdir()
+    (tmp_path / "dumps").mkdir()
+    fake = tmp_path / "fake.py"
+    fake.write_text(FAKE_TOOLS)
+    log = tmp_path / "log.jsonl"
+    launcher = LAUNCHER.replace('exec bash "$1"', 'exec bash "$1" "$2"')
+    result = subprocess.run(
+        ["bash", "-c", launcher, "restore-test", str(RESTORE), SNAPSHOT_ID],
+        env={
+            "PATH": os.pathsep.join([str(Path(sys.executable).parent), os.defpath]),
+            "HOME": str(tmp_path),
+            "BIZ_ENV_FILE": str(env_file),
+            "BIZ_DUMP_DIR": str(tmp_path / "dumps"),
+            "BIZ_STORAGE_ROOT": str(legacy),
+            "BIZ_TEST_COMMANDS": str(log),
+            "BIZ_TEST_PYTHON": sys.executable,
+            "BIZ_TEST_FAKE": str(fake),
+            "BIZ_TEST_FIXTURE": str(tmp_path),
+        },
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    commands = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    assert result.returncode != 0
+    assert "Compose object mount differs" in result.stderr
+    assert not any("psql" in args or "pg_restore" in args for args in commands)
+    assert not any(args[0] == "restic" for args in commands)
 
 
 def test_failed_staging_cleanup_prevents_success(run_backup: Callable[..., BackupRun]) -> None:

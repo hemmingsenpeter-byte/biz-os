@@ -1,5 +1,14 @@
 # Build log
 
+## 2026-11-20 Shadow meeting offers in the owner console
+
+- The task activity shows “Prepared, not sent” for a meeting offer with
+  task-specific shadow suppression evidence. Shared job evidence keeps its
+  generic label. Pending approvals and message-sent evidence use their existing
+  displays.
+- Browser acceptance covers the label, empty approval panel and absence of
+  message-sent evidence using a disposable task.
+
 ## 2026-11-20 Receptionist shadow mode
 
 - HIVE defaults to shadow mode, with the receptionist and on-appliance

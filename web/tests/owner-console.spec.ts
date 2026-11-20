@@ -18,6 +18,7 @@ type State = {
   owner: { email: string; invite_url: string };
   staff: { email: string; invite_url: string };
   legacy_unknown: { id: string; actor: string; decision_type: string };
+  shadow_task_id: string;
   operations: Record<
     "approve" | "reject" | "stale" | "concurrent_edit",
     Operation
@@ -146,6 +147,18 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
       .soft(mobile.document, JSON.stringify(mobile))
       .toBeLessThanOrEqual(mobile.viewport);
     await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+
+  await test.step("shadow preparation appears without a pending approval", async () => {
+    await page.goto(`/tasks/${state.shadow_task_id}`);
+    await expect(
+      page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("No pending approvals linked to this task.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Packet Message Sent", exact: true }),
+    ).toHaveCount(0);
+    expect(sends()).toHaveLength(0);
   });
 
   await test.step("UI approval completes once with linked evidence", async () => {

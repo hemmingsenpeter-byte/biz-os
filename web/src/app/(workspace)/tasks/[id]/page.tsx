@@ -98,7 +98,13 @@ export default function TaskPage({
                         </span>
                         <div>
                           <div className="timeline-title">
-                            <h3>{readable(event.kind)}</h3>
+                            <h3>
+                              {event.kind === "shadow.suppressed" &&
+                              event.task_id === id &&
+                              task.data?.kind === "book_meeting"
+                                ? "Prepared, not sent"
+                                : readable(event.kind)}
+                            </h3>
                             <time dateTime={event.at}>
                               {dateTime(event.at)}
                             </time>

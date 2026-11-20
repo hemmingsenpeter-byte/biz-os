@@ -1,5 +1,16 @@
 # Build log
 
+## 2026-11-20 Receptionist scenario smoke
+
+- Added four fictional versioned cases that reach DBOS through the real form or
+  inbox ingress in an isolated HIVE receptionist runtime. All business adapters
+  are fakes and the gateway runs in shadow mode.
+- The operator command verifies a local model digest before inference and records
+  checks, model-call measurements, packet and step evidence, and fake write calls.
+  CI runs one separately labelled deterministic fixture.
+- The remaining scenario catalogue, draft-quality rubric and release gates are
+  still outstanding. See [Receptionist scenario smoke](SCENARIO_SMOKE.md).
+
 ## 2026-11-20 Receptionist shadow mode
 
 - HIVE defaults to shadow mode, with the receptionist and on-appliance

@@ -1,5 +1,61 @@
 # Build log
 
+## 2026-11-20 Review and merge of #7, #8 and #9
+
+Subagents reviewed each PR, fixed what the reviewers proved, then re-reviewed
+the fixes. #8 merged by squash. #7 and then #9 merged by merge commit to keep
+the stack clean. Before #9 merged, the #7 head was merged into it. After each
+merge, pytest, ruff, mypy and `biz doctor` for both apps passed on main.
+
+### Fixes made during review
+
+- **#7 backups fail closed on mount drift.** `deploy/backups/common.sh` checks
+  the object bind mount of biz-api and biz-worker. It reads the live
+  containers when they exist, otherwise `docker compose config`. Backup or
+  restore stops unless that mount is the directory being archived. Recovery
+  step 2 in the README now says `BIZ_STORAGE_HOST_ROOT`.
+- **#7 preflight** rejects `network_mode: service:*` and `container:*`.
+- **#8 unreported usage is unmetered.** `Usage.take()` returns `None` when an
+  adapter reports nothing. The router counts `unmetered_calls`, and the eval
+  counts those cases as unmetered instead of free.
+- **#8 the kernel names no role.** Private eval reads its task, categories,
+  prompt, schema and dataset from the role's `_task.yaml` (`historical:` block).
+  `eval-data confirm` now takes `--template`. A new invariant,
+  `test_shared_code_names_no_role`, enforces this.
+
+### Waiting on the owner
+
+- **Approvals left behind by shadow mode (#9).** An action approved but
+  suppressed stays `approved`. If the mode later becomes supervised,
+  `staged.execute` (e.g. payables /apply) would send it with no fresh
+  approval. Should suppression cancel it?
+- **Exit from shadow mode (#9).** `BIZ_EXECUTION_MODE=supervised` overrides
+  HIVE's default, and preflight accepts it. Nothing enforces the pilot-exit
+  evidence or owner sign-off.
+- **No policy verdict in shadow audit (#9).** Suppression runs before
+  `policy.check`, so the audit never says whether policy would have allowed,
+  asked or denied. Shadow mode also has no rule against cloud models.
+- **Cloud data in private eval (#8).** `--allow-cloud-data` is the only gate
+  on sending historical enquiries to a cloud model. It bypasses `policy.check`
+  and the approval queue.
+- **Private eval gaps (#8).** The prompt is frozen at confirm time, so
+  `deployment_ready` can be true for a prompt that isn't deployed. The shadow
+  threshold isn't covered by the owner receipt. Spend on cases where every
+  cloud attempt failed isn't recorded. A cloud adapter that reports no usage
+  is still free in budgets.
+- **Signing links (#7).** The public gateway no longer routes DocuSeal `/s`
+  and `/d`, so HIVE's outside signers can't open signing URLs.
+- **Storage path (#7).** The container path is now fixed. Existing installs on
+  another path need a migration note for stored `file://` URIs.
+  `BIZ_TRUSTED_PROXIES` is unset by default, which trusts the Docker bridges,
+  and preflight doesn't check it.
+
+### Minor follow-ups
+
+- `read_template` raises a raw AttributeError or TypeError on some malformed
+  schemas, not a CLI error.
+- The backup mount check refuses one directory reached by two spellings.
+
 ## 2026-11-20 Receptionist shadow mode
 
 - HIVE defaults to shadow mode, with the receptionist and on-appliance

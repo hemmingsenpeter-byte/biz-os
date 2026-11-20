@@ -110,6 +110,30 @@ jobs:
         if: always()
         run: docker compose --profile public down --volumes --remove-orphans
 
+  restore-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Install restic
+        working-directory: ${{ runner.temp }}
+        run: |
+          asset=restic_0.18.1_linux_amd64.bz2
+          release=https://github.com/restic/restic/releases/download/v0.18.1
+          curl --fail --silent --show-error --location --remote-name "$release/$asset"
+          curl --fail --silent --show-error --location --remote-name "$release/SHA256SUMS"
+          sha256sum --ignore-missing --strict --check SHA256SUMS
+          mkdir -p "$RUNNER_TEMP/biz-tools"
+          bunzip2 -c "$asset" > "$RUNNER_TEMP/biz-tools/restic"
+          chmod +x "$RUNNER_TEMP/biz-tools/restic"
+          echo "$RUNNER_TEMP/biz-tools" >> "$GITHUB_PATH"
+      - name: Restore the disposable appliance from encrypted backup
+        run: uv run python -m deploy.restore_drill
+
   web:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

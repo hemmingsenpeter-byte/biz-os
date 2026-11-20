@@ -26,6 +26,7 @@ from biz_kernel.auth.routes import router as auth_router
 from biz_kernel.contracts.ports import MailPort
 from biz_kernel.control.service import Paused
 from biz_kernel.packets.bus import Packet, timeline
+from biz_kernel.tools.shadow import ExecutionMode, configured_mode
 
 
 class PacketOut(BaseModel):
@@ -118,6 +119,7 @@ def create_app(
     mail: MailPort | None = None,
     decide: Callable[..., Any] | None = None,
     registry: Any | None = None,
+    execution_mode: ExecutionMode | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="BIZ OS", version="1.0.0", openapi_url="/v1/openapi.json", docs_url="/v1/docs"
@@ -146,6 +148,9 @@ def create_app(
     app.state.manifest = manifest
     app.state.mail = mail
     app.state.registry = registry
+    app.state.execution_mode = execution_mode or configured_mode(
+        getattr(manifest, "execution_mode", "supervised")
+    )
     app.state.decide = decide or _default_decide
     app.include_router(_v1(), prefix="/v1")
 

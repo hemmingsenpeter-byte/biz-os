@@ -347,7 +347,7 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
     demo = all(port.startswith("fake_") for port in ports)
     problems: list[str] = []
     required = set(CORE_ENV)
-    optional: set[str] = set()
+    optional = {"BIZ_EXECUTION_MODE"}
     for port in sorted(ports):
         if port.startswith("fake_"):
             continue
@@ -366,6 +366,16 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
 
     if api.get("BIZ_ORIGIN") != services["biz-web"].get("environment", {}).get("BIZ_ORIGIN"):
         problems.append("BIZ_ORIGIN must also match the owner console")
+    mode = api.get("BIZ_EXECUTION_MODE") or manifest.execution_mode
+    if mode not in {"shadow", "supervised"}:
+        problems.append("BIZ_EXECUTION_MODE must be shadow or supervised")
+    if mode == "shadow" and "model_ollama" in ports:
+        ollama = _http_url(api.get("BIZ_OLLAMA_URL", ""))
+        if not ollama or ollama.hostname != "host.docker.internal":
+            problems.append("Shadow Ollama must use the appliance host.docker.internal endpoint")
+        for key in ("BIZ_OLLAMA_MODEL", "BIZ_OLLAMA_EMBED_MODEL"):
+            if re.search(r"(?:^|[/:_-])cloud(?:$|[/:])", api.get(key, ""), re.I):
+                problems.append(f"{key} cannot use a cloud model in shadow mode")
     if api.get("BIZ_DBOS_SYSTEM_URL") or worker.get("BIZ_DBOS_SYSTEM_URL"):
         problems.append(
             "BIZ_DBOS_SYSTEM_URL must be empty so backups include the workflow database"

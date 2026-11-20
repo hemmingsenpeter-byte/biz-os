@@ -79,8 +79,8 @@ def app_name(request) -> str:  # type: ignore[no-untyped-def]
 
 
 @pytest.fixture
-def rt(fresh_db: str, monkeypatch, app_name: str):  # type: ignore[no-untyped-def]
-    APP = ROOT / "apps" / app_name
+def rt(fresh_db: str, monkeypatch, app_name: str, full_hive: Path):  # type: ignore[no-untyped-def]
+    APP = full_hive if app_name == "hive" else ROOT / "apps" / app_name
     eng = create_engine(fresh_db)
     import_all_models()
     import biz_cap_booking.models  # noqa: F401

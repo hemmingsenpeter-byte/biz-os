@@ -33,6 +33,7 @@ def compose_config(
             "BIZ_RP_ID": "localhost",
             "BIZ_ORIGIN": "http://localhost:3000",
             "BIZ_APP_DIR": f"/app/apps/{composition}",
+            "BIZ_EXECUTION_MODE": "",
             "BIZ_STORAGE_HOST_ROOT": str(home),
             "DOCUSEAL_SECRET_KEY_BASE": "disposable-docuseal-secret",
         }
@@ -130,6 +131,34 @@ def test_preflight_reports_compose_error_without_leaking_input(
     result = capsys.readouterr()
     assert "Could not read and validate the local Compose configuration" in result.err
     assert "do-not-include" not in result.err + result.out
+
+
+def test_preflight_requires_agreement_on_execution_mode(
+    compose_config: Callable[[str], dict[str, Any]],
+) -> None:
+    config = compose_config("hive")
+    services = config["services"]
+    services["biz-api"]["environment"]["BIZ_EXECUTION_MODE"] = "unsupported-fixture"
+    services["biz-worker"]["environment"]["BIZ_EXECUTION_MODE"] = "supervised"
+    assert preflight.validate(config, preflight.ROOT) == [
+        "BIZ_EXECUTION_MODE must match between biz-api and biz-worker",
+        "BIZ_EXECUTION_MODE must be shadow or supervised",
+    ]
+
+
+def test_shadow_preflight_requires_the_appliance_model(
+    compose_config: Callable[[str], dict[str, Any]],
+) -> None:
+    config = compose_config("hive")
+    for name in ("biz-api", "biz-worker"):
+        config["services"][name]["environment"].update(
+            BIZ_OLLAMA_URL="https://remote.example.invalid",
+            BIZ_OLLAMA_MODEL="fixture:cloud",
+        )
+    assert preflight.validate(config, preflight.ROOT) == [
+        "Shadow Ollama must use the appliance host.docker.internal endpoint",
+        "BIZ_OLLAMA_MODEL cannot use a cloud model in shadow mode",
+    ]
 
 
 def test_preflight_requires_the_database_and_local_path_captured_by_backups(

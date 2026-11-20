@@ -31,7 +31,7 @@ def build_app():  # type: ignore[no-untyped-def]
     # The runtime resolves the composition's ports (mail, telephony, ...) and builds the
     # capability routes. Building it launches no DBOS.
     rt = build_runtime(app_dir, root or find_repo_root(app_dir))
-    app = create_app(manifest, mail=rt.ports.get("mail"))
+    app = create_app(manifest, mail=rt.ports.get("mail"), execution_mode=rt.registry.execution_mode)
     for name, router in capability_routes(rt):
         # Public paths only: /webhooks/* is what the tunnel exposes; /v1 stays private.
         app.include_router(router, prefix="/webhooks", tags=[name])

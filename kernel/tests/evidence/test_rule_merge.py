@@ -35,4 +35,4 @@ def test_loader_rejects_conflicting_role_declarations(tmp_path: Path):
     est.write_text(est.read_text().replace("  pricing:", '  triage: ["x.other"]\n  pricing:', 1))
     # estimator now also declares `triage`, which the receptionist declares differently.
     with pytest.raises(LoadError, match="triage"):
-        load_composition(work / "apps" / "hive", work)
+        load_composition(work / "apps" / "demo", work)

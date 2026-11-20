@@ -277,3 +277,26 @@ off-box destination and representative data before setting production targets.
 The speech adapter runs inside the application. Transcribing audio requires the
 optional `whisper` extra and a locally available model. The standard demo
 uses the fake speech adapter.
+
+## 7. Receptionist shadow mode
+
+HIVE starts in shadow mode with the receptionist as its active role. Compose
+passes the same execution mode to the API and worker. An empty
+`BIZ_EXECUTION_MODE` selects the composition default. The demo retains its
+supervised fake-provider behavior.
+
+In shadow mode, the runtime can collect enquiries, classify them and prepare
+internal drafts. The dispatch guard stops external and money actions, including
+a previously approved staged action. Suppressions are recorded as
+`shadow.suppressed` audit events. Workflow suppressions appear on the task
+evidence timeline and leave the task open for owner review. Use an owner
+passkey to access the console.
+
+External provider credentials are provisioned separately at the approved access
+and pilot gates. Preflight requires on-appliance Ollama for shadow Compose
+deployments. Verify the approved model is installed on the Mac mini before
+connecting a mailbox. Before replacing an older release, settle in-flight work
+for the inactive roles and stop the old API and workers. Update and restart
+both application services together. The supervised transition requires pilot
+exit evidence and the owner's authorization. Exclude approvals for suppressed
+actions from supervised quality and autonomy evidence.

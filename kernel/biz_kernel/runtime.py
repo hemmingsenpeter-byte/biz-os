@@ -29,6 +29,7 @@ from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.policy.engine import PolicyEngine
 from biz_kernel.tools.registry import ToolRegistry
+from biz_kernel.tools.shadow import configured_mode
 from biz_kernel.workflows import runner
 from biz_kernel.workflows.escalation import parse
 from biz_kernel.workflows.gate import KernelGate
@@ -218,13 +219,14 @@ def build_runtime(
     retry_seconds: float = 60.0,
 ) -> Runtime:
     manifest = load_composition(app_dir, repo_root)
+    execution_mode = configured_mode(manifest.execution_mode)
     overrides = ports or {}
     resolved = {
         slot: resolve_port(name) for slot, name in manifest.ports.items() if slot not in overrides
     }
     resolved.update(overrides)
 
-    registry = ToolRegistry()
+    registry = ToolRegistry(execution_mode=execution_mode)
     embedder = _embedder(resolved.get("model_local"))
     memory_tools.register(
         registry, {name: list(r.sources) for name, r in manifest.roles.items()}, embedder

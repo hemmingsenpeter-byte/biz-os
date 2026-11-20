@@ -8,6 +8,7 @@ x-biz-env: &biz-env
   BIZ_RP_ID: ${BIZ_RP_ID}
   BIZ_ORIGIN: ${BIZ_ORIGIN}
   BIZ_APP_DIR: ${BIZ_APP_DIR:-/app/apps/demo}
+  BIZ_EXECUTION_MODE: ${BIZ_EXECUTION_MODE:-}
   BIZ_REPO_ROOT: /app
   BIZ_TICK_SECONDS: "60"
   BIZ_OLLAMA_URL: ${BIZ_OLLAMA_URL:-http://host.docker.internal:11434}

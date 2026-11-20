@@ -123,11 +123,16 @@ The technical gate requires at least 95% fully correct classifications over at
 least 50 held-out cases with outcome checks. Newly confirmed historical cases
 require valid structured output and the exact owner-labelled category. When the
 label is anything other than `other`, the output must also meet the intake
-boundary of 0.6. For example, `enquiry` at 0.59 is routed as `other` in production
-and fails that case. An exact `other` at 0.25 remains `other` and passes, while
-`spam` at 0.25 still fails an `other` case because the model chose the wrong category.
-Malformed or missing confidence fails the output schema. Packet routing and
-escalation require separate workflow evidence.
+boundary of 0.6. For example, `enquiry` at 0.59 fails that case. An exact
+`other` at 0.25 passes, while `spam` at 0.25 still fails an `other` case because
+the model chose the wrong category. Malformed or missing confidence fails the
+output schema.
+
+When the intake tool receives a valid model category below 0.6, it stores
+`other`. The receptionist SOP also has a role-level confidence guard that
+can escalate before the intake tool runs. Scoring the model's answer does
+not establish effective routing or escalation. Verify those outcomes through
+the workflow using its packets and evidence.
 
 Existing confirmed datasets still use their sealed scoring checks. Use a new
 owner-confirmed dataset version for the revised rubric and record the version in

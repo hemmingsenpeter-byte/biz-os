@@ -201,7 +201,9 @@ databases, or a separate document store requires a different recovery procedure.
 2. Set `BIZ_STORAGE_HOST_ROOT` to the absolute host directory mounted into the
    API and worker. For a demo with fake storage, provision an empty private
    directory. The backup script also supports the legacy host variable
-   `BIZ_STORAGE_ROOT` for a Compose override that still uses that layout.
+   `BIZ_STORAGE_ROOT` for a Compose override that still uses that layout. Both
+   scripts refuse to run unless this directory is the object bind mount that the
+   resolved Compose configuration and any existing API and worker containers use.
 3. Put the restic settings and document path in the trusted, shell-compatible
    `deploy/.env` and restrict its permissions. Set `BIZ_DUMP_DIR` for private working
    space if needed (default `~/biz-backups/dumps`). Leave free space for staging and
@@ -239,7 +241,9 @@ running and remove the stale staging directory and lock before retrying.
 2. Use a fresh Compose project and fresh volumes, with the same PostgreSQL major
    version, extensions and role. In a recovery Compose override, set
    `services.postgres.environment.POSTGRES_DB: postgres` so Compose creates no
-   application databases. Set the same absolute `BIZ_STORAGE_ROOT` and make it empty.
+   application databases. Set `BIZ_STORAGE_HOST_ROOT` in `deploy/.env` to the same
+   absolute directory as the backed-up install and make it empty. The restore script
+   checks that Compose will mount it into the API and worker.
    Start only PostgreSQL, then create the stopped DocuSeal container with
    `docker compose ... create docuseal`. Use the same project/env/file
    selections for those commands and the restore script.

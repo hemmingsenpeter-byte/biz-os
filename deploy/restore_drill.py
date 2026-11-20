@@ -60,10 +60,13 @@ services:
     image: busybox:1.37.0
     volumes:
       - docuseal:/data/docuseal
-  biz-api:
+  biz-api: &objects
     image: busybox:1.37.0
-  biz-worker:
-    image: busybox:1.37.0
+    volumes:
+      - type: bind
+        source: ${BIZ_STORAGE_HOST_ROOT:?}
+        target: /var/lib/biz-os/objects
+  biz-worker: *objects
 volumes:
   pgdata:
   docuseal:
@@ -319,7 +322,8 @@ def drill(root: Path, tmp: Path) -> None:
         BIZ_BACKUP_HELPER_IMAGE="busybox:1.37.0",
         BIZ_COMPOSE_FILE=str(compose_file),
         BIZ_DUMP_DIR=str(tmp / "dumps"),
-        BIZ_STORAGE_ROOT=str(objects),
+        BIZ_STORAGE_HOST_ROOT=str(objects),  # the mount the backup scripts verify
+        BIZ_STORAGE_ROOT=str(objects),  # in-process application path
         POSTGRES_PASSWORD=secrets.token_hex(24),
         RESTIC_REPOSITORY=str(tmp / "restic"),
         RESTIC_PASSWORD=secrets.token_hex(32),

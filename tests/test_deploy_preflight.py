@@ -107,6 +107,19 @@ def test_preflight_rejects_storage_and_route_exposure(
     assert "cloudflared must use its isolated network and opt-in public profile" in problems
 
 
+@pytest.mark.parametrize("mode", ["service:cloudflared", "service:tunnel-ingress", "container:x"])
+def test_preflight_rejects_joining_another_network_namespace(
+    compose_config: Callable[[str], dict[str, Any]], mode: str
+) -> None:
+    config = compose_config("hive")
+    web = config["services"]["biz-web"]
+    web.pop("networks", None)
+    web.pop("ports", None)
+    web["network_mode"] = mode
+    problems = preflight.validate(config, preflight.ROOT)
+    assert f"biz-web must not join another network namespace ({mode})" in problems
+
+
 def test_preflight_reports_compose_error_without_leaking_input(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

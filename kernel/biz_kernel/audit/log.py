@@ -54,7 +54,7 @@ class AuditEntry(Base):
     hash: Mapped[str | None] = mapped_column(String(64))
 
 
-# Tables that must never be updated or deleted. Other modules append to this list.
+# Tables that need row and statement guards. Other modules append to this list.
 APPEND_ONLY_TABLES: list[str] = ["audit_log"]
 
 APPEND_ONLY_FN = """
@@ -94,6 +94,9 @@ def append_only_ddl(table: str) -> str:
         f"DROP TRIGGER IF EXISTS {table}_append_only ON {table};"
         f"CREATE TRIGGER {table}_append_only BEFORE UPDATE OR DELETE ON {table} "
         f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+        f"DROP TRIGGER IF EXISTS {table}_reject_truncate ON {table};"
+        f"CREATE TRIGGER {table}_reject_truncate BEFORE TRUNCATE ON {table} "
+        "FOR EACH STATEMENT EXECUTE FUNCTION biz_reject_mutation();"
     )
 
 

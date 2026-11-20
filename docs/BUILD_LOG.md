@@ -1,5 +1,14 @@
 # Build log
 
+## 2026-11-20 Statement guards on append-only tables
+
+- Migration `0023` adds statement-level guards to all seven existing
+  append-only kernel tables. Fresh metadata creates the same guards.
+- The migration test inspects the installed trigger definitions. Existing tests
+  continue to cover sealed-row validation, audit verification and legacy
+  schema upgrades. An external audit-chain anchor still needs an owner-selected
+  destination.
+
 ## 2026-11-20 Backup and recovery
 
 - The backup command covers `biz`, `biz_dbos`, `docuseal`, local documents and

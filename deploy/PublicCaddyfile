@@ -1,0 +1,31 @@
+# Only Cloudflare Tunnel shares this listener's bridge. Rewrite allowed paths
+# to fixed upstream targets, including when a request uses escaped path spelling.
+:8081 {
+	@telephony {
+		method POST
+		path /webhooks/telephony
+	}
+	handle @telephony {
+		rewrite * /webhooks/telephony
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy biz-api:8000
+	}
+
+	@form {
+		method POST
+		path /webhooks/form
+	}
+	handle @form {
+		rewrite * /webhooks/form
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy biz-api:8000
+	}
+
+	handle {
+		respond 404
+	}
+}

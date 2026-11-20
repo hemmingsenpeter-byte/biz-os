@@ -1,7 +1,7 @@
 # Python services (biz-api, biz-worker). Build from the repo root:
 #   docker build -f deploy/Dockerfile -t biz-os .
-FROM python:3.12-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS build
+COPY --from=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 # All workspace members must be present for a locked sync. The cache mount keeps
@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
     uv sync --locked --no-dev --all-packages
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 # WeasyPrint loads these shared libraries at runtime. A font is needed for PDFs
 # with readable text on the otherwise minimal image.
 RUN apt-get update \

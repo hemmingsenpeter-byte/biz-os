@@ -1,6 +1,6 @@
-# One front door. Public paths (webhooks, link pages) are the only ones the tunnel exposes;
-# see cloudflared.config.example.yml. Owner/admin reach everything over Tailscale.
-{$BIZ_DOMAIN:localhost} {
+# Private owner ingress. The host publishes this listener to loopback only, and
+# Tailscale Serve terminates HTTPS subject to the tailnet ACL.
+:8080 {
 	encode zstd gzip
 
 	header {
@@ -10,9 +10,6 @@
 		-Server
 	}
 
-	# REST API (OpenAPI at /v1/docs)
-	# Bodies are capped before they reach the API: 1MB by default, 110MB only for voice uploads
-	# (the app enforces its own 100MB file limit).
 	handle /v1/voice_capture/upload {
 		request_body {
 			max_size 110MB
@@ -27,24 +24,7 @@
 		reverse_proxy biz-api:8000
 	}
 
-	# Provider webhooks and the public intake form (/webhooks/telephony, /webhooks/form,
-	# DocuSeal, M365, Xero) land on the API. These are the only API paths the tunnel exposes.
-	# Caddy appends the real peer to X-Forwarded-For; CF-Connecting-IP passes through from
-	# Cloudflare. The API trusts them only from this proxy's network (BIZ_TRUSTED_PROXIES).
-	handle /webhooks/* {
-		request_body {
-			max_size 1MB
-		}
-		reverse_proxy biz-api:8000
-	}
-
-	# Everything else is the Next.js app (owner, client and subcontractor pages)
 	handle {
 		reverse_proxy biz-web:3000
 	}
-}
-
-# DocuSeal on its own host so its cookies and CSP stay separate
-sign.{$BIZ_DOMAIN:localhost} {
-	reverse_proxy docuseal:3000
 }

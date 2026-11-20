@@ -1,5 +1,19 @@
 # Build log
 
+## 2026-11-20 Compose configuration and ingress
+
+- The API and worker share a durable, restricted document bind mount and use
+  the same adapter configuration. Backups check the installed bind against the
+  configured host source. Installed container images and base images have
+  multi-platform digest pins.
+- The owner listener is loopback-only for Tailscale Serve. The Cloudflare
+  profile attaches only to its dedicated gateway, which forwards the two
+  inbound intake POST routes. The CI smoke checks both origins using fake
+  providers and recreates the API container to verify storage persistence.
+- The offline preflight verifies composition, policy, active adapter settings,
+  database topology, storage and public bridge selection without starting
+  services or printing configured values.
+
 ## 2026-11-20 Backup and recovery
 
 - The backup command covers `biz`, `biz_dbos`, `docuseal`, local documents and

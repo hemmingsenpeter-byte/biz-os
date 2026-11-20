@@ -10,8 +10,38 @@ x-biz-env: &biz-env
   BIZ_APP_DIR: ${BIZ_APP_DIR:-/app/apps/demo}
   BIZ_REPO_ROOT: /app
   BIZ_TICK_SECONDS: "60"
-  OLLAMA_HOST: http://host.docker.internal:11434
+  BIZ_OLLAMA_URL: ${BIZ_OLLAMA_URL:-http://host.docker.internal:11434}
+  BIZ_OLLAMA_MODEL: ${BIZ_OLLAMA_MODEL:-llama3.1:8b}
+  BIZ_OLLAMA_EMBED_MODEL: ${BIZ_OLLAMA_EMBED_MODEL:-nomic-embed-text}
+  BIZ_STORAGE_ROOT: /var/lib/biz-os/objects
+  BIZ_TRUSTED_PROXIES: ${BIZ_TRUSTED_PROXIES:-}
+  BIZ_DOCUSEAL_URL: ${BIZ_DOCUSEAL_URL:-http://docuseal:3000}
+  BIZ_DOCUSEAL_API_KEY: ${BIZ_DOCUSEAL_API_KEY:-}
+  BIZ_DOCUSEAL_TEMPLATE_ID: ${BIZ_DOCUSEAL_TEMPLATE_ID:-}
+  BIZ_DOCUSEAL_ALLOW_TEMPLATE_MODE: ${BIZ_DOCUSEAL_ALLOW_TEMPLATE_MODE:-0}
+  BIZ_DOCUSEAL_WEBHOOK_SECRET: ${BIZ_DOCUSEAL_WEBHOOK_SECRET:-}
+  BIZ_DOCUSEAL_WEBHOOK_HEADER: ${BIZ_DOCUSEAL_WEBHOOK_HEADER:-X-Docuseal-Secret}
+  BIZ_M365_TENANT: ${BIZ_M365_TENANT:-}
+  BIZ_M365_CLIENT_ID: ${BIZ_M365_CLIENT_ID:-}
+  BIZ_M365_SECRET: ${BIZ_M365_SECRET:-}
+  BIZ_M365_MAILBOX: ${BIZ_M365_MAILBOX:-}
+  BIZ_M365_TZ: ${BIZ_M365_TZ:-}
+  BIZ_M365_WORK_START: ${BIZ_M365_WORK_START:-09:00}
+  BIZ_M365_WORK_END: ${BIZ_M365_WORK_END:-17:00}
+  BIZ_M365_AUTHSERV_ID: ${BIZ_M365_AUTHSERV_ID:-}
+  BIZ_TWILIO_SID: ${BIZ_TWILIO_SID:-}
+  BIZ_TWILIO_TOKEN: ${BIZ_TWILIO_TOKEN:-}
+  BIZ_TWILIO_FROM: ${BIZ_TWILIO_FROM:-}
+  BIZ_TWILIO_WEBHOOK_URL: ${BIZ_TWILIO_WEBHOOK_URL:-}
+  BIZ_XERO_CLIENT_ID: ${BIZ_XERO_CLIENT_ID:-}
+  BIZ_XERO_CLIENT_SECRET: ${BIZ_XERO_CLIENT_SECRET:-}
+  BIZ_XERO_TENANT_ID: ${BIZ_XERO_TENANT_ID:-}
+  BIZ_XERO_SALES_ACCOUNT: ${BIZ_XERO_SALES_ACCOUNT:-200}
+  BIZ_XERO_PURCHASES_ACCOUNT: ${BIZ_XERO_PURCHASES_ACCOUNT:-300}
+  BIZ_WHISPER_MODEL: ${BIZ_WHISPER_MODEL:-small}
+  BIZ_WHISPER_DEVICE: ${BIZ_WHISPER_DEVICE:-cpu}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  BIZ_CLAUDE_MODEL: ${BIZ_CLAUDE_MODEL:-claude-sonnet-5-5}
 
 x-biz-service: &biz-service
   build:
@@ -19,6 +49,10 @@ x-biz-service: &biz-service
     dockerfile: deploy/Dockerfile
   restart: unless-stopped
   environment: *biz-env
+  volumes:
+    - type: bind
+      source: ${BIZ_STORAGE_HOST_ROOT:-../var/objects}
+      target: /var/lib/biz-os/objects
   extra_hosts:
     - "host.docker.internal:host-gateway"
   depends_on:
@@ -27,7 +61,7 @@ x-biz-service: &biz-service
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
     restart: unless-stopped
     environment:
       POSTGRES_USER: biz
@@ -82,7 +116,7 @@ services:
       - "127.0.0.1:3000:3000"   # local demo only; private access uses Caddy/Tailscale
 
   docuseal:
-    image: docuseal/docuseal:latest   # unmodified; pin a tag before production
+    image: docuseal/docuseal@sha256:d67335c0cb3142818a39878ab67a0d0af2a653220e2203b042796dd1321a4a9c
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://biz:${POSTGRES_PASSWORD}@postgres:5432/docuseal
@@ -95,56 +129,53 @@ services:
         condition: service_healthy
     expose:
       - "3000"
+    ports:
+      - "127.0.0.1:3002:3000"  # local DocuSeal administration
 
   caddy:
-    image: caddy:2-alpine
+    image: &caddy-image caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      BIZ_DOMAIN: ${BIZ_DOMAIN:-localhost}
+      - "127.0.0.1:8080:8080"  # Tailscale Serve terminates owner HTTPS
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
     depends_on:
       - biz-api
       - biz-web
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
+  tunnel-ingress:
+    image: *caddy-image
+    profiles: [public]
     restart: unless-stopped
-    # Public webhooks and link pages only. No router ports are opened.
+    volumes:
+      - ./PublicCaddyfile:/etc/caddy/Caddyfile:ro
+    networks: [default, tunnel]
+    depends_on:
+      - biz-api
+
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d
+    profiles: [public]
+    restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks: [tunnel]
     depends_on:
-      - caddy
+      - tunnel-ingress
 
   uptime-kuma:
-    image: louislam/uptime-kuma:1
+    image: louislam/uptime-kuma:1@sha256:70233f4acb5163fd2a59a49909cf01e44415cecff13dba69e3a86647a2919f83
     restart: unless-stopped
     volumes:
       - kuma:/app/data
     ports:
       - "127.0.0.1:3001:3001"   # owner/admin over Tailscale only
 
-  # M4: faster-whisper transcription. Uncomment when the speech capability lands.
-  # whisper:
-  #   image: fedirz/faster-whisper-server:latest-cpu
-  #   restart: unless-stopped
-  #   environment:
-  #     WHISPER__MODEL: Systran/faster-whisper-small
-  #   volumes:
-  #     - whisper:/root/.cache/huggingface
-  #   expose:
-  #     - "8000"
+networks:
+  tunnel:
 
 volumes:
   pgdata:
   docuseal:
-  caddy_data:
-  caddy_config:
   kuma:
-  # whisper:

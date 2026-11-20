@@ -1,5 +1,14 @@
 # Build log
 
+## 2026-11-20 Historical triage confidence scoring
+
+- New private confirmations require valid model output and an exact owner label.
+  The 0.6 confidence requirement applies to categories that would be downgraded
+  to `other` by intake. A valid, correctly labelled `other` can be low confidence.
+- The regression covers both sides of the routing threshold, invalid output, and
+  wrong categories that converge on the same effective route. Existing confirmed
+  datasets retain their sealed checks. Production routing is unchanged.
+
 ## 2026-11-20 Backup and recovery
 
 - The backup command covers `biz`, `biz_dbos`, `docuseal`, local documents and

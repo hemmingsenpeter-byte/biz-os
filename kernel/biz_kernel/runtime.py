@@ -29,7 +29,7 @@ from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.policy.engine import PolicyEngine
 from biz_kernel.tools.registry import ToolRegistry
-from biz_kernel.tools.shadow import configured_mode
+from biz_kernel.tools.shadow import ExecutionMode, ExecutionModeError, resolve_mode
 from biz_kernel.workflows import runner
 from biz_kernel.workflows.escalation import parse
 from biz_kernel.workflows.gate import KernelGate
@@ -41,6 +41,10 @@ log = logging.getLogger(__name__)
 
 class CompositionError(RuntimeError):
     pass
+
+
+class ModeRefused(CompositionError, ValueError):
+    """The composition may not start in the requested execution mode."""
 
 
 def resolve_port(name: str) -> Any:
@@ -150,14 +154,17 @@ class Runtime:
                 select(SopRun.waiting_op_id, StagedOperation.status)
                 .join(StagedOperation, StagedOperation.id == _as_uuid(SopRun.waiting_op_id))
                 .where(
-                    SopRun.status == "waiting", StagedOperation.status.in_(("approved", "rejected"))
+                    SopRun.status == "waiting",
+                    StagedOperation.status.in_(("approved", "rejected", "shadowed")),
                 )
             ).all()
             return [f"{op}:{status}" for op, status in rows]
 
         def resume(session: Session, ref: str) -> None:
             op_id, status = ref.split(":")
-            runner.notify_decision(op_id, "approved" if status == "approved" else "rejected")
+            # shadowed was approved first; its execute step replays the suppression
+            decision = "rejected" if status == "rejected" else "approved"
+            runner.notify_decision(op_id, decision)
 
         self.follow.register("sop_waiting_on_decided_op", decided_but_waiting, resume)
 
@@ -211,6 +218,22 @@ def _embedder(model: Any) -> Any:
     return _Sync()
 
 
+def execution_mode(manifest: Manifest, ports: dict[str, Any] | None = None) -> ExecutionMode:
+    """The composition's effective mode. Refuses to start rather than guess (CompositionError).
+
+    `ports` are the slots actually in use (configured plus test overrides).
+    """
+    try:
+        return resolve_mode(
+            manifest.execution_mode,
+            manifest.supervised_authorization,
+            ports=ports if ports is not None else manifest.ports,
+            policy=manifest.policy,
+        )
+    except ExecutionModeError as exc:
+        raise ModeRefused(f"composition {manifest.name} cannot start: {exc}") from None
+
+
 def build_runtime(
     app_dir: Path,
     repo_root: Path,
@@ -219,14 +242,16 @@ def build_runtime(
     retry_seconds: float = 60.0,
 ) -> Runtime:
     manifest = load_composition(app_dir, repo_root)
-    execution_mode = configured_mode(manifest.execution_mode)
     overrides = ports or {}
+    # Before any port is built. An override-only slot counts as configured; a configured
+    # slot keeps its adapter name so a cloud adapter is still recognised.
+    mode = execution_mode(manifest, {**overrides, **manifest.ports})
     resolved = {
         slot: resolve_port(name) for slot, name in manifest.ports.items() if slot not in overrides
     }
     resolved.update(overrides)
 
-    registry = ToolRegistry(execution_mode=execution_mode)
+    registry = ToolRegistry(execution_mode=mode)
     embedder = _embedder(resolved.get("model_local"))
     memory_tools.register(
         registry, {name: list(r.sources) for name, r in manifest.roles.items()}, embedder

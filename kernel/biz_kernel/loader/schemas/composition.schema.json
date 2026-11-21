@@ -22,6 +22,16 @@
     "execution_mode": {
       "enum": ["shadow", "supervised"]
     },
+    "supervised_authorization": {
+      "type": "object",
+      "required": ["authorized_by", "authorized_on", "pilot_exit_evidence"],
+      "properties": {
+        "authorized_by": { "type": "string", "minLength": 1 },
+        "authorized_on": {},
+        "pilot_exit_evidence": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "capabilities": {
       "type": "array",
       "items": {

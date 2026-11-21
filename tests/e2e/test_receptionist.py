@@ -112,7 +112,14 @@ class Live:
 
 
 @contextmanager
-def _live(fresh_db: str, monkeypatch, app: str, approver: str):  # type: ignore[no-untyped-def]
+def _live(  # type: ignore[no-untyped-def]
+    fresh_db: str,
+    monkeypatch,
+    app: str,
+    approver: str,
+    app_dir: Path | None = None,
+    cloud: bool = True,
+):
     import biz_cap_booking  # noqa: F401
     import biz_cap_demo_desk  # noqa: F401
 
@@ -134,13 +141,15 @@ def _live(fresh_db: str, monkeypatch, app: str, approver: str):  # type: ignore[
         "telephony": FakeTelephony(),
         "calendar": FakeCalendar(),
         "model_local": model,
-        "model_cloud": FakeModel(),
         "storage": FakeStorage(),
         "sign": FakeSign(),
         "speech": FakeSpeech(),
         "accounting": FakeAccounting(),
     }
-    rt = build_runtime(ROOT / "apps" / app, ROOT, ports=ports, approval_poll_seconds=1)
+    if cloud:
+        ports["model_cloud"] = FakeModel()
+    app_dir = app_dir or ROOT / "apps" / app
+    rt = build_runtime(app_dir, ROOT, ports=ports, approval_poll_seconds=1)
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
     DBOS.launch()
     try:
@@ -151,16 +160,18 @@ def _live(fresh_db: str, monkeypatch, app: str, approver: str):  # type: ignore[
 
 
 @pytest.fixture(params=[("demo", "demo_owner"), ("hive", "owner")], ids=["demo", "hive"])
-def live(fresh_db: str, request, monkeypatch):  # type: ignore[no-untyped-def]
+def live(fresh_db: str, request, monkeypatch, authorized_hive: Path):  # type: ignore[no-untyped-def]
     monkeypatch.setenv("BIZ_EXECUTION_MODE", "supervised")
-    with _live(fresh_db, monkeypatch, *request.param) as runtime:
+    app, approver = request.param
+    app_dir = authorized_hive if app == "hive" else None  # the real hive stays shadow
+    with _live(fresh_db, monkeypatch, app, approver, app_dir) as runtime:
         yield runtime
 
 
 @pytest.fixture
 def shadow_live(fresh_db: str, monkeypatch):  # type: ignore[no-untyped-def]
     monkeypatch.delenv("BIZ_EXECUTION_MODE", raising=False)
-    with _live(fresh_db, monkeypatch, "hive", "owner") as runtime:
+    with _live(fresh_db, monkeypatch, "hive", "owner", cloud=False) as runtime:
         yield runtime
 
 

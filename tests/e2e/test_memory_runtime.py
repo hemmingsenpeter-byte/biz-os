@@ -42,6 +42,8 @@ def test_seed_and_recall(fresh_db: str, app: str, role: str) -> None:
         "speech": FakeSpeech(),
         "accounting": FakeAccounting(),
     }
+    if app == "hive":  # shadow refuses a cloud model, even a fake one, unless policy allows it
+        del fakes["model_cloud"]
     rt = build_runtime(ROOT / "apps" / app, ROOT, ports=fakes)
     assert rt.seed_memory() > 0
     assert rt.seed_memory() == 0  # idempotent

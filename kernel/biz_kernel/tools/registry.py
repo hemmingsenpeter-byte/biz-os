@@ -19,7 +19,13 @@ from biz_kernel.budgets.service import BudgetBook
 from biz_kernel.control import service as control
 from biz_kernel.policy import spend
 from biz_kernel.policy.types import GATED, Action, Allow, Decision, Deny, SideEffect
-from biz_kernel.tools.shadow import SHADOW_REASON, ExecutionMode, Suppression, record_suppression
+from biz_kernel.tools.shadow import (
+    SHADOW_REASON,
+    ExecutionMode,
+    Suppression,
+    record_suppression,
+    verdict,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,15 @@ class Tool:
 
 class PolicyChecker(Protocol):
     def check(self, session: Session, action: Action) -> Decision: ...
+
+
+class PolicyEvaluator(Protocol):
+    """A checker that can also answer without side effects (no staging, counters or spend)."""
+
+    def evaluate(self, session: Session, action: Action) -> Decision: ...
+
+
+UNEVALUATED = {"decision": "unknown", "reason": "policy has no side-effect-free evaluation"}
 
 
 @dataclass
@@ -94,6 +109,20 @@ class ToolRegistry:
             effects.update(self._gated_effects(inner, parents | {name}))
         return effects
 
+    def action(
+        self, actor: str, name: str, args: dict[str, Any], decision_type: str | None = None
+    ) -> Action:
+        tool = self.get(name)
+        return Action(
+            actor=actor,
+            tool=name,
+            side_effect=tool.side_effect,
+            inputs=args,
+            decision_type=decision_type,
+            inner=tool.inner,
+            amount=args.get("amount"),
+        )
+
     def suppress_in_shadow(
         self,
         session: Session,
@@ -102,7 +131,16 @@ class ToolRegistry:
         name: str,
         args: dict[str, Any],
         decision_type: str | None = None,
+        policy: PolicyChecker | None = None,
+        pre_approved: bool = False,
+        staged_op_id: str | None = None,
     ) -> CallResult | None:
+        """In shadow mode, record a gated call instead of running it.
+
+        The record carries what policy would have decided, from its side-effect-free
+        evaluation: nothing is staged, counted, locked or spent. A checker without one
+        is recorded as unknown rather than called.
+        """
         if self.execution_mode != ExecutionMode.SHADOW:
             return None
         effects = self._gated_effects(name)
@@ -110,7 +148,24 @@ class ToolRegistry:
             return None
         if control.is_paused(session):
             raise control.Paused(name)
-        suppression = record_suppression(session, actor, name, effects, args, decision_type)
+        would_be = None
+        if policy is not None:
+            evaluate = getattr(policy, "evaluate", None)
+            if callable(evaluate) and name in self.tools:
+                would_be = verdict(evaluate(session, self.action(actor, name, args, decision_type)))
+            else:
+                would_be = dict(UNEVALUATED)
+        suppression = record_suppression(
+            session,
+            actor,
+            name,
+            effects,
+            args,
+            decision_type,
+            policy=would_be,
+            pre_approved=pre_approved,
+            staged_op_id=staged_op_id,
+        )
         return CallResult(Deny(SHADOW_REASON), suppression=suppression)
 
     def call(
@@ -134,7 +189,13 @@ class ToolRegistry:
             # The kill switch outranks everything, including an approval being replayed.
             raise control.Paused(name)
         suppressed = self.suppress_in_shadow(
-            session, actor=actor, name=name, args=args, decision_type=decision_type
+            session,
+            actor=actor,
+            name=name,
+            args=args,
+            decision_type=decision_type,
+            policy=policy,
+            pre_approved=pre_approved,
         )
         if suppressed is not None:
             return suppressed
@@ -146,15 +207,7 @@ class ToolRegistry:
             self.budgets.preflight(session, actor, cost, self.now())
         decision: Decision = Allow("ungated")
         if tool.side_effect in GATED or tool.inner:
-            action = Action(
-                actor=actor,
-                tool=name,
-                side_effect=tool.side_effect,
-                inputs=args,
-                decision_type=decision_type,
-                inner=tool.inner,
-                amount=args.get("amount"),
-            )
+            action = self.action(actor, name, args, decision_type)
             decision = Allow("pre-approved") if pre_approved else policy.check(session, action)
             record(
                 session,

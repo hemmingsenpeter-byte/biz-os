@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import re
 import stat
 import subprocess
@@ -21,6 +22,7 @@ import typer
 import yaml
 from biz_kernel.cli.main import doctor_cmd
 from biz_kernel.loader import LoadError, load_composition
+from biz_kernel.tools.shadow import ExecutionMode, mode_problems
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -321,6 +323,17 @@ def _validate_routes(
         problems.append("tunnel-ingress must use the dedicated read-only PublicCaddyfile")
 
 
+@contextlib.contextmanager
+def _without_host_mode() -> Any:
+    """Doctor judges the composition alone; the Compose override is checked separately."""
+    saved = os.environ.pop("BIZ_EXECUTION_MODE", None)
+    try:
+        yield
+    finally:
+        if saved is not None:
+            os.environ["BIZ_EXECUTION_MODE"] = saved
+
+
 def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = None) -> list[str]:
     compose_dir = compose_dir or root / "deploy"
     services = config["services"]
@@ -337,8 +350,21 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
     app_dir = root / "apps" / composition[1]
     try:
         manifest = load_composition(app_dir, root)
+        _, composition_mode = mode_problems(
+            manifest.execution_mode,
+            manifest.supervised_authorization,
+            override=None,
+            ports=manifest.ports,
+            policy=manifest.policy,
+        )
+        if composition_mode:  # named precisely: these are owner decisions, not typos
+            return composition_mode
         # The existing doctor checks port and capability imports, budgets, schedules and policy.
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with (
+            _without_host_mode(),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             doctor_cmd(app_dir, root)
     except (LoadError, OSError, typer.Exit, ValueError, TypeError, yaml.YAMLError):
         return ["The selected composition or policy failed validation. Run biz doctor locally."]
@@ -366,10 +392,15 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
 
     if api.get("BIZ_ORIGIN") != services["biz-web"].get("environment", {}).get("BIZ_ORIGIN"):
         problems.append("BIZ_ORIGIN must also match the owner console")
-    mode = api.get("BIZ_EXECUTION_MODE") or manifest.execution_mode
-    if mode not in {"shadow", "supervised"}:
-        problems.append("BIZ_EXECUTION_MODE must be shadow or supervised")
-    if mode == "shadow" and "model_ollama" in ports:
+    mode, mode_issues = mode_problems(
+        manifest.execution_mode,
+        manifest.supervised_authorization,
+        override=api.get("BIZ_EXECUTION_MODE") or None,
+        ports=manifest.ports,
+        policy=manifest.policy,
+    )
+    problems.extend(mode_issues)
+    if mode == ExecutionMode.SHADOW and "model_ollama" in ports:
         ollama = _http_url(api.get("BIZ_OLLAMA_URL", ""))
         if not ollama or ollama.hostname != "host.docker.internal":
             problems.append("Shadow Ollama must use the appliance host.docker.internal endpoint")

@@ -1,6 +1,8 @@
 # Receptionist pilot. Quoting provides the commercial fit-out industry's required capability.
 name: hive
 kernel: "1.x"
+# Shadow until the owner records supervised_authorization (authorized_by, authorized_on,
+# pilot_exit_evidence). BIZ_EXECUTION_MODE can only make this stricter.
 execution_mode: shadow
 capabilities: [intake, booking, comms, quoting]
 ports:

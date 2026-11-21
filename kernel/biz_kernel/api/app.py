@@ -26,7 +26,7 @@ from biz_kernel.auth.routes import router as auth_router
 from biz_kernel.contracts.ports import MailPort
 from biz_kernel.control.service import Paused
 from biz_kernel.packets.bus import Packet, timeline
-from biz_kernel.tools.shadow import ExecutionMode, configured_mode
+from biz_kernel.tools.shadow import ExecutionMode, configured_mode, resolve_mode
 
 
 class PacketOut(BaseModel):
@@ -114,6 +114,16 @@ def mount_capability(app: FastAPI, name: str, router: APIRouter) -> None:
     app.include_router(router, prefix=f"/v1/{name}", tags=[name])
 
 
+def _manifest_mode(manifest: Any) -> ExecutionMode:
+    """The same rule the runtime applies: the override only tightens; supervised is authorised."""
+    return resolve_mode(
+        getattr(manifest, "execution_mode", ExecutionMode.SHADOW),
+        getattr(manifest, "supervised_authorization", None),
+        ports=getattr(manifest, "ports", {}),
+        policy=getattr(manifest, "policy", {}),
+    )
+
+
 def create_app(
     manifest: Any | None = None,
     mail: MailPort | None = None,
@@ -148,9 +158,13 @@ def create_app(
     app.state.manifest = manifest
     app.state.mail = mail
     app.state.registry = registry
-    app.state.execution_mode = execution_mode or configured_mode(
-        getattr(manifest, "execution_mode", "supervised")
-    )
+    if execution_mode is None:
+        execution_mode = (
+            configured_mode()  # no composition: the operator's choice, supervised by default
+            if manifest is None
+            else _manifest_mode(manifest)
+        )
+    app.state.execution_mode = execution_mode
     app.state.decide = decide or _default_decide
     app.include_router(_v1(), prefix="/v1")
 

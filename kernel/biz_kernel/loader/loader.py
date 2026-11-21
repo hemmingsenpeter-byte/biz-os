@@ -120,7 +120,8 @@ class Manifest:
     policy: dict[str, Any]
     goals: dict[str, Any]
     registry: SchemaRegistry = field(repr=False, default_factory=SchemaRegistry)
-    execution_mode: str = "supervised"
+    execution_mode: str = "shadow"  # fail closed: supervised needs the owner's authorization
+    supervised_authorization: dict[str, Any] | None = None
 
     def role_budget(self, role: str) -> float:
         budgets = self.policy.get("budgets_usd_month") or {}
@@ -451,7 +452,8 @@ def load_composition(app_dir: Path, repo_root: Path) -> Manifest:
         policy,
         goals_doc,
         registry,
-        comp.get("execution_mode", "supervised"),
+        comp.get("execution_mode", "shadow"),
+        comp.get("supervised_authorization"),
     )
 
 

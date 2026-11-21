@@ -189,7 +189,6 @@ SIGNING_FORM_PATHS = {
 SIGNING_ASSET_PATHS = {
     "/packs/*",
     "/preview/*",
-    "/disk/*",
     "/blobs_proxy/*",
     "/fonts/DancingScript-Regular.otf",
     "/favicon.ico",
@@ -202,6 +201,7 @@ SIGNING_ASSET_PATHS = {
 LINKS_OFF_HOST = (
     "DocuSeal signing links must use https://DOCUSEAL_HOST (set docuseal APP_URL from it)"
 )
+EMPTY_APP_URL = "DocuSeal APP_URL must be a non-empty HTTP or HTTPS origin"
 NOT_PUBLIC = "DOCUSEAL_HOST must be the public signing hostname for DocuSeal signing"
 
 
@@ -236,8 +236,12 @@ def test_public_gateway_routes_only_signer_paths_on_the_signing_host() -> None:
     for private in ("/api", "/sign_in", "/setup", "/settings", "/templates", "/users", "/up"):
         assert private not in routed
     # Every DocuSeal upstream sits behind one of the two host-bound matchers.
-    assert caddyfile.count("reverse_proxy docuseal:3000") == 2
-    assert caddyfile.count("handle @signing_form") + caddyfile.count("handle @signing_asset") == 2
+    disk = _matcher(caddyfile, "signing_disk")
+    assert disk["host"] == form["host"]
+    assert disk["path"] == ["/disk/*"]
+    assert disk["method"] == ["GET", "HEAD"]
+    assert caddyfile.count("reverse_proxy docuseal:3000") == 3
+    assert preflight.public_caddyfile_problems(caddyfile) == []
 
 
 def test_compose_disables_signing_routes_unless_a_host_is_set(
@@ -245,7 +249,7 @@ def test_compose_disables_signing_routes_unless_a_host_is_set(
 ) -> None:
     services = compose_config("demo")["services"]
     assert services["tunnel-ingress"]["environment"]["DOCUSEAL_HOST"] == "signing-disabled.invalid"
-    assert not services["docuseal"]["environment"].get("APP_URL")
+    assert services["docuseal"]["environment"]["APP_URL"] == "http://127.0.0.1:3002"
 
     services = compose_config("demo", DOCUSEAL_HOST="sign.example.com")["services"]
     assert services["tunnel-ingress"]["environment"]["DOCUSEAL_HOST"] == "sign.example.com"
@@ -283,7 +287,7 @@ def test_signing_port_links_use_the_public_signing_host(
         ("sign.example.invalid", None, NOT_PUBLIC),
         ("203.0.113.7", None, NOT_PUBLIC),
         ("sign.example.com", "http://127.0.0.1:3002", LINKS_OFF_HOST),
-        ("sign.example.com", "", LINKS_OFF_HOST),
+        ("sign.example.com", "", f"{EMPTY_APP_URL}|{LINKS_OFF_HOST}"),
         ("sign.example.com", "http://sign.example.com", LINKS_OFF_HOST),
         ("sign.example.com", "https://other.example.com", LINKS_OFF_HOST),
     ],
@@ -297,7 +301,7 @@ def test_signing_port_rejects_links_off_the_public_host(
     config = compose_config("hive", DOCUSEAL_HOST=host)
     if app_url is not None:
         config["services"]["docuseal"]["environment"]["APP_URL"] = app_url
-    assert preflight.validate(config, preflight.ROOT) == [problem]
+    assert preflight.validate(config, preflight.ROOT) == problem.split("|")
 
 
 @pytest.mark.usefixtures("signing_composition")

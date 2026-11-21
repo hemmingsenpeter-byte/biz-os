@@ -31,6 +31,9 @@ OBJECT_ROOT = "/var/lib/biz-os/objects"
 # Compose gives the public gateway this reserved name when DOCUSEAL_HOST is empty, so the
 # signing routes in PublicCaddyfile cannot match a real request.
 SIGNING_DISABLED_HOST = "signing-disabled.invalid"
+# Without a signing host, Compose points DocuSeal's APP_URL at its loopback admin port.
+LOOPBACK_DOCUSEAL_URL = "http://127.0.0.1:3002"
+SIGNING_GUARD = "not vars_regexp {http.request.orig_uri} "
 PRIVATE_SUFFIXES = (".localhost", ".local", ".internal", ".invalid", ".test", ".ts.net")
 REQUIRED_PORT_ENV = {
     "accounting_xero": ("BIZ_XERO_CLIENT_ID", "BIZ_XERO_CLIENT_SECRET"),
@@ -259,8 +262,11 @@ def _validate_signing(
     host = str(gateway.get("DOCUSEAL_HOST", "")).strip().lower()
     app_url = str((services["docuseal"].get("environment") or {}).get("APP_URL") or "")
     enabled = host not in {"", SIGNING_DISABLED_HOST}
+    if not _http_url(app_url):
+        # DocuSeal reads an empty APP_URL as its default origin and builds hostless links.
+        problems.append("DocuSeal APP_URL must be a non-empty HTTP or HTTPS origin")
     if "sign_docuseal" not in ports:
-        if enabled or app_url:
+        if enabled or app_url != LOOPBACK_DOCUSEAL_URL:
             problems.append(
                 "DOCUSEAL_HOST is unused: the composition has no DocuSeal signing port, "
                 "so leave it empty and the public gateway routes no signing paths"
@@ -384,6 +390,35 @@ def _validate_routes(
         for mount in public_mounts
     ):
         problems.append("tunnel-ingress must use the dedicated read-only PublicCaddyfile")
+    problems.extend(public_caddyfile_problems((root / "deploy" / "PublicCaddyfile").read_text()))
+
+
+def public_caddyfile_problems(caddyfile: str) -> list[str]:
+    """Keep the raw-URI guards on every public route that reaches DocuSeal.
+
+    Caddy matches the decoded, cleaned path but forwards the raw one, so a signing
+    route without these guards lets escaped dot-segments reach other DocuSeal routes.
+    """
+    matchers = dict(re.findall(r"\n\t@([\w-]+) \{\n(.*?)\n\t\}", caddyfile, re.S))
+    handlers = re.findall(r"\n\thandle(?: @([\w-]+))? \{\n(.*?)\n\t\}", caddyfile, re.S)
+    problems = []
+    for name, body in handlers:
+        if "docuseal:" not in body:
+            continue
+        matcher = matchers.get(name, "")
+        guarded = (
+            "host {$DOCUSEAL_HOST:" in matcher
+            and SIGNING_GUARD in matcher
+            and "not header X-HTTP-Method-Override *" in matcher
+            and "header_up -X-HTTP-Method-Override" in body
+            and "uri query -_method" in body
+        )
+        if not guarded:
+            problems.append(
+                f"PublicCaddyfile route {name or '(default)'} must keep the signing host, "
+                "raw-URI and method-override guards"
+            )
+    return problems
 
 
 def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = None) -> list[str]:

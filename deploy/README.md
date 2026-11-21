@@ -158,30 +158,31 @@ with any override files the install uses.
 1. Settle in-flight workflows and pending approvals that attach documents or
    recordings, then stop the writers: `compose stop biz-api biz-worker`.
 2. Take a backup with `bash deploy/backups/backup.sh` and record the snapshot ID.
-3. List the prefixes in use. Every row should show one old prefix, for example
-   `file:///srv/biz/objects`; drop the `cap_voice_capture_notes` line if that
-   table does not exist:
+3. List the object-store prefixes in use. The query matches only URIs shaped
+   like stored objects (`file:///<root>/<2 hex>/<sha256><ext>`), so profile
+   sources such as `file:hours.md` are not listed. Every row should show one old
+   prefix, for example `file:///srv/biz/objects`. Drop the
+   `cap_voice_capture_notes` line if that table does not exist:
 
    ```sh
    compose exec -T postgres psql -U biz -d biz -Atc "
-     SELECT DISTINCT regexp_replace(uri, '/[0-9a-f]{2}/[^/]+$', '') FROM documents WHERE uri LIKE 'file:%'
-     UNION SELECT DISTINCT regexp_replace(uri, '/[0-9a-f]{2}/[^/]+$', '') FROM memory_sources WHERE uri LIKE 'file:%'
-     UNION SELECT DISTINCT regexp_replace(audio_uri, '/[0-9a-f]{2}/[^/]+$', '') FROM cap_voice_capture_notes WHERE audio_uri LIKE 'file:%'"
+     SELECT DISTINCT regexp_replace(uri, '/[0-9a-f]{2}/[^/]+$', '') FROM documents WHERE uri ~ '^file:///.+/[0-9a-f]{2}/[0-9a-f]{64}(\.[A-Za-z0-9]{1,10})?$'
+     UNION SELECT DISTINCT regexp_replace(audio_uri, '/[0-9a-f]{2}/[^/]+$', '') FROM cap_voice_capture_notes WHERE audio_uri ~ '^file:///.+/[0-9a-f]{2}/[0-9a-f]{64}(\.[A-Za-z0-9]{1,10})?$'"
    ```
 4. In `deploy/.env`, set `BIZ_STORAGE_HOST_ROOT` to the absolute host directory
    that holds those files (the source of the old mount), keep it mode 0700, and
    delete the `BIZ_STORAGE_ROOT` line. Run preflight and confirm that the legacy
    path warning is gone.
 5. Rewrite the prefix in one transaction. Replace `file:///srv/biz/objects` with
-   the exact prefix printed in step 3, including any percent-encoding:
+   the exact prefix printed in step 3, including any percent-encoding. As in
+   step 3, drop the `cap_voice_capture_notes` statement if that table does not exist.
+   `memory_sources` is not touched (see below):
 
    ```sh
    compose exec -T postgres psql -U biz -d biz -v ON_ERROR_STOP=1 \
      -v old='file:///srv/biz/objects' -v new='file:///var/lib/biz-os/objects' <<'SQL'
    BEGIN;
    UPDATE documents SET uri = :'new' || substr(uri, length(:'old') + 1)
-     WHERE starts_with(uri, :'old' || '/');
-   UPDATE memory_sources SET uri = :'new' || substr(uri, length(:'old') + 1)
      WHERE starts_with(uri, :'old' || '/');
    UPDATE cap_voice_capture_notes SET audio_uri = :'new' || substr(audio_uri, length(:'old') + 1)
      WHERE starts_with(audio_uri, :'old' || '/');
@@ -192,8 +193,14 @@ with any override files the install uses.
    Start the writers with `compose up -d biz-api biz-worker`, open a stored
    document from the owner console, and take a fresh backup.
 
-Audit events and completed workflow results keep the old URI as history. They
-are not rewritten because the audit log is hash-chained. To roll back, stop the
+Audit events, memory sources and completed workflow results keep the old URI
+as history and are not rewritten. The audit log is hash-chained, and
+`memory_sources` is append-only: a trigger rejects every update, so including it
+would roll back the whole transaction. Old citations still resolve, because a
+citation points at its memory source row, which stores the cited text and its
+SHA-256. The excerpt and quote come from that row, never from the file. The
+old `file://` URI on a source is shown only as a historical label. To open the
+file itself, use the document record, whose URI step 5 rewrote. To roll back, stop the
 writers and restore the step 2 snapshot as described in
 [Back up and recover](#5-back-up-and-recover-the-compose-install).
 
@@ -257,6 +264,16 @@ signing page needs:
 | `/preview/*`, `/disk/*`, `/blobs_proxy/*` | GET, HEAD | Signed page images and signed file links |
 
 Administration, sign-in, setup, settings, templates and `/api` return 404 there.
+Caddy matches the decoded, cleaned path, but DocuSeal routes the raw one. The
+gateway therefore returns 404 for any signing request whose raw path contains an
+escaped dot, slash, backslash or percent sign, a backslash, `//` or a
+dot-segment. The one exception is `%2F` inside `/disk/` keys, and only away from
+slashes and dot-segments. The gateway also refuses a `_method` query parameter or an
+`X-HTTP-Method-Override` header, and rewrites form and asset requests to the cleaned
+path before proxying. A `_method` field in a form body cannot be inspected at the
+gateway. Rails can use it only to change the method on the same allowed path, and
+no signer route accepts DELETE.
+Preflight fails if a DocuSeal route loses these guards.
 The signing form tries some legacy `/api/...` endpoints only after a `/s/...`
 request returns 404, so the pinned version does not need them. When updating the
 DocuSeal pin, review its `config/routes.rb` and the form pack for new signer paths.

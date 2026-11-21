@@ -20,7 +20,7 @@ import tempfile
 import unicodedata
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
@@ -312,7 +312,7 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
 
     `template` is the role's packaged evaluation directory for the task.
     """
-    from biz_kernel.models.eval.harness import dataset_metadata, load_cases
+    from biz_kernel.models.eval.harness import dataset_sha256, load_cases
 
     root = private_path(workspace)
     version_dir = _version_dir(root, version)
@@ -381,14 +381,14 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
                     "provenance": "historical",
                     "private": True,
                 }
-                hashes = dataset_metadata([], load_cases(split_dir))
+                digest = dataset_sha256(load_cases(split_dir))
                 receipt = {
                     **task,
                     "owner": owner,
                     "confirmed_at": datetime.now(UTC).isoformat(),
                     "case_count": len(rows),
                     "source_sha256": provenance["case_sha256"],
-                    "dataset_sha256": hashes["dataset_sha256"],
+                    "dataset_sha256": digest,
                     # The prompt is frozen with the cases; reports compare it to the
                     # deployed prompt at `prompt_source` (relative to the repo root).
                     "prompt_sha256": sha_text(prompt),
@@ -405,12 +405,23 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
 # ---- sending private cases to a cloud model: fails closed ----------------------------------
 
 
+_ISSUED = object()  # only authorise_cloud_data holds this; see CloudAuthorisation
+
+
 @dataclass(frozen=True)
 class CloudAuthorisation:
-    """The run flag, the target app's policy and a named operator all allow cloud data."""
+    """The run flag, the target app's policy and a named operator all allow cloud data.
+
+    Obtain one only from authorise_cloud_data(); direct construction is refused.
+    """
 
     app: str
     operator: str
+    token: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.token is not _ISSUED:
+            raise TypeError("a cloud data authorisation comes only from authorise_cloud_data()")
 
 
 def cloud_data_problems(section: Any) -> list[str]:
@@ -462,7 +473,7 @@ def authorise_cloud_data(
         )
     if not OPAQUE_ID.fullmatch(operator):
         raise ValueError("private cloud evaluation requires --operator, a non-personal identifier")
-    return CloudAuthorisation(manifest.name, operator)
+    return CloudAuthorisation(manifest.name, operator, _ISSUED)
 
 
 def record_cloud_disclosure(workspace: Path, record: dict[str, Any]) -> Path:

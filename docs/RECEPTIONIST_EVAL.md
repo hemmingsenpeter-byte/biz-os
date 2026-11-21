@@ -125,7 +125,11 @@ A `cloud` or `shadow` run on a private dataset needs all of the following.
 
 - `--operator`, an opaque non-personal ID for whoever runs the evaluation.
 
-HIVE has no opt-in, so its private cases stay on the local model. The cases sent
+HIVE has no opt-in, so its private cases stay on the local model. The harness
+applies the same gates when it is called as a library, including when it is given a
+list of loaded cases. The authorisation comes only from the CLI's policy check. On
+the `local` tier, a private run accepts only a loopback, noncloud Ollama model.
+A run with the authorisation may also use another model, and that run is audited too. The cases sent
 are the redacted, owner-confirmed payloads. Before the first cloud call, every
 authorised run appends an audit record to `cloud_disclosures.jsonl` in the private
 workspace. If the record cannot be written, nothing is sent. The record holds the

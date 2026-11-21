@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import os
-import re
 from contextlib import AsyncExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
-from urllib.parse import urlsplit
 
 import httpx
 import typer
@@ -20,6 +17,7 @@ from biz_kernel.models.eval.harness import (
     ShadowReport,
     cloud_disclosure,
     is_private,
+    loopback_ollama_url,
     read_task,
     report_json,
     run_eval,
@@ -56,29 +54,7 @@ def build_router() -> Router:
     return Router(local=local, cloud=cloud)
 
 
-def _loopback_ollama_url(url: str, model: str) -> str:
-    problem = "private local evaluation requires a loopback Ollama URL and a noncloud model"
-    try:
-        parsed = urlsplit(url)
-        host = parsed.hostname or ""
-        port = parsed.port
-        if host != "localhost" and not ipaddress.ip_address(host).is_loopback:
-            raise ValueError(problem)
-    except ValueError as exc:
-        raise ValueError(problem) from exc
-    if (
-        parsed.scheme not in ("http", "https")
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or re.search(r"(?:^|[^a-z0-9])cloud(?:$|[^a-z0-9])", model.lower())
-    ):
-        raise ValueError(problem)
-    if host == "localhost":
-        # Use the actual loopback address rather than system name resolution.
-        parsed = parsed._replace(netloc=f"127.0.0.1:{port}" if port else "127.0.0.1")
-    return parsed.geturl()
+_loopback_ollama_url = loopback_ollama_url  # kept for existing callers
 
 
 async def _score(

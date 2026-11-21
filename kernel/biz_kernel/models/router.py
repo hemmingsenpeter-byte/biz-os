@@ -41,6 +41,18 @@ class GenerationFailed(ValueError):
         self.result = result
 
 
+def spent_before(exc: BaseException) -> RoutedResult | None:
+    """The attempts and usage a failed `generate` had already incurred, if any.
+
+    Validation failures raise GenerationFailed. A port error keeps its own type (so
+    callers can still retry a transient one) and carries the result as an attribute.
+    """
+    if isinstance(exc, GenerationFailed):
+        return exc.result
+    result = getattr(exc, "biz_routed_result", None)
+    return result if isinstance(result, RoutedResult) else None
+
+
 def fence(text: str) -> str:
     """Untrusted text (emails, web pages, transcripts, packet bodies) is always fenced.
 
@@ -150,8 +162,10 @@ class Router:
             try:
                 out = await port.structured(system, messages, schema, tier)
             except Exception as exc:
-                if result.attempts:  # earlier attempts cost something: keep their record
-                    raise GenerationFailed(f"model call failed for {task}: {exc}", result) from exc
+                # Keep the exception's type (a transient error stays retryable) and attach
+                # what earlier attempts already spent; see spent_before().
+                if result.attempts:
+                    exc.biz_routed_result = result  # type: ignore[attr-defined]
                 raise
             reported = usage_mod.take()
             if reported is None:

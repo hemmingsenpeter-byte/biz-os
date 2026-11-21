@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -566,7 +567,7 @@ def test_doctor_reports_and_validates_the_cloud_data_setting(tmp_path: Path) -> 
 # ---- review fixes -------------------------------------------------------------------------
 
 
-def test_failed_cloud_case_still_records_its_spend(reviewed: tuple[Path, Path]) -> None:
+def test_failed_cloud_case_still_records_its_spend() -> None:
     from decimal import Decimal
 
     from biz_kernel.models import usage
@@ -579,8 +580,7 @@ def test_failed_cloud_case_still_records_its_spend(reviewed: tuple[Path, Path]) 
             usage.report(usage.Usage(10, 5, cost_usd=Decimal("0.01")))
             return {"category": "not-a-category"}
 
-    _, heldout = reviewed
-    cases = load_cases(heldout)[:2]
+    cases = load_cases(TEMPLATE)[:2]  # packaged synthetic cases
     router = Router(FakeModel(), PaidInvalid())
     report = asyncio.run(
         _run_loaded(TASK, "cloud", router, cases, dataset_metadata(cases, cases), None)
@@ -594,7 +594,7 @@ def test_spend_survives_a_port_error_after_a_paid_attempt() -> None:
     from decimal import Decimal
 
     from biz_kernel.models import usage
-    from biz_kernel.models.router import GenerationFailed
+    from biz_kernel.models.router import spent_before
 
     class PaidThenDown:
         calls = 0
@@ -608,37 +608,125 @@ def test_spend_survives_a_port_error_after_a_paid_attempt() -> None:
 
     schema = {"type": "object", "required": ["x"]}
     router = Router(FakeModel(), PaidThenDown())
-    with pytest.raises(GenerationFailed) as failure:
+    with pytest.raises(ConnectionError) as failure:  # keeps its type: still retryable
         asyncio.run(router.generate("t", "s", [], schema, "cloud", escalate=False))
-    assert failure.value.result.cost_usd == Decimal("0.02")
-    assert isinstance(failure.value.__cause__, ConnectionError)
+    spent = spent_before(failure.value)
+    assert spent is not None and spent.cost_usd == Decimal("0.02")
+
+
+def authorised(tmp_path: Path) -> Any:
+    from biz_kernel.models.eval.private import authorise_cloud_data
+
+    return authorise_cloud_data(
+        allow_flag=True,
+        app_dir=opted_in_app(tmp_path / "auth"),
+        repo_root=ROOT,
+        operator="evaluator-01",
+    )
+
+
+def test_cloud_authorisation_cannot_be_forged() -> None:
+    from biz_kernel.models.eval.private import CloudAuthorisation
+
+    with pytest.raises(TypeError):
+        CloudAuthorisation("fixture-app", "evaluator-01")
+    with pytest.raises(TypeError):
+        CloudAuthorisation("fixture-app", "evaluator-01", object())
 
 
 def test_authorised_private_shadow_audits_the_cloud_tier_only(
-    reviewed: tuple[Path, Path],
+    reviewed: tuple[Path, Path], tmp_path: Path
 ) -> None:
     from biz_kernel.models.eval import shadow
-    from biz_kernel.models.eval.private import CloudAuthorisation
 
     _, heldout = reviewed
-    authorised = CloudAuthorisation("fixture-app", "evaluator-01")
+    grant = authorised(tmp_path)
     rep = asyncio.run(
         shadow(
             TASK,
             Router(FakeModel([OUTPUT] * 50), FakeModel([OUTPUT] * 50)),
             heldout,
-            cloud_data=authorised,
+            cloud_data=grant,
         )
     )
     audit = heldout.parents[2] / "cloud_disclosures.jsonl"
     (record,) = [json.loads(line) for line in audit.read_text().splitlines()]
-    assert record["app"] == "fixture-app" and record["case_count"] == 50
+    assert record["app"] == "demo" and record["case_count"] == 50
+    assert record["tier"] == "cloud"
     assert rep.local.metadata["cloud_data_disclosure"] is None
     assert rep.cloud.metadata["cloud_data_disclosure"] == record
     assert rep.threshold == 0.1
     with pytest.raises(ValueError, match="owner-confirmed threshold"):
         router = Router(FakeModel(), FakeModel())
-        asyncio.run(shadow(TASK, router, heldout, 0.5, cloud_data=authorised))
+        asyncio.run(shadow(TASK, router, heldout, 0.5, cloud_data=grant))
+
+
+def test_private_case_list_is_gated_and_audited_like_its_directory(
+    reviewed: tuple[Path, Path], tmp_path: Path
+) -> None:
+    from biz_kernel.models.eval import shadow
+    from biz_kernel.models.eval.harness import _run_loaded, dataset_metadata
+
+    tuning, heldout = reviewed
+    subset = load_cases(heldout)[:3]
+    cloud = FakeModel()
+    with pytest.raises(ValueError):
+        asyncio.run(shadow(TASK, Router(FakeModel(), cloud), subset))
+    with pytest.raises(ValueError):  # the private helper cannot be fed bare metadata
+        asyncio.run(_run_loaded(TASK, "cloud", Router(FakeModel(), cloud), subset, {}, None))
+    with pytest.raises(ValueError, match="mix"):
+        dataset_metadata(subset, subset + load_cases(tuning)[:1])
+    assert dataset_metadata(subset, subset)["owner_reviewed"] is True
+    assert not cloud.calls
+    report = asyncio.run(
+        run_eval(
+            TASK,
+            "cloud",
+            Router(FakeModel(), FakeModel([OUTPUT] * 3)),
+            subset,
+            cloud_data=authorised(tmp_path),
+        )
+    )
+    audit = heldout.parents[2] / "cloud_disclosures.jsonl"
+    (record,) = [json.loads(line) for line in audit.read_text().splitlines()]
+    assert record["case_count"] == 3
+    assert report.metadata["cloud_data_disclosure"] == record
+
+
+def test_library_local_tier_sends_private_cases_only_to_loopback_or_when_authorised(
+    reviewed: tuple[Path, Path], tmp_path: Path
+) -> None:
+    import httpx
+    from biz_kernel.models.eval import shadow
+    from biz_port_model_ollama import OllamaModel
+
+    _, heldout = reviewed
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(500)
+
+    async def go(url: str, **options: Any) -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            local = OllamaModel(url, "llama3", client)
+            if "cloud_data" in options:
+                await shadow(TASK, Router(local, FakeModel([OUTPUT] * 50)), heldout, **options)
+            else:
+                await run_eval(TASK, "local", Router(local), heldout)
+
+    with pytest.raises(ValueError, match="loopback"):
+        asyncio.run(go("https://ollama.example.invalid"))
+    assert seen == []
+    asyncio.run(go("http://127.0.0.1:1"))  # loopback: attempted (and failing) locally
+    assert seen and all(u.startswith("http://127.0.0.1:1/") for u in seen)
+    seen.clear()
+    # An authorised shadow run may use a remote "local" port, and audits that tier too.
+    asyncio.run(go("https://ollama.example.invalid", cloud_data=authorised(tmp_path)))
+    assert seen
+    audit = heldout.parents[2] / "cloud_disclosures.jsonl"
+    tiers = [json.loads(line)["tier"] for line in audit.read_text().splitlines()]
+    assert tiers == ["local", "cloud"]
 
 
 def test_receipt_binds_the_shadow_threshold(reviewed: tuple[Path, Path]) -> None:

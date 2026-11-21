@@ -9,6 +9,7 @@ Optional `_task.yaml` in the cases dir: {threshold: 0.05}.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import math
 import re
@@ -20,6 +21,7 @@ from decimal import Decimal
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import jsonschema
 import yaml
@@ -34,7 +36,7 @@ from biz_kernel.models.eval.private import (
     sha_json,
     sha_text,
 )
-from biz_kernel.models.router import GenerationFailed, RoutedResult, Router, Tier
+from biz_kernel.models.router import RoutedResult, Router, Tier, spent_before
 
 REAL_BACKEND: dict[Tier, str] = {
     "local": "biz_port_model_ollama.OllamaModel",
@@ -51,6 +53,20 @@ class Case:
     expected: dict[str, Any] = field(default_factory=dict)
     checks: list[dict[str, Any]] = field(default_factory=list)
     untrusted: list[str] = field(default_factory=list)
+    # The private dataset directory a case was loaded from, so the private gates apply
+    # however the cases are passed in. Not part of the dataset hash.
+    private_source: str | None = None
+
+
+def _hashed(case: Case) -> dict[str, Any]:
+    data = asdict(case)
+    del data["private_source"]
+    return data
+
+
+def dataset_sha256(loaded: list[Case]) -> str:
+    payload = json.dumps([_hashed(case) for case in loaded], sort_keys=True).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 @dataclass
@@ -169,6 +185,7 @@ def read_task(cases: Path | str) -> dict[str, Any]:
 def load_cases(cases: Path | str) -> list[Case]:
     if not Path(cases).is_dir():
         raise ValueError(f"case directory does not exist: {cases}")
+    source = str(Path(cases).resolve()) if is_private(read_task(cases)) else None
     out = []
     for f in sorted(Path(cases).glob("*.y*ml")):
         if f.name.startswith("_"):
@@ -204,6 +221,7 @@ def load_cases(cases: Path | str) -> list[Case]:
                     else [{"type": "json_schema"}]
                 ),
                 [str(u) for u in d.get("untrusted") or []],
+                source,
             )
         )
     if not out:
@@ -211,9 +229,25 @@ def load_cases(cases: Path | str) -> list[Case]:
     return out
 
 
+def _private_origin(loaded: list[Case]) -> Path | None:
+    sources = {case.private_source for case in loaded}
+    if sources == {None} or not sources:
+        return None
+    if len(sources) > 1:
+        raise ValueError("cases must not mix a private dataset with other cases")
+    return Path(next(iter(sources)))  # type: ignore[arg-type]
+
+
 def dataset_metadata(
     cases: Path | str | list[Case], loaded: list[Case], *, repo_root: Path | None = None
 ) -> dict[str, Any]:
+    origin = _private_origin(loaded)
+    if origin is not None and (isinstance(cases, list) or Path(cases).resolve() != origin):
+        # Private cases passed as a list: verify them as their confirmed dataset.
+        full = load_cases(origin)
+        if any(case not in full for case in loaded):
+            raise ValueError("private cases differ from their confirmed dataset")
+        return dataset_metadata(origin, full, repo_root=repo_root)
     data = {} if isinstance(cases, list) else read_task(cases)
     rate, minimum = data.get("required_pass_rate", 0.95), data.get("min_cases", 50)
     if (
@@ -226,11 +260,10 @@ def dataset_metadata(
     if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
         raise ValueError("min_cases must be a positive integer")
     data.update(required_pass_rate=float(rate), min_cases=minimum)
-    payload = json.dumps([asdict(case) for case in loaded], sort_keys=True).encode()
     prompts = json.dumps(
         [{"system": c.system, "schema": c.schema} for c in loaded], sort_keys=True
     ).encode()
-    data["dataset_sha256"] = hashlib.sha256(payload).hexdigest()
+    data["dataset_sha256"] = dataset_sha256(loaded)
     data["prompt_schema_sha256"] = hashlib.sha256(prompts).hexdigest()
     # A valid JSON shape alone cannot establish a correct decision. Never trust a
     # manifest's assertion about coverage; derive it from the loaded checks.
@@ -469,10 +502,54 @@ async def run_eval(
 
 
 def _workspace_of(cases: Path | str | list[Case], metadata: dict[str, Any]) -> Path | None:
-    if isinstance(cases, list) or not is_private(metadata):
+    if not is_private(metadata):
         return None
+    if isinstance(cases, list):
+        origin = _private_origin(cases)
+        if origin is None:
+            return None
+        cases = origin
     # The canonical layout, checked with the owner review: <workspace>/<version>/confirmed/<split>
     return private_path(Path(cases)).parents[2]
+
+
+def loopback_ollama_url(url: str, model: str) -> str:
+    """The direct loopback form of an Ollama URL; ValueError unless loopback and noncloud."""
+    problem = "private local evaluation requires a loopback Ollama URL and a noncloud model"
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname or ""
+        port = parsed.port
+        if host != "localhost" and not ipaddress.ip_address(host).is_loopback:
+            raise ValueError(problem)
+    except ValueError as exc:
+        raise ValueError(problem) from exc
+    if (
+        parsed.scheme not in ("http", "https")
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or re.search(r"(?:^|[^a-z0-9])cloud(?:$|[^a-z0-9])", model.lower())
+    ):
+        raise ValueError(problem)
+    if host == "localhost":
+        # Use the actual loopback address rather than system name resolution.
+        parsed = parsed._replace(netloc=f"127.0.0.1:{port}" if port else "127.0.0.1")
+    return parsed.geturl()
+
+
+def _keeps_data_local(port: Any) -> bool:
+    backend = f"{type(port).__module__}.{type(port).__name__}"
+    if backend.startswith("biz_port_fakes."):
+        return True
+    if backend != REAL_BACKEND["local"]:
+        return False
+    try:
+        loopback_ollama_url(str(port.base_url), str(port.model))
+    except (AttributeError, ValueError):
+        return False
+    return True
 
 
 def _require_cloud_authorisation(metadata: dict[str, Any], cloud_data: Any) -> None:
@@ -511,8 +588,18 @@ async def _run_loaded(
         raise ValueError(f"requested {tier} model is not configured")
     backend = f"{type(port).__module__}.{type(port).__name__}"
     private = is_private(metadata)
+    if _private_origin(loaded) is not None and not private:
+        raise ValueError("private cases must be scored with their verified dataset metadata")
+    # A private run leaves the machine on the cloud tier, or on a "local" port that is
+    # not a loopback, noncloud Ollama model (or a fake). Either needs the authorisation.
+    remote = tier == "cloud" or not _keeps_data_local(port)
+    if private and remote and not isinstance(cloud_data, CloudAuthorisation) and tier == "local":
+        raise ValueError(
+            "private local evaluation requires a loopback Ollama URL and a noncloud model, "
+            "or an authorisation for cloud data"
+        )
     disclosure: dict[str, Any] | None = None
-    if tier == "cloud" and private:
+    if private and remote:
         _require_cloud_authorisation(metadata, cloud_data)
         assert cloud_data is not None
         if workspace is None:
@@ -534,6 +621,7 @@ async def _run_loaded(
             "configured_model": getattr(port, "model", None),
             "model_version": model_version,
             "case_count": len(loaded),
+            "tier": tier,
             "redacted": True,
         }
         record_cloud_disclosure(workspace, disclosure)
@@ -556,8 +644,9 @@ async def _run_loaded(
             result.usage = _usage(r)
         except Exception as exc:  # a failed call scores zero, the run continues
             result = CaseResult(c.name, 0.0, [str(exc)], error=str(exc))
-            if isinstance(exc, GenerationFailed):  # its failed attempts still cost money
-                result.usage = _usage(exc.result)
+            spent = spent_before(exc)
+            if spent is not None:  # its failed attempts still cost money
+                result.usage = _usage(spent)
         result.latency_ms = (time.perf_counter() - start) * 1000
         results.append(result)
     recorded_cost = sum(
@@ -627,7 +716,9 @@ async def shadow(
         raise ValueError("shadow threshold must be finite and in [0, 1]")
     versions = model_versions or {}
     workspace = _workspace_of(cases, metadata)
-    local = await _run_loaded(task, "local", router, loaded, dict(metadata), versions.get("local"))
+    local = await _run_loaded(
+        task, "local", router, loaded, dict(metadata), versions.get("local"), cloud_data, workspace
+    )
     cloud = await _run_loaded(
         task, "cloud", router, loaded, dict(metadata), versions.get("cloud"), cloud_data, workspace
     )

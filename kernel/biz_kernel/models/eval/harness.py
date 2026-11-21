@@ -8,6 +8,7 @@ Optional `_task.yaml` in the cases dir: {threshold: 0.05}.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -15,12 +16,12 @@ import math
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import jsonschema
@@ -53,14 +54,21 @@ class Case:
     expected: dict[str, Any] = field(default_factory=dict)
     checks: list[dict[str, Any]] = field(default_factory=list)
     untrusted: list[str] = field(default_factory=list)
-    # The private dataset directory a case was loaded from, so the private gates apply
-    # however the cases are passed in. Not part of the dataset hash.
-    private_source: str | None = None
+    # Where the case came from, set by load_cases, so the private gates apply however
+    # the cases are passed in. A case without one never leaves the machine. Not part of
+    # the dataset hash or of case equality.
+    provenance: Provenance | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True)
+class Provenance:
+    kind: Literal["private", "public"]
+    directory: str
 
 
 def _hashed(case: Case) -> dict[str, Any]:
     data = asdict(case)
-    del data["private_source"]
+    del data["provenance"]
     return data
 
 
@@ -185,7 +193,9 @@ def read_task(cases: Path | str) -> dict[str, Any]:
 def load_cases(cases: Path | str) -> list[Case]:
     if not Path(cases).is_dir():
         raise ValueError(f"case directory does not exist: {cases}")
-    source = str(Path(cases).resolve()) if is_private(read_task(cases)) else None
+    provenance = Provenance(
+        "private" if is_private(read_task(cases)) else "public", str(Path(cases).resolve())
+    )
     out = []
     for f in sorted(Path(cases).glob("*.y*ml")):
         if f.name.startswith("_"):
@@ -221,7 +231,7 @@ def load_cases(cases: Path | str) -> list[Case]:
                     else [{"type": "json_schema"}]
                 ),
                 [str(u) for u in d.get("untrusted") or []],
-                source,
+                provenance,
             )
         )
     if not out:
@@ -229,13 +239,37 @@ def load_cases(cases: Path | str) -> list[Case]:
     return out
 
 
+def _is_private_dir(directory: str) -> bool:
+    try:
+        return Path(directory).is_dir() and is_private(read_task(directory))
+    except ValueError:
+        return True  # an unreadable manifest cannot vouch for public data
+
+
 def _private_origin(loaded: list[Case]) -> Path | None:
-    sources = {case.private_source for case in loaded}
-    if sources == {None} or not sources:
+    """The private dataset the cases came from, if any.
+
+    A case marked public whose directory is a private dataset counts as private; its
+    content must then match that dataset (checked in dataset_metadata).
+    """
+    marked = [c.provenance for c in loaded if c.provenance is not None]
+    directories = {p.directory for p in marked}
+    private_dirs = {p.directory for p in marked if p.kind == "private"}
+    private_dirs |= {d for d in directories - private_dirs if _is_private_dir(d)}
+    if not private_dirs:
         return None
-    if len(sources) > 1:
+    if (
+        len(private_dirs) > 1
+        or directories != private_dirs
+        or any(c.provenance is None for c in loaded)
+    ):
         raise ValueError("cases must not mix a private dataset with other cases")
-    return Path(next(iter(sources)))  # type: ignore[arg-type]
+    return Path(next(iter(private_dirs)))
+
+
+def _require_provenance(loaded: list[Case]) -> None:
+    if any(case.provenance is None for case in loaded):
+        raise ValueError("cases sent off this machine need a provenance; load them with load_cases")
 
 
 def dataset_metadata(
@@ -593,6 +627,13 @@ async def _run_loaded(
     # A private run leaves the machine on the cloud tier, or on a "local" port that is
     # not a loopback, noncloud Ollama model (or a fake). Either needs the authorisation.
     remote = tier == "cloud" or not _keeps_data_local(port)
+    if remote:
+        _require_provenance(loaded)
+    elif private and backend == REAL_BACKEND["local"]:
+        # Connect to the loopback address itself, not whatever `localhost` resolves to.
+        direct = copy.copy(port)
+        direct.base_url = loopback_ollama_url(port.base_url, port.model).rstrip("/")
+        router = replace(router, local=direct)
     if private and remote and not isinstance(cloud_data, CloudAuthorisation) and tier == "local":
         raise ValueError(
             "private local evaluation requires a loopback Ollama URL and a noncloud model, "

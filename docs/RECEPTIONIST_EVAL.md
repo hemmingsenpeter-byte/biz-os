@@ -129,7 +129,19 @@ HIVE has no opt-in, so its private cases stay on the local model. The harness
 applies the same gates when it is called as a library, including when it is given a
 list of loaded cases. The authorisation comes only from the CLI's policy check. On
 the `local` tier, a private run accepts only a loopback, noncloud Ollama model.
-A run with the authorisation may also use another model, and that run is audited too. The cases sent
+A run with the authorisation may also use another model, and that run is audited too.
+`load_cases` marks every case as private (with its dataset directory) or public
+(with its fixture directory). A run that sends cases off this machine refuses any
+case without that mark. Such a run is a cloud run or one whose local model is not
+loopback. A case marked public counts as private when its directory holds a private
+dataset, and its content must then match that dataset. The harness connects to a
+`localhost` Ollama URL through 127.0.0.1 directly.
+
+These gates guard against mistakes, not against hostile code in the same process.
+Code that runs in-process is trusted. Deliberately forged provenance, such as a
+private case relabelled public with a fixture directory, is out of scope. So is a
+`CloudAuthorisation` built without `authorise_cloud_data`, for example with
+`object.__new__`. The cases sent
 are the redacted, owner-confirmed payloads. Before the first cloud call, every
 authorised run appends an audit record to `cloud_disclosures.jsonl` in the private
 workspace. If the record cannot be written, nothing is sent. The record holds the

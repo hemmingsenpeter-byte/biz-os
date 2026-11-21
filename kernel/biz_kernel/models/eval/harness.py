@@ -15,7 +15,7 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -24,10 +24,18 @@ from typing import Any
 import jsonschema
 import yaml
 
-from biz_kernel.models.eval.private import OPAQUE_ID, private_path, sha_json
-from biz_kernel.models.router import Router, Tier
+from biz_kernel.models.eval.private import (
+    DEFAULT_THRESHOLD,
+    OPAQUE_ID,
+    CloudAuthorisation,
+    find_repo_root,
+    private_path,
+    record_cloud_disclosure,
+    sha_json,
+    sha_text,
+)
+from biz_kernel.models.router import GenerationFailed, RoutedResult, Router, Tier
 
-DEFAULT_THRESHOLD = 0.05
 REAL_BACKEND: dict[Tier, str] = {
     "local": "biz_port_model_ollama.OllamaModel",
     "cloud": "biz_port_model_claude.ClaudeModel",
@@ -203,7 +211,9 @@ def load_cases(cases: Path | str) -> list[Case]:
     return out
 
 
-def dataset_metadata(cases: Path | str | list[Case], loaded: list[Case]) -> dict[str, Any]:
+def dataset_metadata(
+    cases: Path | str | list[Case], loaded: list[Case], *, repo_root: Path | None = None
+) -> dict[str, Any]:
     data = {} if isinstance(cases, list) else read_task(cases)
     rate, minimum = data.get("required_pass_rate", 0.95), data.get("min_cases", 50)
     if (
@@ -226,11 +236,43 @@ def dataset_metadata(cases: Path | str | list[Case], loaded: list[Case]) -> dict
     # manifest's assertion about coverage; derive it from the loaded checks.
     data["outcome_checks_complete"] = all(_has_outcome_check(case) for case in loaded)
     data["owner_reviewed"] = False
+    prompts_scored = {case.system for case in loaded}
+    scored = sha_text(next(iter(prompts_scored))) if len(prompts_scored) == 1 else None
+    data["prompt"] = {
+        "scored_sha256": scored,
+        "deployed_path": None,
+        "deployed_sha256": None,
+        "matches_deployed": None,
+    }
     if is_private(data):
         assert not isinstance(cases, list)
-        data["review"] = _verify_owner_review(private_path(Path(cases)), data, loaded)
+        receipt = _verify_owner_review(private_path(Path(cases)), data, loaded)
+        data["review"] = {
+            key: receipt[key] for key in ("owner", "confirmed_at", "case_count", "source_sha256")
+        }
         data["owner_reviewed"] = True
+        data["prompt"] = _prompt_status(receipt, scored, repo_root)
     return data
+
+
+def _prompt_status(
+    receipt: dict[str, Any], scored: str | None, repo_root: Path | None
+) -> dict[str, Any]:
+    """The frozen prompt that is scored, and whether it is the one deployed now."""
+    source = receipt.get("prompt_source")
+    root = repo_root or find_repo_root(Path.cwd())
+    deployed = None
+    if isinstance(source, str) and root is not None:
+        try:
+            deployed = sha_text((root / source).read_text())
+        except OSError:
+            deployed = None
+    return {
+        "scored_sha256": scored,
+        "deployed_path": source if isinstance(source, str) else None,
+        "deployed_sha256": deployed,
+        "matches_deployed": None if deployed is None else deployed == scored,
+    }
 
 
 def _verify_owner_review(
@@ -251,6 +293,7 @@ def _verify_owner_review(
         "provenance",
         "private",
         "dataset_sha256",
+        "threshold",
     )
     if (
         not isinstance(receipt, dict)
@@ -261,6 +304,7 @@ def _verify_owner_review(
         or not isinstance(receipt.get("source_sha256"), str)
         or not re.fullmatch(r"[0-9a-f]{64}", receipt["source_sha256"])
         or len({case.name for case in cases}) != len(cases)
+        or {sha_text(case.system) for case in cases} != {receipt.get("prompt_sha256")}
     ):
         raise ValueError("owner review receipt does not match the labelled dataset")
     _verify_review_split(directory, data, receipt, cases)
@@ -269,7 +313,7 @@ def _verify_owner_review(
             raise ValueError("confirmation needs a timezone")
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("owner review receipt must include a dated confirmation") from exc
-    return {key: receipt[key] for key in ("owner", "confirmed_at", "case_count", "source_sha256")}
+    return receipt
 
 
 def _verify_review_split(
@@ -404,16 +448,52 @@ async def run_eval(
     cases: Path | str | list[Case],
     *,
     model_version: str | None = None,
+    cloud_data: CloudAuthorisation | None = None,
+    repo_root: Path | None = None,
 ) -> EvalReport:
+    """Score `cases` on `tier`. Private cases reach a cloud model only with `cloud_data`."""
     if tier not in ("local", "cloud"):
         raise ValueError(f"invalid evaluation tier: {tier}")
     loaded = cases if isinstance(cases, list) else load_cases(cases)
     if not loaded:
         raise ValueError("evaluation needs at least one case")
-    metadata = dataset_metadata(cases, loaded)
+    metadata = dataset_metadata(cases, loaded, repo_root=repo_root)
     if metadata.get("task") not in (None, task):
         raise ValueError(f"dataset is for {metadata['task']}, not {task}")
-    return await _run_loaded(task, tier, router, loaded, metadata, model_version)
+    if tier == "cloud":
+        _require_cloud_authorisation(metadata, cloud_data)
+    workspace = _workspace_of(cases, metadata)
+    return await _run_loaded(
+        task, tier, router, loaded, metadata, model_version, cloud_data, workspace
+    )
+
+
+def _workspace_of(cases: Path | str | list[Case], metadata: dict[str, Any]) -> Path | None:
+    if isinstance(cases, list) or not is_private(metadata):
+        return None
+    # The canonical layout, checked with the owner review: <workspace>/<version>/confirmed/<split>
+    return private_path(Path(cases)).parents[2]
+
+
+def _require_cloud_authorisation(metadata: dict[str, Any], cloud_data: Any) -> None:
+    if is_private(metadata) and not isinstance(cloud_data, CloudAuthorisation):
+        raise ValueError(
+            "private evaluation data may be sent to a cloud model only with an "
+            "authorisation from --allow-cloud-data, the app's policy and an operator"
+        )
+
+
+def _usage(r: RoutedResult) -> dict[str, int | str] | None:
+    # An adapter that reported nothing leaves no usage record; a zero-filled one
+    # would read as measured. Partly reported cases keep the known figures.
+    if r.unmetered_calls >= r.attempts:
+        return None
+    return {
+        **asdict(r.usage),
+        "cost_usd": str(r.cost_usd),
+        "attempts": r.attempts,
+        "unmetered_calls": r.unmetered_calls,
+    }
 
 
 async def _run_loaded(
@@ -423,11 +503,42 @@ async def _run_loaded(
     loaded: list[Case],
     metadata: dict[str, Any],
     model_version: str | None,
+    cloud_data: CloudAuthorisation | None = None,
+    workspace: Path | None = None,
 ) -> EvalReport:
     port = router.cloud if tier == "cloud" else router.local
     if port is None:
         raise ValueError(f"requested {tier} model is not configured")
     backend = f"{type(port).__module__}.{type(port).__name__}"
+    private = is_private(metadata)
+    disclosure: dict[str, Any] | None = None
+    if tier == "cloud" and private:
+        _require_cloud_authorisation(metadata, cloud_data)
+        assert cloud_data is not None
+        if workspace is None:
+            raise ValueError("a private cloud run needs its workspace for the audit record")
+        # Recorded before the first call: if the audit cannot be written, nothing is sent.
+        disclosure = {
+            "event": "private_eval_cloud_disclosure",
+            "at": datetime.now(UTC).isoformat(),
+            "operator": cloud_data.operator,
+            "app": cloud_data.app,
+            "task": task,
+            "dataset": metadata.get("dataset"),
+            "dataset_version": metadata.get("dataset_version"),
+            "split": metadata.get("split"),
+            "dataset_sha256": metadata["dataset_sha256"],
+            "source_sha256": metadata["review"]["source_sha256"],
+            "dataset_owner": metadata["review"]["owner"],
+            "provider": backend,
+            "configured_model": getattr(port, "model", None),
+            "model_version": model_version,
+            "case_count": len(loaded),
+            "redacted": True,
+        }
+        record_cloud_disclosure(workspace, disclosure)
+    if private:
+        metadata["cloud_data_disclosure"] = disclosure
     results = []
     for c in loaded:
         start = time.perf_counter()
@@ -442,17 +553,11 @@ async def _run_loaded(
                 escalate=False,
             )
             result = score_case(c, r.output)
-            # An adapter that reported nothing leaves no usage record; a zero-filled one
-            # would read as measured. Partly reported cases keep the known figures.
-            if r.unmetered_calls < r.attempts:
-                result.usage = {
-                    **asdict(r.usage),
-                    "cost_usd": str(r.cost_usd),
-                    "attempts": r.attempts,
-                    "unmetered_calls": r.unmetered_calls,
-                }
+            result.usage = _usage(r)
         except Exception as exc:  # a failed call scores zero, the run continues
             result = CaseResult(c.name, 0.0, [str(exc)], error=str(exc))
+            if isinstance(exc, GenerationFailed):  # its failed attempts still cost money
+                result.usage = _usage(exc.result)
         result.latency_ms = (time.perf_counter() - start) * 1000
         results.append(result)
     recorded_cost = sum(
@@ -498,14 +603,19 @@ async def shadow(
     threshold: float | None = None,
     *,
     model_versions: Mapping[Tier, str] | None = None,
+    cloud_data: CloudAuthorisation | None = None,
+    repo_root: Path | None = None,
 ) -> ShadowReport:
     """Run both tiers on the same cases and report agreement and readiness for local."""
     loaded = cases if isinstance(cases, list) else load_cases(cases)
     if router.cloud is None:
         raise ValueError("shadow evaluation requires a configured cloud model")
-    metadata = dataset_metadata(cases, loaded)
+    metadata = dataset_metadata(cases, loaded, repo_root=repo_root)
     if metadata.get("task") not in (None, task):
         raise ValueError(f"dataset is for {metadata['task']}, not {task}")
+    _require_cloud_authorisation(metadata, cloud_data)  # before either tier runs
+    if is_private(metadata) and threshold not in (None, metadata.get("threshold")):
+        raise ValueError("a private dataset is compared at its owner-confirmed threshold")
     if threshold is None:
         threshold = _threshold(None if isinstance(cases, list) else cases)
     if (
@@ -516,8 +626,11 @@ async def shadow(
     ):
         raise ValueError("shadow threshold must be finite and in [0, 1]")
     versions = model_versions or {}
+    workspace = _workspace_of(cases, metadata)
     local = await _run_loaded(task, "local", router, loaded, dict(metadata), versions.get("local"))
-    cloud = await _run_loaded(task, "cloud", router, loaded, dict(metadata), versions.get("cloud"))
+    cloud = await _run_loaded(
+        task, "cloud", router, loaded, dict(metadata), versions.get("cloud"), cloud_data, workspace
+    )
     agree = [_agree(c, a, b) for c, a, b in zip(loaded, local.results, cloud.results, strict=True)]
     return ShadowReport(task, local, cloud, sum(agree) / len(agree) if agree else 0.0, threshold)
 
@@ -544,4 +657,15 @@ def report_json(r: EvalReport | ShadowReport) -> str:
         }
     else:
         data = evaluation(r)
+    disclosure = cloud_disclosure(r)
+    data["private_data_sent_to_cloud"] = disclosure is not None
+    data["cloud_data_disclosure"] = disclosure
+    data["prompt"] = (r.local if isinstance(r, ShadowReport) else r).metadata.get("prompt")
     return json.dumps(data, indent=2, allow_nan=False)
+
+
+def cloud_disclosure(r: EvalReport | ShadowReport) -> dict[str, Any] | None:
+    """The audit record of private data this run sent to a cloud model, if it sent any."""
+    report = r.cloud if isinstance(r, ShadowReport) else r
+    disclosure = report.metadata.get("cloud_data_disclosure")
+    return disclosure if isinstance(disclosure, dict) else None

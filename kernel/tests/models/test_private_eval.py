@@ -404,3 +404,331 @@ def test_tuning_dataset_cannot_replace_the_canonical_heldout_directory(
     with pytest.raises(ValueError, match="reserved cohort and split"):
         asyncio.run(run_eval(TASK, "local", Router(model), heldout))
     assert not model.calls
+
+
+# ---- private cloud data: fail closed unless flag, app policy and operator all agree ------
+
+OUTPUT = {"category": "enquiry", "summary": "private marker", "confidence": 0.95}
+
+
+def opted_in_app(tmp_path: Path, value: object = "allow") -> Path:
+    import shutil
+
+    app_dir = tmp_path / "optin-app"
+    shutil.copytree(ROOT / "apps/demo", app_dir)
+    policy_file = app_dir / "policy.yaml"
+    policy = yaml.safe_load(policy_file.read_text())
+    policy["eval"] = {"cloud_data": value}
+    policy_file.write_text(yaml.safe_dump(policy))
+    return app_dir
+
+
+def cloud_args(heldout: Path, report: Path, *extra: str) -> list[str]:
+    return [
+        "eval",
+        TASK,
+        "--tier",
+        "cloud",
+        "--cases",
+        str(heldout),
+        "--output",
+        str(report),
+        "--cloud-model-version",
+        "fixture-revision",
+        "--repo-root",
+        str(ROOT),
+        *extra,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--allow-cloud-data"], "app's policy"),
+        (["--allow-cloud-data", "--app", str(ROOT / "apps/hive")], "does not allow"),
+        (["--allow-cloud-data", "--app", str(ROOT / "apps/demo")], "does not allow"),
+        (["--app", "OPTIN"], "requires --allow-cloud-data"),
+        (["--allow-cloud-data", "--app", "OPTIN"], "--operator"),
+        (["--allow-cloud-data", "--app", "OPTIN", "--operator", "a b"], "--operator"),
+        (["--allow-cloud-data", "--app", "TRUE", "--operator", "op-1"], "does not allow"),
+    ],
+)
+def test_private_cloud_data_fails_closed_without_every_authorisation(
+    reviewed: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: list[str],
+    message: str,
+) -> None:
+    from biz_kernel.models.eval import cli
+
+    def must_not_build() -> Router:
+        raise AssertionError("private data must not reach a model before authorisation")
+
+    monkeypatch.setattr(cli, "build_router", must_not_build)
+    optin, true_app = opted_in_app(tmp_path), opted_in_app(tmp_path / "t", True)
+    swap = {"OPTIN": str(optin), "TRUE": str(true_app)}
+    extra = [swap.get(a, a) for a in extra]
+    _, heldout = reviewed
+    result = CliRunner().invoke(app, cloud_args(heldout, tmp_path / "report.json", *extra))
+    assert result.exit_code == 2, result.output
+    assert message in " ".join(unstyle(result.output).replace("│", " ").split())
+    assert not (heldout.parents[2] / "cloud_disclosures.jsonl").exists()
+
+
+def test_hive_policy_has_no_cloud_data_opt_in() -> None:
+    policy = yaml.safe_load((ROOT / "apps/hive/policy.yaml").read_text())
+    assert (policy.get("eval") or {}).get("cloud_data") != "allow"
+
+
+def test_harness_refuses_private_cloud_run_without_authorisation(
+    reviewed: tuple[Path, Path],
+) -> None:
+    from biz_kernel.models.eval import shadow
+
+    _, heldout = reviewed
+    local, cloud = FakeModel(), FakeModel()
+    with pytest.raises(ValueError, match="cloud"):
+        asyncio.run(run_eval(TASK, "cloud", Router(local, cloud), heldout))
+    with pytest.raises(ValueError, match="cloud"):
+        asyncio.run(shadow(TASK, Router(local, cloud), heldout))
+    assert not local.calls and not cloud.calls
+
+
+def test_authorised_private_cloud_run_is_audited_without_content(
+    reviewed: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from biz_kernel.models.eval import cli
+
+    _, heldout = reviewed
+    cloud = FakeModel([OUTPUT] * 100)
+    monkeypatch.setattr(cli, "build_router", lambda: Router(FakeModel(), cloud))
+    report = tmp_path / "report.json"
+    args = cloud_args(
+        heldout,
+        report,
+        "--allow-cloud-data",
+        "--app",
+        str(opted_in_app(tmp_path)),
+        "--operator",
+        "evaluator-01",
+    )
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert len(cloud.calls) == 50
+    assert "[email]" in json.dumps(cloud.calls[0]["messages"])  # redaction still applies
+    audit = heldout.parents[2] / "cloud_disclosures.jsonl"
+    assert audit.stat().st_mode & 0o777 == 0o600
+    (record,) = [json.loads(line) for line in audit.read_text().splitlines()]
+    data = json.loads(report.read_text())
+    assert record["operator"] == "evaluator-01" and record["app"] == "demo"
+    assert record["case_count"] == 50 and record["split"] == "heldout"
+    assert record["provider"] == "biz_port_fakes.FakeModel"
+    assert record["dataset_sha256"] == data["metadata"]["dataset_sha256"]
+    assert record["dataset_version"] == "v1" and "at" in record
+    text = audit.read_text()
+    assert "fixture note" not in text and "Case 1" not in text and "private marker" not in text
+    assert data["private_data_sent_to_cloud"] is True
+    assert data["cloud_data_disclosure"] == record
+    assert "sent to the cloud" in result.output
+    # a second run appends a second record
+    assert CliRunner().invoke(app, args).exit_code == 0
+    assert len(audit.read_text().splitlines()) == 2
+
+
+def test_private_local_report_states_no_cloud_disclosure(
+    reviewed: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from biz_kernel.models.eval import cli
+
+    _, heldout = reviewed
+    monkeypatch.setattr(cli, "build_router", lambda: Router(FakeModel([OUTPUT] * 50)))
+    report = tmp_path / "report.json"
+    args = ["eval", TASK, "--cases", str(heldout), "--output", str(report)]
+    result = CliRunner().invoke(app, args + ["--local-model-version", "fixture"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(report.read_text())
+    assert data["private_data_sent_to_cloud"] is False
+    assert data["cloud_data_disclosure"] is None
+
+
+def test_doctor_reports_and_validates_the_cloud_data_setting(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["doctor", str(ROOT / "apps/hive")])
+    assert "private evaluation data stays local" in result.output
+    bad = opted_in_app(tmp_path, "yes")
+    result = CliRunner().invoke(app, ["doctor", str(bad), "--repo-root", str(ROOT)])
+    assert result.exit_code == 1 and "eval.cloud_data" in result.output
+    good = opted_in_app(tmp_path / "g")
+    result = CliRunner().invoke(app, ["doctor", str(good), "--repo-root", str(ROOT)])
+    assert "may be sent to a cloud model" in result.output
+
+
+# ---- review fixes -------------------------------------------------------------------------
+
+
+def test_failed_cloud_case_still_records_its_spend(reviewed: tuple[Path, Path]) -> None:
+    from decimal import Decimal
+
+    from biz_kernel.models import usage
+    from biz_kernel.models.eval.harness import _run_loaded, dataset_metadata
+
+    class PaidInvalid:
+        model = "fixture"
+
+        async def structured(self, system: str, messages: list, schema: dict, tier: str) -> dict:
+            usage.report(usage.Usage(10, 5, cost_usd=Decimal("0.01")))
+            return {"category": "not-a-category"}
+
+    _, heldout = reviewed
+    cases = load_cases(heldout)[:2]
+    router = Router(FakeModel(), PaidInvalid())
+    report = asyncio.run(
+        _run_loaded(TASK, "cloud", router, cases, dataset_metadata(cases, cases), None)
+    )
+    assert all(r.error for r in report.results)
+    assert report.results[0].usage and report.results[0].usage["attempts"] == 2
+    assert report.metadata["recorded_model_api_cost_usd"] == "0.04"
+
+
+def test_spend_survives_a_port_error_after_a_paid_attempt() -> None:
+    from decimal import Decimal
+
+    from biz_kernel.models import usage
+    from biz_kernel.models.router import GenerationFailed
+
+    class PaidThenDown:
+        calls = 0
+
+        async def structured(self, system: str, messages: list, schema: dict, tier: str) -> dict:
+            self.calls += 1
+            if self.calls > 1:
+                raise ConnectionError("provider down")
+            usage.report(usage.Usage(cost_usd=Decimal("0.02")))
+            return {}
+
+    schema = {"type": "object", "required": ["x"]}
+    router = Router(FakeModel(), PaidThenDown())
+    with pytest.raises(GenerationFailed) as failure:
+        asyncio.run(router.generate("t", "s", [], schema, "cloud", escalate=False))
+    assert failure.value.result.cost_usd == Decimal("0.02")
+    assert isinstance(failure.value.__cause__, ConnectionError)
+
+
+def test_authorised_private_shadow_audits_the_cloud_tier_only(
+    reviewed: tuple[Path, Path],
+) -> None:
+    from biz_kernel.models.eval import shadow
+    from biz_kernel.models.eval.private import CloudAuthorisation
+
+    _, heldout = reviewed
+    authorised = CloudAuthorisation("fixture-app", "evaluator-01")
+    rep = asyncio.run(
+        shadow(
+            TASK,
+            Router(FakeModel([OUTPUT] * 50), FakeModel([OUTPUT] * 50)),
+            heldout,
+            cloud_data=authorised,
+        )
+    )
+    audit = heldout.parents[2] / "cloud_disclosures.jsonl"
+    (record,) = [json.loads(line) for line in audit.read_text().splitlines()]
+    assert record["app"] == "fixture-app" and record["case_count"] == 50
+    assert rep.local.metadata["cloud_data_disclosure"] is None
+    assert rep.cloud.metadata["cloud_data_disclosure"] == record
+    assert rep.threshold == 0.1
+    with pytest.raises(ValueError, match="owner-confirmed threshold"):
+        router = Router(FakeModel(), FakeModel())
+        asyncio.run(shadow(TASK, router, heldout, 0.5, cloud_data=authorised))
+
+
+def test_receipt_binds_the_shadow_threshold(reviewed: tuple[Path, Path]) -> None:
+    from biz_kernel.models.eval import shadow
+
+    _, heldout = reviewed
+    receipt = json.loads((heldout / "_owner_review.json").read_text())
+    assert receipt["threshold"] == 0.1
+    task_file = heldout / "_task.yaml"
+    task = yaml.safe_load(task_file.read_text())
+    assert task["threshold"] == 0.1
+    task["threshold"] = 1.0
+    write_private(task_file, yaml.safe_dump(task))
+    local = FakeModel()
+    with pytest.raises(ValueError, match="does not match"):
+        asyncio.run(run_eval(TASK, "local", Router(local), heldout))
+    with pytest.raises(ValueError, match="does not match"):
+        asyncio.run(shadow(TASK, Router(local, FakeModel()), heldout))
+    assert not local.calls
+
+
+def _template_copy(tmp_path: Path) -> Path:
+    import shutil
+
+    template = tmp_path / "template"
+    shutil.copytree(TEMPLATE, template)
+    task = yaml.safe_load((template / "_task.yaml").read_text())
+    task["historical"]["prompt_file"] = str(ROOT / "roles/receptionist/prompts/triage.md")
+    (template / "_task.yaml").write_text(yaml.safe_dump(task))
+    return template
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "required": ["category"], "properties": ["category"]},
+        {"type": "object", "required": ["category"], "properties": {"category": ["enquiry"]}},
+        {"type": "object", "required": None, "properties": {"category": {"enum": ["a"]}}},
+        {"type": "object", "required": [], "properties": {"category": {"enum": ["a"]}}},
+        {"type": "object", "required": "category", "properties": {"category": {"enum": ["a"]}}},
+    ],
+)
+def test_read_template_rejects_malformed_schemas(tmp_path: Path, schema: dict) -> None:
+    from biz_kernel.models.eval.private import read_template
+
+    template = _template_copy(tmp_path)
+    (template / "_schema.yaml").write_text(yaml.safe_dump(schema))
+    with pytest.raises(ValueError, match="schema"):
+        read_template(template)
+    command = ["eval-data", "confirm", str(tmp_path / "ws"), "v1", "--owner", "o-1"]
+    result = CliRunner().invoke(app, command + ["--template", str(template)])
+    assert result.exit_code == 2, result.output
+
+
+def test_read_template_rejects_an_invalid_threshold(tmp_path: Path) -> None:
+    from biz_kernel.models.eval.private import read_template
+
+    template = _template_copy(tmp_path)
+    task = yaml.safe_load((template / "_task.yaml").read_text())
+    task["threshold"] = 2
+    (template / "_task.yaml").write_text(yaml.safe_dump(task))
+    with pytest.raises(ValueError, match="threshold"):
+        read_template(template)
+
+
+def test_report_states_scored_prompt_and_whether_it_is_deployed(
+    reviewed: tuple[Path, Path], tmp_path: Path
+) -> None:
+    import hashlib
+    import shutil
+
+    _, heldout = reviewed
+    prompt = (ROOT / "roles/receptionist/prompts/triage.md").read_text()
+    digest = hashlib.sha256(prompt.encode()).hexdigest()
+    report = asyncio.run(
+        run_eval(TASK, "local", Router(FakeModel([OUTPUT] * 50)), heldout, repo_root=ROOT)
+    )
+    assert report.metadata["prompt"] == {
+        "scored_sha256": digest,
+        "deployed_path": "roles/receptionist/prompts/triage.md",
+        "deployed_sha256": digest,
+        "matches_deployed": True,
+    }
+    changed = tmp_path / "repo"
+    shutil.copytree(ROOT / "roles/receptionist/prompts", changed / "roles/receptionist/prompts")
+    (changed / "roles/receptionist/prompts/triage.md").write_text(prompt + "\nRevised.\n")
+    report = asyncio.run(
+        run_eval(TASK, "local", Router(FakeModel([OUTPUT] * 50)), heldout, repo_root=changed)
+    )
+    assert report.metadata["prompt"]["scored_sha256"] == digest
+    assert report.metadata["prompt"]["matches_deployed"] is False
+    receipt = json.loads((heldout / "_owner_review.json").read_text())
+    assert receipt["prompt_sha256"] == digest

@@ -108,18 +108,51 @@ uv run biz eval receptionist.triage --tier local \
 ```
 
 To compare tiers in one controlled run, use `--tier shadow` with
-`--cloud-model-version "$BIZ_CLOUD_MODEL_VERSION"` and `--allow-cloud-data` after
-the owner approves sharing that redacted cohort with the configured provider.
-Use `--tier cloud` for a cloud-only report. Private runs write a private file and
-print aggregate results. Keep prompts and reports off Git and restrict access to
-the held-out details. A model response or failure can reproduce content from the
-message.
+`--cloud-model-version "$BIZ_CLOUD_MODEL_VERSION"`. Use `--tier cloud` for a
+cloud-only report. Sending private historical cases to a cloud model fails closed.
+A `cloud` or `shadow` run on a private dataset needs all of the following.
+
+- `--allow-cloud-data` on the command line.
+- `--app apps/<app>`, an app whose `policy.yaml` contains the owner's explicit opt-in.
+  The evaluator reads the opt-in through the composition loader. An absent setting
+  denies the run, as does any value other than `allow`. `biz doctor` reports the
+  setting and rejects malformed values.
+
+  ```yaml
+  eval:
+    cloud_data: allow   # the owner approves sharing redacted cohorts with the provider
+  ```
+
+- `--operator`, an opaque non-personal ID for whoever runs the evaluation.
+
+HIVE has no opt-in, so its private cases stay on the local model. The cases sent
+are the redacted, owner-confirmed payloads. Before the first cloud call, every
+authorised run appends an audit record to `cloud_disclosures.jsonl` in the private
+workspace. If the record cannot be written, nothing is sent. The record holds the
+operator, time, app, task, dataset ID, version, split, dataset and source digests,
+dataset owner, provider adapter, configured model and revision, and case count.
+It never holds case content. The report repeats the record as
+`cloud_data_disclosure` and states `private_data_sent_to_cloud`.
+
+Private runs write a private file and print aggregate results. Keep prompts and
+reports off Git and restrict access to the held-out details. A model response or
+failure can reproduce content from the message.
+
+Confirmation freezes the template's prompt with the cases. Later prompt edits do
+not change what a confirmed version scores. The report's `prompt` block gives the
+`scored_sha256` of the frozen prompt and the repository path of the prompt it came
+from (`deployed_path`). It also gives that prompt's current hash and whether
+the two match (`matches_deployed`; null if the prompt cannot be found). The CLI
+prints the same comparison. The owner review receipt also records the template's
+shadow `threshold`. Evaluation refuses a dataset whose `_task.yaml` threshold
+differs from the confirmed one.
 
 Reports include dataset and prompt/schema hashes, dataset version, actual model
 tier, model ID, recorded revision, adapter version, and per-case latency, token
 usage and model API cost when reported by the adapter. Local model API cost
 excludes hardware and electricity. Cloud cost is derived from the adapter price
-table. Cases without returned usage are counted separately. The report includes
+table. A case whose attempts all fail still records the usage and cost of those
+attempts. Cases without returned usage are counted separately. The report includes
 those cases in the score and duration totals.
 
 The technical gate requires at least 95% fully correct classifications over at

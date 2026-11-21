@@ -33,6 +33,14 @@ class UntrustedNotFenced(ValueError):
     """A prompt contained untrusted text outside <untrusted> tags."""
 
 
+class GenerationFailed(ValueError):
+    """No attempt produced a valid output. `result` keeps the attempts and usage incurred."""
+
+    def __init__(self, message: str, result: RoutedResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 def fence(text: str) -> str:
     """Untrusted text (emails, web pages, transcripts, packet bodies) is always fenced.
 
@@ -139,7 +147,12 @@ class Router:
         async def call(tier: Tier) -> dict[str, Any]:
             port = self.cloud if tier == "cloud" and self.cloud else self.local
             usage_mod.take()
-            out = await port.structured(system, messages, schema, tier)
+            try:
+                out = await port.structured(system, messages, schema, tier)
+            except Exception as exc:
+                if result.attempts:  # earlier attempts cost something: keep their record
+                    raise GenerationFailed(f"model call failed for {task}: {exc}", result) from exc
+                raise
             reported = usage_mod.take()
             if reported is None:
                 result.unmetered_calls += 1
@@ -195,7 +208,9 @@ class Router:
         if tier == "cloud" or not escalate:
             if best is not None:
                 return self._done(result, session, role, task)
-            raise ValueError(f"model output failed validation for {task}: {last_problem}")
+            raise GenerationFailed(
+                f"model output failed validation for {task}: {last_problem}", result
+            )
 
         reason = f"{task}: local {last_problem}"
         if cloud_allowed():
@@ -211,12 +226,14 @@ class Router:
                 if last_problem is None:
                     result.output, result.tier = out, "cloud"
                     return self._done(result, session, role, task)
-            raise ValueError(f"model output failed validation for {task}: {last_problem}")
+            raise GenerationFailed(
+                f"model output failed validation for {task}: {last_problem}", result
+            )
         if best is not None:  # budget reached or no cloud: keep the local answer, flagged
             result.flagged = True
             return self._done(result, session, role, task)
         result.flagged = True
-        raise ValueError(f"model output failed validation for {task}: {last_problem}")
+        raise GenerationFailed(f"model output failed validation for {task}: {last_problem}", result)
 
     def _done(
         self, result: RoutedResult, session: Session | None, role: str | None, task: str

@@ -127,6 +127,18 @@ def doctor_cmd(
         ("time-saved baseline is usable" if timed else "time-saved baseline not set (optional)")
         + "".join(f"\n  {p}" for p in problems),
     )
+    from biz_kernel.models.eval.private import cloud_data_allowed, cloud_data_problems
+
+    problems = cloud_data_problems(manifest.policy.get("eval"))
+    report(
+        not problems,
+        (
+            "private evaluation data may be sent to a cloud model (eval.cloud_data: allow)"
+            if cloud_data_allowed(manifest.policy)
+            else "private evaluation data stays local (eval.cloud_data not allowed)"
+        )
+        + "".join(f"\n  {p}" for p in problems),
+    )
     if failed:
         raise typer.Exit(1)
 
@@ -338,6 +350,14 @@ try:
         allow_cloud_data: Annotated[bool, typer.Option("--allow-cloud-data")] = False,
         local_model_version: str = "",
         cloud_model_version: str = "",
+        app_dir: Annotated[
+            Path | None,
+            typer.Option("--app", help="App whose policy must allow private cloud data"),
+        ] = None,
+        repo_root: RepoRoot = None,
+        operator: Annotated[
+            str, typer.Option("--operator", help="Non-personal ID of who runs it (audited)")
+        ] = "",
     ) -> None:
         """Score a model task on golden cases."""
         _eval_cmd(
@@ -350,6 +370,9 @@ try:
             allow_cloud_data=allow_cloud_data,
             local_model_version=local_model_version,
             cloud_model_version=cloud_model_version,
+            app=app_dir,
+            repo_root=repo_root,
+            operator=operator,
         )
 except ImportError:  # eval harness not installed yet
     pass

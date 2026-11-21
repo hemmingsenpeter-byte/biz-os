@@ -25,6 +25,39 @@
 		reverse_proxy biz-api:8000
 	}
 
+	# Outside signers open DocuSeal signing links on the dedicated signing hostname only.
+	# Compose sets DOCUSEAL_HOST to a reserved .invalid name unless signing is enabled,
+	# so these routes match no real request. Only what the pinned DocuSeal signing page
+	# loads is routed: the submitter form (/s), shared form (/d), phone signature pad
+	# (/p), e-mail verification, page images, signed file links and static assets.
+	# Administration, sign-in, setup and /api stay unreachable from the tunnel.
+	@signing_form {
+		host {$DOCUSEAL_HOST:signing-disabled.invalid}
+		method GET HEAD POST PUT PATCH
+		path /s/* /d/* /p/* /submit_form_email_2fa /start_form_email_2fa_send /resubmit_form
+	}
+	handle @signing_form {
+		request_body {
+			max_size 25MB
+		}
+		reverse_proxy docuseal:3000 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
+	}
+
+	@signing_asset {
+		host {$DOCUSEAL_HOST:signing-disabled.invalid}
+		method GET HEAD
+		path /packs/* /preview/* /disk/* /blobs_proxy/* /fonts/DancingScript-Regular.otf /favicon.ico /favicon.svg /favicon-16x16.png /favicon-32x32.png /favicon-96x96.png /apple-icon-180x180.png
+	}
+	handle @signing_asset {
+		reverse_proxy docuseal:3000 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
+	}
+
 	handle {
 		respond 404
 	}

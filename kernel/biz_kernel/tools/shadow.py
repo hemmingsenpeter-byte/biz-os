@@ -6,7 +6,7 @@ import os
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -63,7 +63,9 @@ def authorization_problems(authorization: Any, today: date | None = None) -> lis
             problems.append(f"{AUTHORIZATION_KEY}.{key} must be set")
     raw = authorization.get("authorized_on")
     when: date | None = None
-    if isinstance(raw, date):
+    if isinstance(raw, datetime):
+        when = raw.date()
+    elif isinstance(raw, date):
         when = raw
     elif isinstance(raw, str):
         try:

@@ -362,3 +362,18 @@ def test_checker_without_pure_evaluation_is_never_called(session):
     checker.check.assert_not_called()
     provider.assert_not_called()
     assert uuid.UUID(str(result.suppression.audit_id))
+
+
+def test_datetime_authorization_date_is_accepted_not_crashing():
+    from datetime import datetime
+
+    from biz_kernel.tools.shadow import authorization_problems
+
+    authorization = {
+        "authorized_by": "owner",
+        "authorized_on": datetime(2026, 11, 1, 9, 0),
+        "pilot_exit_evidence": "pilot report",
+    }
+    assert authorization_problems(authorization) == []
+    authorization["authorized_on"] = datetime(2999, 1, 1, 9, 0)
+    assert any("future" in p for p in authorization_problems(authorization))

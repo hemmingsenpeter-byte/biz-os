@@ -113,6 +113,23 @@ def doctor_cmd(
             report(True, f"heartbeat cadence {cadence} for role {r}")
         except ValueError:
             report(False, f"heartbeat cadence {cadence!r} for role {r} does not parse")
+    from biz_kernel.tools.shadow import ExecutionMode, mode_problems
+
+    override = os.environ.get("BIZ_EXECUTION_MODE") or None
+    mode, problems = mode_problems(
+        manifest.execution_mode,
+        manifest.supervised_authorization,
+        override=override,
+        ports=manifest.ports,
+        policy=manifest.policy,
+    )
+    label = f"execution mode {mode or manifest.execution_mode}"
+    if override:
+        label += f" (BIZ_EXECUTION_MODE={override})"
+    if mode == ExecutionMode.SUPERVISED and not problems:
+        auth = manifest.supervised_authorization or {}
+        label += f", authorized by {auth['authorized_by']} on {auth['authorized_on']}"
+    report(not problems, label + "".join(f"\n  {p}" for p in problems))
     from biz_kernel.policy.engine import limit_problems
 
     problems = limit_problems(manifest.policy.get("limits") or {})

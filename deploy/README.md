@@ -282,13 +282,20 @@ uses the fake speech adapter.
 
 HIVE starts in shadow mode with the receptionist as its active role. Compose
 passes the same execution mode to the API and worker. An empty
-`BIZ_EXECUTION_MODE` selects the composition default. The demo retains its
-supervised fake-provider behavior.
+`BIZ_EXECUTION_MODE` selects the composition default. The variable can only make
+the mode stricter: `supervised` over a shadow composition is refused at startup,
+by `biz doctor` and by preflight. A composition runs supervised only when its
+`supervised_authorization` records `authorized_by`, `authorized_on` and
+`pilot_exit_evidence`. In shadow mode a cloud model port is refused unless the
+policy sets `shadow.allow_cloud_model: true`. The demo records a fixture
+authorization and keeps its supervised fake-provider behavior.
 
 In shadow mode, the runtime can collect enquiries, classify them and prepare
 internal drafts. The dispatch guard stops external and money actions, including
 a previously approved staged action. Suppressions are recorded as
-`shadow.suppressed` audit events. Workflow suppressions appear on the task
+`shadow.suppressed` audit events with the verdict policy would have given. A
+suppressed approved action is terminal (`shadowed`): it leaves the approval
+queue and never runs, even after the mode becomes supervised. Workflow suppressions appear on the task
 evidence timeline and leave the task open for owner review. Use an owner
 passkey to access the console.
 

@@ -123,12 +123,13 @@ def test_stale_and_then_reapproved_operation_never_dispatches(session, monkeypat
         staged.execute(session, op.id, rt.registry, rt.policy)
     staged.approve(session, op.id, "owner", version=2)
 
+    first = staged.execute(session, op.id, rt.registry, rt.policy)
     for _ in range(2):
         result = staged.execute(session, op.id, rt.registry, rt.policy)
-        assert not result.ran and result.suppression is not None
+        assert not result.ran and result.suppression == first.suppression
         audit = session.get(AuditEntry, result.suppression.audit_id)
         assert audit.detail["recipients"] == ["+64210000002"]
-        assert op.status == "approved" and op.executed_at is None and op.result is None
+        assert op.status == staged.SHADOWED and op.executed_at is None
     send.assert_not_called()
 
 

@@ -121,7 +121,12 @@ def _rate(part: int, whole: int) -> float | None:
 
 
 def _decision_types(session: Session, since: datetime, until: datetime) -> list[DecisionTypeRow]:
-    in_window = (StagedOperation.created_at >= since, StagedOperation.created_at < until)
+    in_window = (
+        StagedOperation.created_at >= since,
+        StagedOperation.created_at < until,
+        # Approvals of shadow-suppressed actions are not supervised quality evidence.
+        StagedOperation.status != "shadowed",
+    )
     ops = session.execute(
         select(
             StagedOperation.id,

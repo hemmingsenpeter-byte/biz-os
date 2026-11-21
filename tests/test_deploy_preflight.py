@@ -172,3 +172,46 @@ def test_preflight_requires_the_database_and_local_path_captured_by_backups(
     problems = preflight.validate(config, preflight.ROOT)
     assert "BIZ_STORAGE_HOST_ROOT must be one shared, absolute host directory" in problems
     assert "BIZ_DBOS_SYSTEM_URL must be empty so backups include the workflow database" in problems
+
+
+def test_preflight_refuses_an_override_that_loosens_shadow(
+    compose_config: Callable[[str], dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = compose_config("hive")
+    for name in ("biz-api", "biz-worker"):
+        config["services"][name]["environment"]["BIZ_EXECUTION_MODE"] = "supervised"
+    problems = preflight.validate(config, preflight.ROOT)
+    assert len(problems) == 1 and "cannot loosen the composition's shadow mode" in problems[0]
+
+    # The operator's own shell does not leak into the composition check.
+    monkeypatch.setenv("BIZ_EXECUTION_MODE", "supervised")
+    assert preflight.validate(compose_config("hive"), preflight.ROOT) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ({"ports": {"model_cloud": "model_claude"}}, "port model_cloud is a cloud model"),
+        ({"execution_mode": "supervised"}, "supervised mode needs supervised_authorization"),
+    ],
+)
+def test_preflight_names_execution_mode_problems(
+    compose_config: Callable[[str], dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    change: dict[str, Any],
+    problem: str,
+) -> None:
+    import dataclasses
+
+    from biz_kernel.loader import load_composition
+
+    def changed(app_dir: Path, root: Path) -> Any:
+        manifest = load_composition(app_dir, root)
+        ports = {**manifest.ports, **change.get("ports", {})}
+        mode = change.get("execution_mode", manifest.execution_mode)
+        return dataclasses.replace(manifest, ports=ports, execution_mode=mode)
+
+    config = compose_config("hive")
+    monkeypatch.setattr(preflight, "load_composition", changed)
+    problems = preflight.validate(config, preflight.ROOT)
+    assert any(problem in p for p in problems), problems

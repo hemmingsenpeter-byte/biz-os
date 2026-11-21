@@ -2,9 +2,11 @@
 
 Caddy's path matcher lowercases r.URL.Path (percent-decoded) and runs path.Clean on it
 (caddyhttp.CleanPath, see caddy#4407) before matching; reverse_proxy then forwards the
-original escaped path unless the handle rewrites it. The webhook handles rewrite to a
-fixed target for exactly this reason; the signing handles do not. Rails/Journey matches the
-raw (still-escaped) path, and its default segment pattern [^/.?]+ accepts %2E/%2F.
+original escaped path. Go's request parser splits only on '?', so a raw '#' stays in the
+path. Rails/Journey matches the raw (still-escaped) path, and its default segment pattern
+[^/.?]+ accepts %2E/%2F. The signing handlers' rewrite to {http.request.uri.path} only
+canonicalizes escapes; it does not clean dot-segments. The raw-URI guard alone prevents
+traversal, so the model below forwards the decoded but uncleaned path.
 """
 
 import posixpath
@@ -31,8 +33,16 @@ def _patterns(name: str) -> list[str]:
     return m.group(1).split()
 
 
+def _clean(path: str) -> str:
+    """caddyhttp.CleanPath: collapse slashes, resolve dot-segments, keep a trailing slash."""
+    cleaned = posixpath.normpath(re.sub("/+", "/", path))
+    if path.endswith("/") and cleaned != "/":
+        cleaned += "/"
+    return cleaned
+
+
 def _caddy_matches(raw_path: str, patterns: list[str]) -> bool:
-    cleaned = posixpath.normpath(re.sub("/+", "/", unquote(raw_path).lower()))
+    cleaned = _clean(unquote(raw_path).lower())
     return any(
         cleaned.startswith(p[:-1]) if p.endswith("*") else cleaned == p for p in patterns
     )
@@ -87,11 +97,15 @@ def _guard(name: str) -> re.Pattern[str]:
 
 
 def _forwarded(raw: str) -> str | None:
-    """The path DocuSeal receives for a raw request URI, or None when the gateway 404s."""
+    """The path DocuSeal receives for a raw request URI, or None when the gateway 404s.
+
+    Like Go, only '?' ends the path; '#' and trailing slashes stay in it.
+    """
     path = raw.split("?", 1)[0]
     for name in ROUTES:
         if _caddy_matches(path, _patterns(name)) and not _guard(name).search(raw):
-            # Form and asset handlers rewrite to the cleaned path; disk forwards raw.
+            # Form and asset handlers rewrite to the decoded (not cleaned) path; disk
+            # forwards the raw path.
             return path if name == "signing_disk" else unquote(path)
     return None
 
@@ -148,7 +162,36 @@ def test_gateway_forwards_signer_requests_on_the_path_that_matched(raw: str) -> 
     assert forwarded is not None
     segments = forwarded.split("/")
     assert segments[1] in SIGNER_SEGMENTS
-    assert ".." not in segments and "." not in segments and "" not in segments[1:]
+    assert ".." not in segments and "." not in segments and "" not in segments[1:-1]
+    # DocuSeal receives exactly the path that matched: cleaning would change nothing.
+    assert _clean(unquote(forwarded)) == unquote(forwarded)
+
+
+# RE2 (Go regexp) has no lookarounds, backreferences, atomic groups or possessive
+# quantifiers; Python's re accepts them, so refuse them before trusting this model.
+def _assert_re2_compatible(pattern: str) -> None:
+    for construct in ("(?=", "(?!", "(?<=", "(?<!", "(?>", "(?P=", "(?#"):
+        assert construct not in pattern, f"RE2 does not support {construct!r}"
+    assert not re.search(r"\\[1-9]|\\[gk]<|\\Z", pattern.replace("\\\\", "")), (
+        "RE2 does not support backreferences or \\Z"
+    )
+    assert not re.search(r"[*+?}]\+", pattern.replace("\\+", "")), (
+        "RE2 does not support possessive quantifiers"
+    )
+
+
+@pytest.mark.parametrize("name", ROUTES)
+def test_guards_are_re2_compatible_and_match_preflight(name: str) -> None:
+    pattern = _guard(name).pattern
+    _assert_re2_compatible(pattern)
+    disk = name == "signing_disk"
+    assert pattern == (preflight.DISK_GUARD_REGEX if disk else preflight.PATH_GUARD_REGEX)
+
+
+@pytest.mark.parametrize("pattern", [r"^(?!/s/)", r"(?<=/)\.\.", r"(a)\1", r"a++", r"(?>a)"])
+def test_re2_check_refuses_python_only_syntax(pattern: str) -> None:
+    with pytest.raises(AssertionError):
+        _assert_re2_compatible(pattern)
 
 
 def test_every_docuseal_route_keeps_its_guards() -> None:
@@ -160,3 +203,9 @@ def test_every_docuseal_route_keeps_its_guards() -> None:
     ]
     unrewritten = CADDYFILE.replace("\t\turi query -_method\n", "", 1)
     assert preflight.public_caddyfile_problems(unrewritten) != []
+    # A guard that stops scanning at '#' again is caught, not just a missing guard.
+    weakened = CADDYFILE.replace("(?i)^[^?]*(", "(?i)^[^?#]*(", 1)
+    assert preflight.public_caddyfile_problems(weakened) == [
+        "PublicCaddyfile route signing_form must keep the signing host, raw-URI and "
+        "method-override guards"
+    ]

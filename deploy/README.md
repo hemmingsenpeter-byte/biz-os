@@ -265,15 +265,19 @@ signing page needs:
 
 Administration, sign-in, setup, settings, templates and `/api` return 404 there.
 Caddy matches the decoded, cleaned path, but DocuSeal routes the raw one. The
-gateway therefore returns 404 for any signing request whose raw path contains an
-escaped dot, slash, backslash or percent sign, a backslash, `//` or a
-dot-segment. The one exception is `%2F` inside `/disk/` keys, and only away from
-slashes and dot-segments. The gateway also refuses a `_method` query parameter or an
-`X-HTTP-Method-Override` header, and rewrites form and asset requests to the cleaned
-path before proxying. A `_method` field in a form body cannot be inspected at the
+gateway therefore returns 404 for any signing request whose raw path (everything
+before the first `?`) contains `#`, an escaped dot, slash, backslash, percent
+sign or `#`, a backslash, `//` or a dot-segment. Go keeps a raw `#` in the path,
+so it cannot hide what follows. The one exception is `%2F` inside `/disk/` keys,
+and only away from slashes and dot-segments. The gateway also refuses a `_method`
+query parameter or an `X-HTTP-Method-Override` header. These guards alone prevent
+traversal. The form and asset handlers also rewrite to
+`{http.request.uri.path}`, but that only canonicalizes escapes and does not
+clean dot-segments. A `_method` field in a form body cannot be inspected at the
 gateway. Rails can use it only to change the method on the same allowed path, and
 no signer route accepts DELETE.
-Preflight fails if a DocuSeal route loses these guards.
+Preflight fails if a DocuSeal route loses these guards or its guard pattern differs
+from the expected one.
 The signing form tries some legacy `/api/...` endpoints only after a `/s/...`
 request returns 404, so the pinned version does not need them. When updating the
 DocuSeal pin, review its `config/routes.rb` and the form pack for new signer paths.

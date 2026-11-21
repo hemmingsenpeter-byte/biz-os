@@ -34,6 +34,16 @@ SIGNING_DISABLED_HOST = "signing-disabled.invalid"
 # Without a signing host, Compose points DocuSeal's APP_URL at its loopback admin port.
 LOOPBACK_DOCUSEAL_URL = "http://127.0.0.1:3002"
 SIGNING_GUARD = "not vars_regexp {http.request.orig_uri} "
+# The exact RE2 guards the public signing routes must carry. They scan the whole raw
+# path (Go keeps a raw # in it) and refuse escapes and dot-segments; /disk/ alone
+# allows %2F, which its standard-Base64 keys need, away from slashes and dot-segments.
+PATH_GUARD_REGEX = (
+    r"(?i)^[^?]*(%(2e|2f|5c|25|23)|#|\\|//|/\.\.?(/|\?|$))|[?&](_|%5f)method([=&#]|$)"
+)
+DISK_GUARD_REGEX = (
+    r"(?i)^[^?]*(%(2e|5c|25|23)|#|\\|(/|%2f)(/|%2f)|(/|%2f)\.\.?(/|%2f|\?|$))"
+    r"|[?&](_|%5f)method([=&#]|$)"
+)
 PRIVATE_SUFFIXES = (".localhost", ".local", ".internal", ".invalid", ".test", ".ts.net")
 REQUIRED_PORT_ENV = {
     "accounting_xero": ("BIZ_XERO_CLIENT_ID", "BIZ_XERO_CLIENT_SECRET"),
@@ -406,9 +416,11 @@ def public_caddyfile_problems(caddyfile: str) -> list[str]:
         if "docuseal:" not in body:
             continue
         matcher = matchers.get(name, "")
+        expected = DISK_GUARD_REGEX if name == "signing_disk" else PATH_GUARD_REGEX
+        guards = re.findall(re.escape(SIGNING_GUARD) + r"`([^`\n]*)`", matcher)
         guarded = (
             "host {$DOCUSEAL_HOST:" in matcher
-            and SIGNING_GUARD in matcher
+            and guards == [expected]
             and "not header X-HTTP-Method-Override *" in matcher
             and "header_up -X-HTTP-Method-Override" in body
             and "uri query -_method" in body

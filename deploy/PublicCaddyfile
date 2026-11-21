@@ -33,18 +33,19 @@
 	# Administration, sign-in, setup and /api stay unreachable from the tunnel.
 	#
 	# The path matcher sees the decoded, cleaned path while DocuSeal routes the raw one,
-	# so each matcher also refuses a raw request URI whose path holds an escaped dot,
-	# slash, backslash or percent sign, a raw backslash, an empty segment or a
-	# dot-segment, and any _method query override. Each handler then rewrites to the
-	# cleaned path, so DocuSeal receives exactly the path that matched. Anything
-	# refused falls through to the final 404. Rails cannot be stopped from reading a
-	# _method field in a form body here; it can only turn an allowed POST into another
-	# method on the same allowed path.
+	# so each matcher also refuses a raw request URI whose path (everything before the
+	# first ?) holds a #, an escaped dot, slash, backslash, percent sign or #, a raw
+	# backslash, an empty segment or a dot-segment, and any _method query override.
+	# Go keeps a raw # in the path, so it cannot end the scan. The guard alone prevents
+	# traversal: the handlers' rewrite to {http.request.uri.path} only canonicalizes
+	# escapes and does not clean dot-segments. Anything refused falls through to the
+	# final 404. Rails cannot be stopped from reading a _method field in a form body
+	# here; it can only turn an allowed POST into another method on the same path.
 	@signing_form {
 		host {$DOCUSEAL_HOST:signing-disabled.invalid}
 		method GET HEAD POST PUT PATCH
 		path /s/* /d/* /p/* /submit_form_email_2fa /start_form_email_2fa_send /resubmit_form
-		not vars_regexp {http.request.orig_uri} `(?i)^[^?#]*(%(2e|2f|5c|25)|\\|//|/\.\.?(/|\?|#|$))|[?&](_|%5f)method([=&#]|$)`
+		not vars_regexp {http.request.orig_uri} `(?i)^[^?]*(%(2e|2f|5c|25|23)|#|\\|//|/\.\.?(/|\?|$))|[?&](_|%5f)method([=&#]|$)`
 		not header X-HTTP-Method-Override *
 	}
 	handle @signing_form {
@@ -64,7 +65,7 @@
 		host {$DOCUSEAL_HOST:signing-disabled.invalid}
 		method GET HEAD
 		path /packs/* /preview/* /blobs_proxy/* /fonts/DancingScript-Regular.otf /favicon.ico /favicon.svg /favicon-16x16.png /favicon-32x32.png /favicon-96x96.png /apple-icon-180x180.png
-		not vars_regexp {http.request.orig_uri} `(?i)^[^?#]*(%(2e|2f|5c|25)|\\|//|/\.\.?(/|\?|#|$))|[?&](_|%5f)method([=&#]|$)`
+		not vars_regexp {http.request.orig_uri} `(?i)^[^?]*(%(2e|2f|5c|25|23)|#|\\|//|/\.\.?(/|\?|$))|[?&](_|%5f)method([=&#]|$)`
 		not header X-HTTP-Method-Override *
 	}
 	handle @signing_asset {
@@ -85,7 +86,7 @@
 		host {$DOCUSEAL_HOST:signing-disabled.invalid}
 		method GET HEAD
 		path /disk/*
-		not vars_regexp {http.request.orig_uri} `(?i)^[^?#]*(%(2e|5c|25)|\\|(/|%2f)(/|%2f)|(/|%2f)\.\.?(/|%2f|\?|#|$))|[?&](_|%5f)method([=&#]|$)`
+		not vars_regexp {http.request.orig_uri} `(?i)^[^?]*(%(2e|5c|25|23)|#|\\|(/|%2f)(/|%2f)|(/|%2f)\.\.?(/|%2f|\?|$))|[?&](_|%5f)method([=&#]|$)`
 		not header X-HTTP-Method-Override *
 	}
 	handle @signing_disk {

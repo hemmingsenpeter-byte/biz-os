@@ -412,6 +412,23 @@ def public_caddyfile_problems(caddyfile: str) -> list[str]:
     matchers = dict(re.findall(r"\n\t@([\w-]+) \{\n(.*?)\n\t\}", caddyfile, re.S))
     handlers = re.findall(r"\n\thandle(?: @([\w-]+))? \{\n(.*?)\n\t\}", caddyfile, re.S)
     problems = []
+    # Fail closed: every upstream mention must sit inside a handle block checked below,
+    # so a route written as handle_path, route, an inline matcher or a bare
+    # reverse_proxy cannot reach DocuSeal unguarded.
+    code = "\n".join(line.split("#", 1)[0] for line in caddyfile.splitlines())
+    mentions = len(re.findall(r"\bdocuseal\b", code, re.I))
+    checked = sum(
+        len(
+            re.findall(
+                r"\bdocuseal\b", "\n".join(ln.split("#", 1)[0] for ln in body.splitlines()), re.I
+            )
+        )
+        for _, body in handlers
+    )
+    if mentions != checked:
+        problems.append(
+            "PublicCaddyfile may reach DocuSeal only from guarded `handle @name` blocks"
+        )
     for name, body in handlers:
         if "docuseal:" not in body:
             continue

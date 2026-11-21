@@ -12,19 +12,23 @@ import hashlib
 import hmac
 import io
 import json
+import math
 import os
 import re
 import secrets
 import tempfile
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
 import yaml
 
+DEFAULT_THRESHOLD = 0.05
+CLOUD_AUDIT_FILE = "cloud_disclosures.jsonl"
 MIN_CASES = 100
 MIN_HELDOUT = 50
 SOURCE_FIELDS = ("thread_key", "channel", "subject", "body")
@@ -40,6 +44,7 @@ class Template(TypedDict):
     task: dict[str, Any]
     dataset: str
     prompt: str
+    prompt_source: str | None
     schema: str
     label_field: str
     categories: set[str]
@@ -70,6 +75,26 @@ def write_private(path: Path, value: str) -> None:
         os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
+
+
+def sha_text(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def find_repo_root(start: Path) -> Path | None:
+    """The nearest directory above `start` holding packets/ and roles/, if any."""
+    start = start.resolve()
+    for directory in (start, *start.parents):
+        if (directory / "packets").is_dir() and (directory / "roles").is_dir():
+            return directory
+    return None
+
+
+def _repo_relative(path: Path) -> str | None:
+    root = find_repo_root(path.parent)
+    if root is None or not path.resolve().is_relative_to(root):
+        return None
+    return path.resolve().relative_to(root).as_posix()
 
 
 def sha_json(value: Any) -> str:
@@ -236,24 +261,40 @@ def read_template(template: Path) -> Template:
     if not all(isinstance(spec.get(key), str) and spec[key] for key in keys):
         raise ValueError(f"template historical block needs {', '.join(keys)}")
     label = spec["label_field"]
-    categories = (parsed.get("properties") or {}).get(label, {}).get("enum")
+    properties, required = parsed.get("properties"), parsed.get("required")
+    prop = properties.get(label) if isinstance(properties, dict) else None
+    categories = prop.get("enum") if isinstance(prop, dict) else None
     if (
         not isinstance(categories, list)
         or not categories
-        or label not in parsed.get("required", [])
+        or not isinstance(required, list)
+        or label not in required
     ):
         raise ValueError(f"template schema must require {label} as an enum")
     checks = spec.get("checks") or []
     if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
         raise ValueError("template historical checks must be a list of mappings")
+    threshold = task.get("threshold", DEFAULT_THRESHOLD)
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, int | float)
+        or not math.isfinite(threshold)
+        or not 0 <= threshold <= 1
+    ):
+        raise ValueError("template shadow threshold must be finite and in [0, 1]")
+    prompt_file = template / spec["prompt_file"]
     try:
-        prompt = (template / spec["prompt_file"]).read_text()
+        prompt = prompt_file.read_text()
     except OSError as exc:
         raise ValueError("template prompt_file is not readable") from exc
     return {
-        "task": {k: task[k] for k in ("schema_version", "task", "decision_type") if k in task},
+        "task": {
+            **{k: task[k] for k in ("schema_version", "task", "decision_type") if k in task},
+            "threshold": float(threshold),
+        },
         "dataset": spec["dataset"],
         "prompt": prompt,
+        "prompt_source": _repo_relative(prompt_file),
         "schema": schema,
         "label_field": label,
         "categories": {str(c) for c in categories},
@@ -271,7 +312,7 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
 
     `template` is the role's packaged evaluation directory for the task.
     """
-    from biz_kernel.models.eval.harness import dataset_metadata, load_cases
+    from biz_kernel.models.eval.harness import dataset_sha256, load_cases
 
     root = private_path(workspace)
     version_dir = _version_dir(root, version)
@@ -340,14 +381,18 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
                     "provenance": "historical",
                     "private": True,
                 }
-                hashes = dataset_metadata([], load_cases(split_dir))
+                digest = dataset_sha256(load_cases(split_dir))
                 receipt = {
                     **task,
                     "owner": owner,
                     "confirmed_at": datetime.now(UTC).isoformat(),
                     "case_count": len(rows),
                     "source_sha256": provenance["case_sha256"],
-                    "dataset_sha256": hashes["dataset_sha256"],
+                    "dataset_sha256": digest,
+                    # The prompt is frozen with the cases; reports compare it to the
+                    # deployed prompt at `prompt_source` (relative to the repo root).
+                    "prompt_sha256": sha_text(prompt),
+                    "prompt_source": spec["prompt_source"],
                 }
                 write_private(split_dir / "_task.yaml", yaml.safe_dump(task))
                 write_private(
@@ -355,3 +400,87 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
                 )
             confirmed.rename(version_dir / "confirmed")
     return {split: len(rows) for split, rows in datasets.items()}
+
+
+# ---- sending private cases to a cloud model: fails closed ----------------------------------
+
+
+_ISSUED = object()  # only authorise_cloud_data holds this; see CloudAuthorisation
+
+
+@dataclass(frozen=True)
+class CloudAuthorisation:
+    """The run flag, the target app's policy and a named operator all allow cloud data.
+
+    Obtain one only from authorise_cloud_data(); direct construction is refused.
+    """
+
+    app: str
+    operator: str
+    token: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.token is not _ISSUED:
+            raise TypeError("a cloud data authorisation comes only from authorise_cloud_data()")
+
+
+def cloud_data_problems(section: Any) -> list[str]:
+    """Problems in the `eval:` section of an app's policy.yaml (biz doctor)."""
+    if section is None:
+        return []
+    if not isinstance(section, Mapping):
+        return ["eval must be a mapping"]
+    problems = [f"eval.{key} is not a known setting" for key in section if key != "cloud_data"]
+    if "cloud_data" in section and section["cloud_data"] not in ("allow", "deny"):
+        problems.append("eval.cloud_data must be allow or deny")
+    return problems
+
+
+def cloud_data_allowed(policy: Mapping[str, Any]) -> bool:
+    """Only an explicit, well-formed `eval: {cloud_data: allow}` allows it; absent denies."""
+    section = policy.get("eval")
+    return (
+        isinstance(section, Mapping)
+        and not cloud_data_problems(section)
+        and section.get("cloud_data") == "allow"
+    )
+
+
+def authorise_cloud_data(
+    *, allow_flag: bool, app_dir: Path | None, repo_root: Path | None, operator: str
+) -> CloudAuthorisation:
+    """Check every condition for sending private cases to a cloud model, or raise."""
+    if not allow_flag:
+        raise ValueError("private cloud evaluation requires --allow-cloud-data")
+    if app_dir is None:
+        raise ValueError(
+            "private cloud evaluation also requires --app naming an app's policy that "
+            "sets eval: {cloud_data: allow}"
+        )
+    from biz_kernel.loader.loader import LoadError, load_composition
+
+    root = repo_root or find_repo_root(app_dir)
+    if root is None:
+        raise ValueError(f"no repo root above {app_dir}")
+    try:
+        manifest = load_composition(app_dir, root)
+    except LoadError as exc:
+        raise ValueError(f"app does not load: {'; '.join(exc.problems)}") from exc
+    if not cloud_data_allowed(manifest.policy):
+        raise ValueError(
+            f"the policy of app {manifest.name} does not allow private evaluation data "
+            "to be sent to a cloud model (eval.cloud_data)"
+        )
+    if not OPAQUE_ID.fullmatch(operator):
+        raise ValueError("private cloud evaluation requires --operator, a non-personal identifier")
+    return CloudAuthorisation(manifest.name, operator, _ISSUED)
+
+
+def record_cloud_disclosure(workspace: Path, record: dict[str, Any]) -> Path:
+    """Append one audit record (metadata only, never case content) to the workspace log."""
+    root = private_path(workspace)
+    path = root / CLOUD_AUDIT_FILE
+    with _workspace(root):
+        existing = path.read_text() if path.exists() else ""
+        write_private(path, existing + json.dumps(record, sort_keys=True) + "\n")
+    return path

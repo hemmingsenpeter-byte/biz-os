@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import os
-import re
 from contextlib import AsyncExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
-from urllib.parse import urlsplit
 
 import httpx
 import typer
@@ -18,16 +15,27 @@ import typer
 from biz_kernel.models.eval.harness import (
     EvalReport,
     ShadowReport,
+    cloud_disclosure,
     is_private,
+    loopback_ollama_url,
     read_task,
     report_json,
     run_eval,
     shadow,
 )
-from biz_kernel.models.eval.private import private_path, write_private
+from biz_kernel.models.eval.private import (
+    CLOUD_AUDIT_FILE,
+    CloudAuthorisation,
+    authorise_cloud_data,
+    find_repo_root,
+    private_path,
+    write_private,
+)
 from biz_kernel.models.router import Router, Tier
 
 app = typer.Typer(help="Score model tasks against golden cases.", no_args_is_help=True)
+APP_HELP = "App whose policy must allow private cases on a cloud model (eval.cloud_data)"
+OPERATOR_HELP = "Non-personal ID of who runs a private cloud evaluation (audited)"
 
 
 @app.callback()
@@ -46,29 +54,7 @@ def build_router() -> Router:
     return Router(local=local, cloud=cloud)
 
 
-def _loopback_ollama_url(url: str, model: str) -> str:
-    problem = "private local evaluation requires a loopback Ollama URL and a noncloud model"
-    try:
-        parsed = urlsplit(url)
-        host = parsed.hostname or ""
-        port = parsed.port
-        if host != "localhost" and not ipaddress.ip_address(host).is_loopback:
-            raise ValueError(problem)
-    except ValueError as exc:
-        raise ValueError(problem) from exc
-    if (
-        parsed.scheme not in ("http", "https")
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or re.search(r"(?:^|[^a-z0-9])cloud(?:$|[^a-z0-9])", model.lower())
-    ):
-        raise ValueError(problem)
-    if host == "localhost":
-        # Use the actual loopback address rather than system name resolution.
-        parsed = parsed._replace(netloc=f"127.0.0.1:{port}" if port else "127.0.0.1")
-    return parsed.geturl()
+_loopback_ollama_url = loopback_ollama_url  # kept for existing callers
 
 
 async def _score(
@@ -79,6 +65,8 @@ async def _score(
     versions: dict[Tier, str],
     *,
     private_local: bool,
+    cloud_data: CloudAuthorisation | None = None,
+    repo_root: Path | None = None,
 ) -> EvalReport | ShadowReport:
     async with AsyncExitStack() as stack:
         if private_local:
@@ -101,8 +89,23 @@ async def _score(
                 )
                 router = replace(router, local=local)
         if tier == "shadow":
-            return await shadow(task, router, cases, model_versions=versions)
-        return await run_eval(task, tier, router, cases, model_version=versions.get(tier))
+            return await shadow(
+                task,
+                router,
+                cases,
+                model_versions=versions,
+                cloud_data=cloud_data,
+                repo_root=repo_root,
+            )
+        return await run_eval(
+            task,
+            tier,
+            router,
+            cases,
+            model_version=versions.get(tier),
+            cloud_data=cloud_data,
+            repo_root=repo_root,
+        )
 
 
 def eval_cmd(
@@ -117,8 +120,16 @@ def eval_cmd(
     allow_cloud_data: bool = False,
     local_model_version: str = "",
     cloud_model_version: str = "",
+    app: Path | None = None,
+    repo_root: Path | None = None,
+    operator: str = "",
 ) -> None:
-    """Score complete cases; --gate additionally requires reviewed held-out readiness."""
+    """Score complete cases; --gate additionally requires reviewed held-out readiness.
+
+    Private cases go to a cloud model only with --allow-cloud-data, an --app whose
+    policy sets `eval: {cloud_data: allow}` and a named --operator; each such run is
+    audited in the private workspace.
+    """
     if tier not in ("local", "cloud", "shadow"):
         raise typer.BadParameter("tier must be local, cloud or shadow")
     evaluation_tier = cast(Literal["local", "cloud", "shadow"], tier)
@@ -127,7 +138,9 @@ def eval_cmd(
         versions["local"] = local_model_version.strip()
     if cloud_model_version.strip():
         versions["cloud"] = cloud_model_version.strip()
+    cloud_data: CloudAuthorisation | None = None
     try:
+        root = repo_root or (find_repo_root(app) if app is not None else None)
         private = is_private(read_task(cases))
         private_local = private and tier != "cloud"
         if private:
@@ -137,8 +150,10 @@ def eval_cmd(
             output = private_path(output)
             if output.is_relative_to(cases):
                 raise ValueError("write the evaluation report outside the case directory")
-            if tier in ("cloud", "shadow") and not allow_cloud_data:
-                raise ValueError("private cloud evaluation requires --allow-cloud-data")
+            if tier in ("cloud", "shadow"):
+                cloud_data = authorise_cloud_data(
+                    allow_flag=allow_cloud_data, app_dir=app, repo_root=root, operator=operator
+                )
             required = {"local", "cloud"} if tier == "shadow" else {tier}
             if not required.issubset(versions):
                 raise ValueError("supply the explicit model version for each requested tier")
@@ -151,7 +166,16 @@ def eval_cmd(
             )
         r = router or build_router()
         rep = asyncio.run(
-            _score(task, evaluation_tier, r, cases, versions, private_local=private_local)
+            _score(
+                task,
+                evaluation_tier,
+                r,
+                cases,
+                versions,
+                private_local=private_local,
+                cloud_data=cloud_data,
+                repo_root=root,
+            )
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -181,6 +205,19 @@ def eval_cmd(
                     f"  {'ok  ' if result.passed else 'FAIL'} {result.name} "
                     f"{'; '.join(result.failures)}"
                 )
+    disclosure = cloud_disclosure(rep)
+    if disclosure is not None:
+        typer.echo(
+            f"private data sent to the cloud: {disclosure['case_count']} redacted cases to "
+            f"{disclosure['provider']}; audit record in {CLOUD_AUDIT_FILE} in the workspace"
+        )
+    if private:
+        prompt = (rep.local if isinstance(rep, ShadowReport) else rep).metadata["prompt"]
+        match = {True: "matches", False: "DIFFERS FROM", None: "cannot be compared with"}
+        typer.echo(
+            f"scored frozen prompt {prompt['scored_sha256']} "
+            f"{match[prompt['matches_deployed']]} the deployed prompt"
+        )
     if isinstance(rep, ShadowReport):
         passed = rep.technical_gate_passed and (not gate or rep.ready_for_local)
     else:
@@ -205,6 +242,9 @@ def run_command(
     allow_cloud_data: Annotated[bool, typer.Option("--allow-cloud-data")] = False,
     local_model_version: str = "",
     cloud_model_version: str = "",
+    app: Annotated[Path | None, typer.Option("--app", help=APP_HELP)] = None,
+    repo_root: Annotated[Path | None, typer.Option("--repo-root")] = None,
+    operator: Annotated[str, typer.Option("--operator", help=OPERATOR_HELP)] = "",
 ) -> None:
     eval_cmd(
         task,
@@ -216,4 +256,7 @@ def run_command(
         allow_cloud_data=allow_cloud_data,
         local_model_version=local_model_version,
         cloud_model_version=cloud_model_version,
+        app=app,
+        repo_root=repo_root,
+        operator=operator,
     )

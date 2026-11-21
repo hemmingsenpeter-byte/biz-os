@@ -11,8 +11,9 @@ import re
 import stat
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import time
-from ipaddress import ip_address
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, urlsplit
@@ -23,11 +24,29 @@ import yaml
 from biz_kernel.cli.main import doctor_cmd
 from biz_kernel.loader import LoadError, load_composition
 from biz_kernel.tools.shadow import ExecutionMode, mode_problems
+from biz_port_sign_docuseal import DocuSealSign
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
 ROOT = Path(__file__).resolve().parents[1]
 OBJECT_ROOT = "/var/lib/biz-os/objects"
+# Compose gives the public gateway this reserved name when DOCUSEAL_HOST is empty, so the
+# signing routes in PublicCaddyfile cannot match a real request.
+SIGNING_DISABLED_HOST = "signing-disabled.invalid"
+# Without a signing host, Compose points DocuSeal's APP_URL at its loopback admin port.
+LOOPBACK_DOCUSEAL_URL = "http://127.0.0.1:3002"
+SIGNING_GUARD = "not vars_regexp {http.request.orig_uri} "
+# The exact RE2 guards the public signing routes must carry. They scan the whole raw
+# path (Go keeps a raw # in it) and refuse escapes and dot-segments; /disk/ alone
+# allows %2F, which its standard-Base64 keys need, away from slashes and dot-segments.
+PATH_GUARD_REGEX = (
+    r"(?i)^[^?]*(%(2e|2f|5c|25|23)|#|\\|//|/\.\.?(/|\?|$))|[?&](_|%5f)method([=&#]|$)"
+)
+DISK_GUARD_REGEX = (
+    r"(?i)^[^?]*(%(2e|5c|25|23)|#|\\|(/|%2f)(/|%2f)|(/|%2f)\.\.?(/|%2f|\?|$))"
+    r"|[?&](_|%5f)method([=&#]|$)"
+)
+PRIVATE_SUFFIXES = (".localhost", ".local", ".internal", ".invalid", ".test", ".ts.net")
 REQUIRED_PORT_ENV = {
     "accounting_xero": ("BIZ_XERO_CLIENT_ID", "BIZ_XERO_CLIENT_SECRET"),
     "mail_m365": (
@@ -220,6 +239,68 @@ def _validate_port_values(
             problems.append("BIZ_DOCUSEAL_ALLOW_TEMPLATE_MODE must be 0 or 1")
 
 
+def _public_hostname(host: str) -> bool:
+    labels = host.split(".")
+    if len(labels) < 2 or not all(
+        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels
+    ):
+        return False
+    return not host.endswith(PRIVATE_SUFFIXES) and not labels[-1].isdigit()
+
+
+def _port_signing_url(app_url: str) -> str | None:
+    """The link the sign_docuseal port returns for a pinned DocuSeal create response.
+
+    DocuSeal builds each submitter's embed_src from the scheme, host and port of its
+    APP_URL; the port passes that link through, or falls back to a relative /s/<slug>.
+    """
+    parsed = _http_url(app_url)
+    if parsed is None:
+        return None
+    created = [
+        {
+            "submission_id": 1,
+            "slug": "preflight",
+            "embed_src": f"{parsed.scheme}://{parsed.netloc}/s/preflight",
+        }
+    ]
+    return DocuSealSign._parse_created(created)[1]
+
+
+def _validate_signing(
+    services: dict[str, Any], ports: set[str], api: dict[str, str], problems: list[str]
+) -> None:
+    gateway = services.get("tunnel-ingress", {}).get("environment") or {}
+    host = str(gateway.get("DOCUSEAL_HOST", "")).strip().lower()
+    app_url = str((services["docuseal"].get("environment") or {}).get("APP_URL") or "")
+    enabled = host not in {"", SIGNING_DISABLED_HOST}
+    if not _http_url(app_url):
+        # DocuSeal reads an empty APP_URL as its default origin and builds hostless links.
+        problems.append("DocuSeal APP_URL must be a non-empty HTTP or HTTPS origin")
+    if "sign_docuseal" not in ports:
+        if enabled or app_url != LOOPBACK_DOCUSEAL_URL:
+            problems.append(
+                "DOCUSEAL_HOST is unused: the composition has no DocuSeal signing port, "
+                "so leave it empty and the public gateway routes no signing paths"
+            )
+        return
+    if not enabled or not _public_hostname(host):
+        problems.append("DOCUSEAL_HOST must be the public signing hostname for DocuSeal signing")
+        return
+    if host == api.get("BIZ_RP_ID", "").lower():
+        problems.append("DOCUSEAL_HOST must differ from the private owner hostname")
+    signing = _http_url(_port_signing_url(app_url) or "")
+    if (
+        not signing
+        or signing.scheme != "https"
+        or signing.hostname != host
+        or signing.port not in {None, 443}
+    ):
+        problems.append(
+            "DocuSeal signing links must use https://DOCUSEAL_HOST (set docuseal APP_URL from it)"
+        )
+
+
 def _validate_storage(
     services: dict[str, Any], compose_dir: Path, *, require_existing: bool, problems: list[str]
 ) -> None:
@@ -321,6 +402,54 @@ def _validate_routes(
         for mount in public_mounts
     ):
         problems.append("tunnel-ingress must use the dedicated read-only PublicCaddyfile")
+    problems.extend(public_caddyfile_problems((root / "deploy" / "PublicCaddyfile").read_text()))
+
+
+def public_caddyfile_problems(caddyfile: str) -> list[str]:
+    """Keep the raw-URI guards on every public route that reaches DocuSeal.
+
+    Caddy matches the decoded, cleaned path but forwards the raw one, so a signing
+    route without these guards lets escaped dot-segments reach other DocuSeal routes.
+    """
+    matchers = dict(re.findall(r"\n\t@([\w-]+) \{\n(.*?)\n\t\}", caddyfile, re.S))
+    handlers = re.findall(r"\n\thandle(?: @([\w-]+))? \{\n(.*?)\n\t\}", caddyfile, re.S)
+    problems = []
+    # Fail closed: every upstream mention must sit inside a handle block checked below,
+    # so a route written as handle_path, route, an inline matcher or a bare
+    # reverse_proxy cannot reach DocuSeal unguarded.
+    code = "\n".join(line.split("#", 1)[0] for line in caddyfile.splitlines())
+    mentions = len(re.findall(r"\bdocuseal\b", code, re.I))
+    checked = sum(
+        len(
+            re.findall(
+                r"\bdocuseal\b", "\n".join(ln.split("#", 1)[0] for ln in body.splitlines()), re.I
+            )
+        )
+        for _, body in handlers
+    )
+    if mentions != checked:
+        problems.append(
+            "PublicCaddyfile may reach DocuSeal only from guarded `handle @name` blocks"
+        )
+    for name, body in handlers:
+        if "docuseal:" not in body:
+            continue
+        matcher = matchers.get(name, "")
+        expected = DISK_GUARD_REGEX if name == "signing_disk" else PATH_GUARD_REGEX
+        guards = re.findall(re.escape(SIGNING_GUARD) + r"`([^`\n]*)`", matcher)
+        guarded = (
+            "host {$DOCUSEAL_HOST:" in matcher
+            and guards == [expected]
+            and "not header X-HTTP-Method-Override *" in matcher
+            and "header_up -X-HTTP-Method-Override" in body
+            and "uri query -_method" in body
+        )
+        if not guarded:
+            problems.append(
+                f"PublicCaddyfile route {name or '(default)'} must keep the signing host, "
+                "raw-URI and method-override guards"
+            )
+    return problems
 
 
 @contextlib.contextmanager
@@ -427,9 +556,91 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
             problems,
         )
     _validate_port_values(ports, api, problems)
+    _validate_signing(services, ports, api, problems)
     _validate_storage(services, compose_dir, require_existing=not demo, problems=problems)
     _validate_routes(services, config.get("networks", {}), root, compose_dir, problems)
     return problems
+
+
+def _gateway_subnet(config: dict[str, Any]) -> IPv4Network | IPv6Network | None:
+    default = (config.get("networks") or {}).get("default") or {}
+    pools = (default.get("ipam") or {}).get("config") or []
+    subnets = [pool.get("subnet") for pool in pools if isinstance(pool, dict)]
+    if len(subnets) != 1 or not isinstance(subnets[0], str):
+        return None
+    try:
+        return ip_network(subnets[0], strict=False)
+    except ValueError:
+        return None
+
+
+def _covers(outer: IPv4Network | IPv6Network, inner: IPv4Network | IPv6Network) -> bool:
+    if isinstance(outer, IPv4Network) and isinstance(inner, IPv4Network):
+        return inner.subnet_of(outer)
+    if isinstance(outer, IPv6Network) and isinstance(inner, IPv6Network):
+        return inner.subnet_of(outer)
+    return False
+
+
+def _advise_trusted_proxies(config: dict[str, Any], warnings: list[str]) -> None:
+    api = config["services"].get("biz-api", {}).get("environment") or {}
+    raw = str(api.get("BIZ_TRUSTED_PROXIES") or "").strip()
+    gateway = _gateway_subnet(config)
+    named = f"{gateway} (BIZ_APP_SUBNET)" if gateway else "shared by caddy and tunnel-ingress"
+    if not raw:
+        warnings.append(
+            "BIZ_TRUSTED_PROXIES is empty, so the API trusts forwarded client IPs from every "
+            f"private range, including other Docker bridges. Set it to the gateway network {named}"
+        )
+        return
+    networks: list[IPv4Network | IPv6Network] = []
+    for item in raw.split(","):
+        try:
+            networks.append(ip_network(item.strip(), strict=False))
+        except ValueError:
+            warnings.append("BIZ_TRUSTED_PROXIES has an entry that is not an IP network")
+    if gateway is None:
+        return
+    if not any(_covers(network, gateway) for network in networks):
+        warnings.append(
+            f"BIZ_TRUSTED_PROXIES does not cover the gateway network {gateway}, so the API "
+            "records the gateway's address for public requests"
+        )
+    if any(not _covers(gateway, network) for network in networks):
+        warnings.append(
+            f"BIZ_TRUSTED_PROXIES trusts addresses outside the gateway network {gateway}"
+        )
+
+
+def advise(config: dict[str, Any], env_values: Mapping[str, str]) -> list[str]:
+    """Settings that work but deserve the operator's attention. These never fail preflight."""
+    warnings: list[str] = []
+    _advise_trusted_proxies(config, warnings)
+    legacy = env_values.get("BIZ_STORAGE_ROOT", "").strip()
+    if legacy and legacy.rstrip("/") != OBJECT_ROOT:
+        warnings.append(
+            "BIZ_STORAGE_ROOT in the env file names a legacy storage path. Stored file:// "
+            f"URIs under it will not resolve at {OBJECT_ROOT}; follow 'Migrating stored "
+            "object paths' in deploy/README.md before starting the API and worker"
+        )
+    return warnings
+
+
+def read_env_file(env_file: Path) -> dict[str, str]:
+    """KEY=VALUE lines of a Compose env file; comments and malformed lines are skipped."""
+    values: dict[str, str] = {}
+    for raw_line in env_file.read_text().splitlines():
+        line = raw_line.strip()
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+        key, sep, value = line.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,9 +648,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env-file", type=Path, default=ROOT / "deploy" / ".env")
     parser.add_argument("--compose-file", type=Path, default=ROOT / "deploy" / "docker-compose.yml")
     args = parser.parse_args(argv)
+    warnings: list[str] = []
     try:
         config = resolve_compose(args.compose_file, args.env_file)
         problems = validate(config, ROOT, compose_dir=args.compose_file.resolve().parent)
+        warnings = advise(config, read_env_file(args.env_file))
     except (
         OSError,
         subprocess.SubprocessError,
@@ -451,6 +664,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         # Compose and schema errors may contain secret values. Never print raw exceptions.
         problems = ["Could not read and validate the local Compose configuration"]
+    for warning in warnings:
+        print(f"Preflight warning: {warning}", file=sys.stderr)
     if problems:
         for problem in problems:
             print(f"Preflight failed: {problem}", file=sys.stderr)

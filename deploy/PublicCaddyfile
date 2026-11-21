@@ -25,6 +25,79 @@
 		reverse_proxy biz-api:8000
 	}
 
+	# Outside signers open DocuSeal signing links on the dedicated signing hostname only.
+	# Compose sets DOCUSEAL_HOST to a reserved .invalid name unless signing is enabled,
+	# so these routes match no real request. Only what the pinned DocuSeal signing page
+	# loads is routed: the submitter form (/s), shared form (/d), phone signature pad
+	# (/p), e-mail verification, page images, signed file links and static assets.
+	# Administration, sign-in, setup and /api stay unreachable from the tunnel.
+	#
+	# The path matcher sees the decoded, cleaned path while DocuSeal routes the raw one,
+	# so each matcher also refuses a raw request URI whose path (everything before the
+	# first ?) holds a #, an escaped dot, slash, backslash, percent sign or #, a raw
+	# backslash, an empty segment or a dot-segment, and any _method query override.
+	# Go keeps a raw # in the path, so it cannot end the scan. The guard alone prevents
+	# traversal: the handlers' rewrite to {http.request.uri.path} only canonicalizes
+	# escapes and does not clean dot-segments. Anything refused falls through to the
+	# final 404. Rails cannot be stopped from reading a _method field in a form body
+	# here; it can only turn an allowed POST into another method on the same path.
+	@signing_form {
+		host {$DOCUSEAL_HOST:signing-disabled.invalid}
+		method GET HEAD POST PUT PATCH
+		path /s/* /d/* /p/* /submit_form_email_2fa /start_form_email_2fa_send /resubmit_form
+		not vars_regexp {http.request.orig_uri} `(?i)^[^?]*(%(2e|2f|5c|25|23)|#|\\|//|/\.\.?(/|\?|$))|[?&](_|%5f)method([=&#]|$)`
+		not header X-HTTP-Method-Override *
+	}
+	handle @signing_form {
+		rewrite * {http.request.uri.path}
+		uri query -_method
+		request_body {
+			max_size 25MB
+		}
+		reverse_proxy docuseal:3000 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+			header_up -X-HTTP-Method-Override
+		}
+	}
+
+	@signing_asset {
+		host {$DOCUSEAL_HOST:signing-disabled.invalid}
+		method GET HEAD
+		path /packs/* /preview/* /blobs_proxy/* /fonts/DancingScript-Regular.otf /favicon.ico /favicon.svg /favicon-16x16.png /favicon-32x32.png /favicon-96x96.png /apple-icon-180x180.png
+		not vars_regexp {http.request.orig_uri} `(?i)^[^?]*(%(2e|2f|5c|25|23)|#|\\|//|/\.\.?(/|\?|$))|[?&](_|%5f)method([=&#]|$)`
+		not header X-HTTP-Method-Override *
+	}
+	handle @signing_asset {
+		rewrite * {http.request.uri.path}
+		uri query -_method
+		reverse_proxy docuseal:3000 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+			header_up -X-HTTP-Method-Override
+		}
+	}
+
+	# ActiveStorage disk keys are standard Base64, so their URLs carry escaped slashes.
+	# Here only, %2F is allowed, but never next to a slash or dot-segment, so decoding
+	# cannot move the request outside /disk/. The path is forwarded unrewritten because
+	# decoding %2F would split the key.
+	@signing_disk {
+		host {$DOCUSEAL_HOST:signing-disabled.invalid}
+		method GET HEAD
+		path /disk/*
+		not vars_regexp {http.request.orig_uri} `(?i)^[^?]*(%(2e|5c|25|23)|#|\\|(/|%2f)(/|%2f)|(/|%2f)\.\.?(/|%2f|\?|$))|[?&](_|%5f)method([=&#]|$)`
+		not header X-HTTP-Method-Override *
+	}
+	handle @signing_disk {
+		uri query -_method
+		reverse_proxy docuseal:3000 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+			header_up -X-HTTP-Method-Override
+		}
+	}
+
 	handle {
 		respond 404
 	}

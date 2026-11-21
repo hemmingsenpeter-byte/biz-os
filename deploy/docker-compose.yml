@@ -123,6 +123,10 @@ services:
       DATABASE_URL: postgresql://biz:${POSTGRES_PASSWORD}@postgres:5432/docuseal
       SECRET_KEY_BASE: ${DOCUSEAL_SECRET_KEY_BASE}
       HOST: ${DOCUSEAL_HOST:-sign.localhost}
+      # Signing links (the API's embed_src) use https://DOCUSEAL_HOST. Without a signing
+      # host, DocuSeal links point at the loopback administration port. Never empty:
+      # DocuSeal would then build links with no host.
+      APP_URL: http${DOCUSEAL_HOST:+s}://${DOCUSEAL_HOST:-127.0.0.1:3002}
     volumes:
       - docuseal:/data/docuseal
     depends_on:
@@ -150,6 +154,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./PublicCaddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      # Signing routes answer only on this hostname; the reserved name disables them.
+      DOCUSEAL_HOST: ${DOCUSEAL_HOST:-signing-disabled.invalid}
     networks: [default, tunnel]
     depends_on:
       - biz-api
@@ -174,6 +181,11 @@ services:
       - "127.0.0.1:3001:3001"   # owner/admin over Tailscale only
 
 networks:
+  default:
+    # A fixed application subnet lets BIZ_TRUSTED_PROXIES name the gateways' network.
+    ipam:
+      config:
+        - subnet: ${BIZ_APP_SUBNET:-172.30.250.0/24}
   tunnel:
 
 volumes:

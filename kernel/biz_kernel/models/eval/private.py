@@ -274,6 +274,17 @@ def read_template(template: Path) -> Template:
     checks = spec.get("checks") or []
     if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
         raise ValueError("template historical checks must be a list of mappings")
+    for check in checks:
+        if "unless_expected" in check:
+            condition = check["unless_expected"]
+            if (
+                not isinstance(condition, dict)
+                or set(condition) != {label}
+                or condition[label] not in categories
+            ):
+                raise ValueError(
+                    "template check unless_expected must name its label and a schema enum value"
+                )
     threshold = task.get("threshold", DEFAULT_THRESHOLD)
     if (
         isinstance(threshold, bool)
@@ -282,6 +293,16 @@ def read_template(template: Path) -> Template:
         or not 0 <= threshold <= 1
     ):
         raise ValueError("template shadow threshold must be finite and in [0, 1]")
+    rate, minimum = task.get("required_pass_rate", 0.95), task.get("min_cases", 50)
+    if (
+        isinstance(rate, bool)
+        or not isinstance(rate, int | float)
+        or not math.isfinite(rate)
+        or not 0 < rate <= 1
+    ):
+        raise ValueError("template required_pass_rate must be finite and in (0, 1]")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
+        raise ValueError("template min_cases must be a positive integer")
     prompt_file = template / spec["prompt_file"]
     try:
         prompt = prompt_file.read_text()
@@ -291,6 +312,8 @@ def read_template(template: Path) -> Template:
         "task": {
             **{k: task[k] for k in ("schema_version", "task", "decision_type") if k in task},
             "threshold": float(threshold),
+            "required_pass_rate": float(rate),
+            "min_cases": minimum,
         },
         "dataset": spec["dataset"],
         "prompt": prompt,
@@ -307,6 +330,30 @@ def read_template(template: Path) -> Template:
     }
 
 
+def scoring_contract_sha256(spec: Template) -> str:
+    """The role-declared checks and output schema, before per-label check selection."""
+    return sha_json(
+        {
+            "task": spec["task"],
+            "checks": spec["checks"],
+            "label_field": spec["label_field"],
+            "schema": yaml.safe_load(spec["schema"]),
+        }
+    )
+
+
+def _checks_for_expected(checks: list[dict[str, Any]], expected: dict[str, str]) -> list[dict]:
+    """Resolve role-template conditions once; saved cases keep ordinary frozen checks."""
+    return [
+        {key: value for key, value in check.items() if key != "unless_expected"}
+        for check in checks
+        if not (
+            (condition := check.get("unless_expected"))
+            and all(expected.get(key) == value for key, value in condition.items())
+        )
+    ]
+
+
 def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[str, int]:
     """Bind explicit owner-confirmed labels to immutable case payloads.
 
@@ -320,6 +367,7 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
         raise ValueError("owner must be a non-personal identifier")
     spec = read_template(template)
     prompt, schema, label = spec["prompt"], spec["schema"], spec["label_field"]
+    contract = scoring_contract_sha256(spec)
     with _workspace(root):
         ledger = json.loads((root / "splits.json").read_text())["splits"]
         cases = json.loads((version_dir / "prepared.json").read_text())
@@ -353,6 +401,7 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
                 write_private(split_dir / "_prompt.md", prompt)
                 write_private(split_dir / "_schema.yaml", schema)
                 for row in rows:
+                    expected_label = {label: row["category"]}
                     case = {
                         "name": row["case_id"],
                         "system_file": "_prompt.md",
@@ -368,8 +417,8 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
                                 ensure_ascii=False,
                             )
                         ],
-                        "expected": {label: row["category"]},
-                        "checks": spec["checks"],
+                        "expected": expected_label,
+                        "checks": _checks_for_expected(spec["checks"], expected_label),
                     }
                     write_private(split_dir / f"{row['case_id']}.yaml", yaml.safe_dump(case))
                 task = {
@@ -380,6 +429,8 @@ def confirm(workspace: Path, version: str, owner: str, template: Path) -> dict[s
                     "split": split,
                     "provenance": "historical",
                     "private": True,
+                    "scoring_contract_sha256": contract,
+                    "template_source": _repo_relative(template / "_task.yaml"),
                 }
                 digest = dataset_sha256(load_cases(split_dir))
                 receipt = {

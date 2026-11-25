@@ -300,6 +300,8 @@ def test_local_recommendation_needs_a_proven_cloud_comparator(
             "outcome_checks_complete": True,
             "provenance": "historical",
             "owner_reviewed": True,
+            "prompt": {"matches_deployed": True},
+            "scoring_contract": {"matches_deployed": True},
             "configured_model": "pinned-local",
             "model_version": "digest",
             "backend": "biz_port_model_ollama.OllamaModel",
@@ -810,13 +812,280 @@ def test_report_states_scored_prompt_and_whether_it_is_deployed(
         "deployed_sha256": digest,
         "matches_deployed": True,
     }
+    report.metadata.update(
+        backend="biz_port_model_ollama.OllamaModel",
+        configured_model="fixture-model",
+        model_version="fixture-digest",
+    )
+    assert report.deployment_ready
     changed = tmp_path / "repo"
-    shutil.copytree(ROOT / "roles/receptionist/prompts", changed / "roles/receptionist/prompts")
+    shutil.copytree(ROOT / "roles", changed / "roles")
     (changed / "roles/receptionist/prompts/triage.md").write_text(prompt + "\nRevised.\n")
     report = asyncio.run(
         run_eval(TASK, "local", Router(FakeModel([OUTPUT] * 50)), heldout, repo_root=changed)
     )
     assert report.metadata["prompt"]["scored_sha256"] == digest
     assert report.metadata["prompt"]["matches_deployed"] is False
+    assert report.metadata["scoring_contract"]["matches_deployed"] is True
+    report.metadata.update(
+        backend="biz_port_model_ollama.OllamaModel",
+        configured_model="fixture-model",
+        model_version="fixture-digest",
+    )
+    assert report.technical_gate_passed and not report.deployment_ready
     receipt = json.loads((heldout / "_owner_review.json").read_text())
     assert receipt["prompt_sha256"] == digest
+
+
+@pytest.fixture
+def mixed_reviewed(tmp_path: Path) -> Path:
+    """A confirmed cohort containing each owner-labelled outcome."""
+    source, workspace = tmp_path / "source.csv", tmp_path / "review"
+    write_private(source, csv_text(SOURCE_FIELDS, source_rows()))
+    prepare(source, workspace, "v1")
+    categories = ("enquiry", "service_request", "supplier", "spam", "other")
+    for split in ("tuning", "heldout"):
+        path = workspace / "v1" / split / "review.csv"
+        rows = csv_rows(path, REVIEW_FIELDS)
+        for number, row in enumerate(rows):
+            row["category"] = categories[number % len(categories)]
+        write_private(path, csv_text(REVIEW_FIELDS, rows))
+    confirm(workspace, "v1", "owner-01", TEMPLATE)
+    return workspace / "v1" / "confirmed" / "heldout"
+
+
+@pytest.mark.parametrize(
+    "expected,actual,confidence,passes",
+    [
+        ("other", "other", 0.25, True),
+        ("other", "other", 0, True),
+        ("enquiry", "enquiry", 0.59, False),
+        ("enquiry", "enquiry", 0.60, True),
+        ("service_request", "service_request", 0.59, False),
+        ("supplier", "supplier", 0.59, False),
+        ("spam", "spam", 0.59, False),
+        ("other", "enquiry", 0.25, False),
+        ("enquiry", "other", 0.25, False),
+        ("other", "other", True, False),
+        ("other", "other", "0.25", False),
+        ("other", "other", None, False),
+        ("other", "other", float("nan"), False),
+        ("other", "other", float("inf"), False),
+    ],
+)
+def test_historical_threshold_matches_the_owner_label(
+    mixed_reviewed: Path, expected: str, actual: str, confidence: Any, passes: bool
+) -> None:
+    from biz_kernel.models.eval.harness import score_case
+
+    case = next(c for c in load_cases(mixed_reviewed) if c.expected["category"] == expected)
+    result = score_case(case, {"category": actual, "summary": "fixture", "confidence": confidence})
+    assert result.passed is passes
+    assert all("unless_expected" not in check for check in case.checks)
+    assert not score_case(case, {"category": actual, "summary": "fixture"}).passed
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [None, {}, [], {"unknown": "other"}, {"category": "outside_enum"}],
+)
+def test_template_rejects_invalid_expected_label_conditions(tmp_path: Path, condition: Any) -> None:
+    from biz_kernel.models.eval.private import read_template
+
+    template = _template_copy(tmp_path)
+    task = yaml.safe_load((template / "_task.yaml").read_text())
+    task["historical"]["checks"][0]["unless_expected"] = condition
+    (template / "_task.yaml").write_text(yaml.safe_dump(task))
+    with pytest.raises(ValueError, match="unless_expected"):
+        read_template(template)
+
+
+def test_scoring_contract_change_requires_new_confirmation(
+    reviewed: tuple[Path, Path], tmp_path: Path
+) -> None:
+    import shutil
+
+    from biz_kernel.models.eval.harness import EvalReport, dataset_metadata
+
+    _, heldout = reviewed
+    files = {path.name: path.read_bytes() for path in heldout.iterdir()}
+    metadata = dataset_metadata(heldout, load_cases(heldout), repo_root=ROOT)
+    assert metadata["scoring_contract"]["matches_deployed"] is True
+    metadata.update(
+        backend="biz_port_model_ollama.OllamaModel",
+        configured_model="fixture-model",
+        model_version="fixture-digest",
+    )
+    assert EvalReport(TASK, "local", 1.0, [], total_cases=50, metadata=metadata).deployment_ready
+
+    changed = tmp_path / "repo"
+    shutil.copytree(ROOT / "roles", changed / "roles")
+    template = changed / TEMPLATE.relative_to(ROOT)
+    task = yaml.safe_load((template / "_task.yaml").read_text())
+    del task["historical"]["checks"][0]["unless_expected"]
+    (template / "_task.yaml").write_text(yaml.safe_dump(task))
+    metadata = dataset_metadata(heldout, load_cases(heldout), repo_root=changed)
+    assert metadata["owner_reviewed"] is True
+    assert metadata["scoring_contract"]["matches_deployed"] is False
+    metadata.update(
+        backend="biz_port_model_ollama.OllamaModel",
+        configured_model="fixture-model",
+        model_version="fixture-digest",
+    )
+    report = EvalReport(TASK, "local", 1.0, [], total_cases=50, metadata=metadata)
+    assert report.technical_gate_passed and not report.deployment_ready
+    assert files == {path.name: path.read_bytes() for path in heldout.iterdir()}
+    with pytest.raises(ValueError, match="already has confirmed"):
+        confirm(heldout.parents[2], "v1", "owner-01", template)
+
+
+def test_tightened_current_gates_invalidate_frozen_readiness(
+    reviewed: tuple[Path, Path], tmp_path: Path
+) -> None:
+    import shutil
+    from dataclasses import replace
+
+    from biz_kernel.models.eval.harness import dataset_metadata
+
+    _, heldout = reviewed
+    wrong = {**OUTPUT, "category": "other"}
+    report = asyncio.run(
+        run_eval(
+            TASK, "local", Router(FakeModel([OUTPUT] * 48 + [wrong] * 2)), heldout, repo_root=ROOT
+        )
+    )
+    report.metadata.update(
+        backend="biz_port_model_ollama.OllamaModel",
+        configured_model="fixture-model",
+        model_version="fixture-digest",
+    )
+    assert report.pass_rate == 0.96 and report.deployment_ready
+    original = {path.name: path.read_bytes() for path in heldout.iterdir()}
+    changed = tmp_path / "repo"
+    shutil.copytree(ROOT / "roles", changed / "roles")
+    template = changed / TEMPLATE.relative_to(ROOT)
+    task_file = template / "_task.yaml"
+    task = yaml.safe_load(task_file.read_text())
+    task.update(required_pass_rate=0.99, min_cases=100)
+    task_file.write_text(yaml.safe_dump(task))
+    metadata = {
+        **report.metadata,
+        **dataset_metadata(heldout, load_cases(heldout), repo_root=changed),
+    }
+    stale_report = replace(report, metadata=metadata)
+    assert metadata["required_pass_rate"] == 0.95 and metadata["min_cases"] == 50
+    assert metadata["prompt"]["matches_deployed"] is True
+    assert metadata["scoring_contract"]["matches_deployed"] is False
+    assert stale_report.technical_gate_passed and not stale_report.deployment_ready
+    assert original == {path.name: path.read_bytes() for path in heldout.iterdir()}
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("required_pass_rate", True),
+        ("required_pass_rate", float("nan")),
+        ("required_pass_rate", float("inf")),
+        ("required_pass_rate", 0),
+        ("required_pass_rate", 1.1),
+        ("required_pass_rate", "0.99"),
+        ("min_cases", True),
+        ("min_cases", 0),
+        ("min_cases", 1.5),
+        ("min_cases", "100"),
+    ],
+)
+def test_template_rejects_invalid_gate_settings(tmp_path: Path, key: str, value: Any) -> None:
+    from biz_kernel.models.eval.private import read_template
+
+    template = _template_copy(tmp_path)
+    task_file = template / "_task.yaml"
+    task = yaml.safe_load(task_file.read_text())
+    task[key] = value
+    task_file.write_text(yaml.safe_dump(task))
+    with pytest.raises(ValueError, match=key):
+        read_template(template)
+
+
+def test_confirmation_saves_stricter_role_gates(
+    reviewed: tuple[Path, Path], tmp_path: Path
+) -> None:
+    from biz_kernel.models.eval.harness import EvalReport, dataset_metadata
+
+    _, previous = reviewed
+    workspace = previous.parents[2]
+    prepare(tmp_path / "source.csv", workspace, "v2")
+    for split in ("tuning", "heldout"):
+        path = workspace / "v2" / split / "review.csv"
+        rows = csv_rows(path, REVIEW_FIELDS)
+        for row in rows:
+            row["category"] = "enquiry"
+        write_private(path, csv_text(REVIEW_FIELDS, rows))
+    template = _template_copy(tmp_path)
+    task_file = template / "_task.yaml"
+    task = yaml.safe_load(task_file.read_text())
+    task.update(required_pass_rate=0.99, min_cases=100)
+    task_file.write_text(yaml.safe_dump(task))
+    confirm(workspace, "v2", "owner-01", template)
+    heldout = workspace / "v2" / "confirmed" / "heldout"
+    metadata = dataset_metadata(heldout, load_cases(heldout))
+    receipt = json.loads((heldout / "_owner_review.json").read_text())
+    assert metadata["required_pass_rate"] == receipt["required_pass_rate"] == 0.99
+    assert metadata["min_cases"] == receipt["min_cases"] == 100
+    assert not EvalReport(
+        TASK, "local", 1.0, [], total_cases=50, metadata=metadata
+    ).technical_gate_passed
+
+
+@pytest.mark.parametrize("key,value", [("required_pass_rate", 0.99), ("min_cases", 100)])
+def test_confirmed_gate_cannot_be_changed_without_its_receipt(
+    reviewed: tuple[Path, Path], key: str, value: Any
+) -> None:
+    from biz_kernel.models.eval.harness import dataset_metadata
+
+    _, heldout = reviewed
+    path = heldout / "_task.yaml"
+    task = yaml.safe_load(path.read_text())
+    task[key] = value
+    path.write_text(yaml.safe_dump(task))
+    with pytest.raises(ValueError, match="receipt does not match"):
+        dataset_metadata(heldout, load_cases(heldout))
+
+
+def test_legacy_unconditional_cases_keep_their_original_scoring(tmp_path: Path) -> None:
+    from biz_kernel.models.eval.harness import EvalReport, dataset_metadata, score_case
+
+    template = _template_copy(tmp_path)
+    task = yaml.safe_load((template / "_task.yaml").read_text())
+    del task["historical"]["checks"][0]["unless_expected"]
+    (template / "_task.yaml").write_text(yaml.safe_dump(task))
+    source, workspace = tmp_path / "source.csv", tmp_path / "review"
+    write_private(source, csv_text(SOURCE_FIELDS, source_rows()))
+    prepare(source, workspace, "v1")
+    for split in ("tuning", "heldout"):
+        path = workspace / "v1" / split / "review.csv"
+        rows = csv_rows(path, REVIEW_FIELDS)
+        for row in rows:
+            row["category"] = "other"
+        write_private(path, csv_text(REVIEW_FIELDS, rows))
+    confirm(workspace, "v1", "owner-01", template)
+    heldout = workspace / "v1" / "confirmed" / "heldout"
+    # Emulate a receipt predating scoring-contract attestation, without changing cases.
+    for name in ("_task.yaml", "_owner_review.json"):
+        path = heldout / name
+        data = yaml.safe_load(path.read_text())
+        del data["scoring_contract_sha256"], data["template_source"]
+        write_private(path, json.dumps(data) if name.endswith(".json") else yaml.safe_dump(data))
+    cases = load_cases(heldout)
+    output = {"category": "other", "summary": "fixture", "confidence": 0.25}
+    assert not score_case(cases[0], output).passed
+    metadata = dataset_metadata(heldout, cases, repo_root=ROOT)
+    assert metadata["owner_reviewed"] is True
+    assert metadata["scoring_contract"]["matches_deployed"] is None
+    metadata.update(
+        backend="biz_port_model_ollama.OllamaModel",
+        configured_model="fixture-model",
+        model_version="fixture-digest",
+    )
+    report = EvalReport(TASK, "local", 1.0, [], total_cases=50, metadata=metadata)
+    assert report.technical_gate_passed and not report.deployment_ready

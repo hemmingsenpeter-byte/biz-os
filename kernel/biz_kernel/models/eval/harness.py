@@ -33,7 +33,9 @@ from biz_kernel.models.eval.private import (
     CloudAuthorisation,
     find_repo_root,
     private_path,
+    read_template,
     record_cloud_disclosure,
+    scoring_contract_sha256,
     sha_json,
     sha_text,
 )
@@ -122,6 +124,8 @@ class EvalReport:
             self.technical_gate_passed
             and self.metadata.get("owner_reviewed") is True
             and self.metadata.get("provenance") in ("historical", "mixed")
+            and self.metadata.get("prompt", {}).get("matches_deployed") is True
+            and self.metadata.get("scoring_contract", {}).get("matches_deployed") is True
             and self.has_model_evidence
         )
 
@@ -319,7 +323,26 @@ def dataset_metadata(
         }
         data["owner_reviewed"] = True
         data["prompt"] = _prompt_status(receipt, scored, repo_root)
+        data["scoring_contract"] = _scoring_contract_status(receipt, repo_root)
     return data
+
+
+def _scoring_contract_status(receipt: dict[str, Any], repo_root: Path | None) -> dict[str, Any]:
+    """Older contracts remain scoreable, but only the current one establishes readiness."""
+    source, scored = receipt.get("template_source"), receipt.get("scoring_contract_sha256")
+    root = repo_root or find_repo_root(Path.cwd())
+    deployed = None
+    if isinstance(source, str) and root is not None:
+        try:
+            deployed = scoring_contract_sha256(read_template((root / source).parent))
+        except (OSError, ValueError):
+            deployed = None
+    return {
+        "scored_sha256": scored,
+        "deployed_path": source,
+        "deployed_sha256": deployed,
+        "matches_deployed": None if deployed is None else deployed == scored,
+    }
 
 
 def _prompt_status(
@@ -372,6 +395,16 @@ def _verify_owner_review(
         or not re.fullmatch(r"[0-9a-f]{64}", receipt["source_sha256"])
         or len({case.name for case in cases}) != len(cases)
         or {sha_text(case.system) for case in cases} != {receipt.get("prompt_sha256")}
+        or any(
+            receipt.get(key) != data.get(key)
+            for key in ("scoring_contract_sha256", "template_source")
+        )
+        or (
+            receipt.get("scoring_contract_sha256") is not None
+            and any(
+                receipt.get(key) != data.get(key) for key in ("required_pass_rate", "min_cases")
+            )
+        )
     ):
         raise ValueError("owner review receipt does not match the labelled dataset")
     _verify_review_split(directory, data, receipt, cases)

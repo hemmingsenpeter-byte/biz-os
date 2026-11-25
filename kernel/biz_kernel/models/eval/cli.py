@@ -212,12 +212,20 @@ def eval_cmd(
             f"{disclosure['provider']}; audit record in {CLOUD_AUDIT_FILE} in the workspace"
         )
     if private:
-        prompt = (rep.local if isinstance(rep, ShadowReport) else rep).metadata["prompt"]
+        metadata = (rep.local if isinstance(rep, ShadowReport) else rep).metadata
+        prompt = metadata["prompt"]
         match = {True: "matches", False: "DIFFERS FROM", None: "cannot be compared with"}
         typer.echo(
             f"scored frozen prompt {prompt['scored_sha256']} "
             f"{match[prompt['matches_deployed']]} the deployed prompt"
         )
+        contract = metadata["scoring_contract"]
+        typer.echo(
+            f"confirmed scoring contract {contract['scored_sha256'] or 'not recorded'} "
+            f"{match[contract['matches_deployed']]} the current template"
+        )
+        if contract["matches_deployed"] is not True:
+            typer.echo("deployment readiness requires a new owner-confirmed dataset version")
     if isinstance(rep, ShadowReport):
         passed = rep.technical_gate_passed and (not gate or rep.ready_for_local)
     else:

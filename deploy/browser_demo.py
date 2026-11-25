@@ -28,12 +28,14 @@ import pgserver
 import yaml
 from biz_cap_demo_desk.models import DemoRequest
 from biz_kernel import db, migrations
-from biz_kernel.approvals.models import StagedOperation
+from biz_kernel.approvals import staged
+from biz_kernel.approvals.models import Correction, StagedOperation
 from biz_kernel.approvals.staged import digest
 from biz_kernel.auth import tokens
 from biz_kernel.auth.users import create_user
 from biz_kernel.evidence import service as evidence
 from biz_kernel.loader import load_composition
+from biz_kernel.policy.types import Action, SideEffect
 from biz_kernel.records.models import Job, Task
 from biz_kernel.runtime import build_runtime
 from biz_kernel.tools.shadow import SHADOW_EVIDENCE
@@ -103,6 +105,34 @@ def seed_staff_and_legacy(origin: str) -> tuple[dict[str, str], dict[str, str]]:
             "decision_type": "legacy_import",
         }
     return staff, legacy
+
+
+def seed_training_legacy() -> str:
+    """A real correction whose source draft was never captured, without a live workflow."""
+    with db.session_scope() as session:
+        operation = staged.stage(
+            session,
+            Action(
+                actor="training_legacy_fixture",
+                tool="demo_desk.send_reply",
+                side_effect=SideEffect.EXTERNAL,
+                inputs={"body": "Synthetic legacy draft", "idempotency_key": str(uuid.uuid4())},
+            ),
+            approver=staged.OWNER,
+        )
+        staged.edit(
+            session,
+            operation.id,
+            {**operation.inputs, "body": "Corrected synthetic legacy draft"},
+            by=staged.OWNER,
+            reason="Legacy training correction without a recorded draft.",
+            severity="factual",
+            version=operation.version,
+        )
+        staged.reject(session, operation.id, staged.OWNER, "Fixture: never dispatch this operation")
+        correction = session.scalar(select(Correction).where(Correction.op_id == operation.id))
+        assert correction is not None
+        return str(correction.id)
 
 
 class ObservedMail(FakeMail):
@@ -296,6 +326,7 @@ def main() -> None:
             )
             owner = json.loads(result.stdout)
             staff, legacy_unknown = seed_staff_and_legacy(origin)
+            training_legacy_correction_id = seed_training_legacy()
             with db.session_scope() as session:
                 shadow_job = Job(kind="browser_acceptance", stage="open")
                 session.add(shadow_job)
@@ -337,6 +368,12 @@ def main() -> None:
                         "legacy_unknown": legacy_unknown,
                         "shadow_task_id": shadow_task_id,
                         "related_task_id": related_task_id,
+                        "training_legacy_correction_id": training_legacy_correction_id,
+                        "training_protected_files": [
+                            str(app_dir / "policy.yaml"),
+                            str(ROOT / "roles/demo_clerk/prompts/handle_request.md"),
+                            str(ROOT / "roles/demo_clerk/sops/handle_request.yaml"),
+                        ],
                         "operations": operations,
                         "sends": os.environ["BIZ_BROWSER_SENDS"],
                     }

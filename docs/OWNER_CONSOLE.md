@@ -87,6 +87,11 @@ meeting was booked. Shared job activity retains its original event label.
 
 ## Scorecard
 
+The owner can also open **Training** to turn an approval correction into a proposed
+rule and source-backed regression case. Acceptance means **accepted for testing**;
+it does not deploy instructions. Legacy corrections without captured draft evidence
+stay incomplete. See the [training guide](TRAINING.md) for the full workflow.
+
 - Open **Scorecard** for the last 28 days: tasks completed, serious errors, cost,
   cost per task and time saved.
 - The table lists each role and type of decision: proposals, approved as is,

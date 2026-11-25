@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import type {
+  TrainingCandidate,
+  TrainingCorrection,
+} from "../src/lib/training";
 
 type Operation = {
   id: string;
@@ -20,6 +24,8 @@ type State = {
   legacy_unknown: { id: string; actor: string; decision_type: string };
   shadow_task_id: string;
   related_task_id: string;
+  training_legacy_correction_id: string;
+  training_protected_files: string[];
   operations: Record<
     "approve" | "reject" | "stale" | "concurrent_edit",
     Operation
@@ -35,6 +41,7 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     fs.readFileSync(path.resolve("test-results/browser-state.json"), "utf8"),
   ) as State;
   const origin = new URL(state.owner.invite_url).origin;
+  let acceptedTrainingId = "";
   const sends = () =>
     fs.existsSync(state.sends)
       ? fs
@@ -62,6 +69,9 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     await expect(page).toHaveURL(/\/auth\/login/);
     expect((await page.request.get("/v1/approvals")).status()).toBe(401);
     expect((await page.request.get("/v1/tasks")).status()).toBe(401);
+    expect((await page.request.get("/v1/training/corrections")).status()).toBe(
+      401,
+    );
   });
 
   await test.step("fresh owner invite enrols and authenticates a real virtual passkey", async () => {
@@ -205,7 +215,9 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     await expect(
       page.getByRole("heading", { name: "Related meeting task", exact: true }),
     ).toBeVisible();
-    await expect(page.getByText("Shared job evidence", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Shared job evidence", { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
     ).toHaveCount(0);
@@ -320,10 +332,16 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     });
     expect(edit.status()).toBe(200);
     expect((await edit.json()).version).toBe(2);
-    const staleEdit = await page.request.post(`/v1/approvals/${operation.id}/edit`, {
-      data: { inputs: { ...operation.inputs, body: "A second editor." }, version: 1 },
-      headers: { Origin: origin },
-    });
+    const staleEdit = await page.request.post(
+      `/v1/approvals/${operation.id}/edit`,
+      {
+        data: {
+          inputs: { ...operation.inputs, body: "A second editor." },
+          version: 1,
+        },
+        headers: { Origin: origin },
+      },
+    );
     expect(staleEdit.status()).toBe(409); // two editors can't overwrite each other
     const stale = page.waitForResponse(
       `**/v1/approvals/${operation.id}/approve`,
@@ -349,14 +367,18 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     const firstReason = "The reply must go to the corrected recipient.";
     await page.goto(`/approvals/${operation.id}`);
     await page.getByRole("button", { name: "Edit proposal" }).click();
-    await page.getByRole("textbox", { name: "To", exact: true }).fill(recipient);
+    await page
+      .getByRole("textbox", { name: "To", exact: true })
+      .fill(recipient);
     await page.getByLabel("Reason, in one line").fill(firstReason);
     await page.getByRole("radio", { name: /A fact was wrong/ }).check();
     const other = await context.newPage();
     try {
       await other.goto(`/approvals/${operation.id}`);
       await other.getByRole("button", { name: "Edit proposal" }).click();
-      await other.getByRole("textbox", { name: "Body", exact: true }).fill(secondBody);
+      await other
+        .getByRole("textbox", { name: "Body", exact: true })
+        .fill(secondBody);
       await other
         .getByLabel("Reason, in one line")
         .fill("The other tab corrected the body.");
@@ -381,9 +403,9 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
           .getByRole("alert")
           .filter({ hasText: "Your unsaved changes are kept." }),
       ).toBeVisible();
-      await expect(page.getByRole("textbox", { name: "To", exact: true })).toHaveValue(
-        recipient,
-      );
+      await expect(
+        page.getByRole("textbox", { name: "To", exact: true }),
+      ).toHaveValue(recipient);
       await expect(page.getByLabel("Reason, in one line")).toHaveValue(
         firstReason,
       );
@@ -411,21 +433,21 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
       });
       await expect(latest).toContainText("Latest saved version 2");
       await expect(latest.getByText(secondBody, { exact: true })).toBeVisible();
-      await expect(page.getByRole("textbox", { name: "To", exact: true })).toHaveValue(
-        recipient,
-      );
+      await expect(
+        page.getByRole("textbox", { name: "To", exact: true }),
+      ).toHaveValue(recipient);
       await expect(
         page.getByRole("button", { name: "Save as version 2" }),
       ).toBeDisabled();
       await page
         .getByRole("button", { name: "Use latest version and keep my changes" })
         .click();
-      await expect(page.getByRole("textbox", { name: "Body", exact: true })).toHaveValue(
-        secondBody,
-      );
-      await expect(page.getByRole("textbox", { name: "To", exact: true })).toHaveValue(
-        recipient,
-      );
+      await expect(
+        page.getByRole("textbox", { name: "Body", exact: true }),
+      ).toHaveValue(secondBody);
+      await expect(
+        page.getByRole("textbox", { name: "To", exact: true }),
+      ).toHaveValue(recipient);
       const resolvedSave = page.waitForResponse(
         `**/v1/approvals/${operation.id}/edit`,
       );
@@ -782,6 +804,191 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     });
   });
 
+  await test.step("owner corrections become immutable proposals accepted for testing without deployment", async () => {
+    const protectedBefore = state.training_protected_files.map((file) =>
+      fs.readFileSync(file, "utf8"),
+    );
+    const approvalsBefore = await (
+      await page.request.get("/v1/approvals")
+    ).json();
+    const autonomyBefore = await (
+      await page.request.get("/v1/audit?kind=autonomy&limit=1000")
+    ).json();
+    const entries = (await (
+      await page.request.get("/v1/training/corrections")
+    ).json()) as TrainingCorrection[];
+    const entry = entries.find(
+      (item) =>
+        item.correction.op_id === state.operations.stale.id &&
+        item.correction.reason === editReason,
+    );
+    expect(entry).toBeDefined();
+    expect(entry!.snapshots.length).toBeGreaterThan(0);
+    const snapshot = entry!.snapshots[0];
+    const rule =
+      "Use the corrected date <img src=x onerror=alert(1)> and verify it before replying.";
+    const expectedOutput = { ...snapshot.output, body: edited };
+    const payload = {
+      rule,
+      snapshot_id: snapshot.id,
+      expected_output: expectedOutput,
+    };
+    await page.goto("/training");
+    await expect(
+      page.getByRole("heading", { name: "Training", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: editReason, exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "New training proposal" }),
+    ).toBeVisible();
+    await page.getByLabel("Proposed rule", { exact: true }).fill(rule);
+    await page.getByLabel("Recorded source draft").selectOption(snapshot.id);
+    await page.getByLabel("Expected result (JSON)").fill("[]");
+    await page
+      .getByRole("button", { name: "Create training proposal" })
+      .click();
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "Enter the expected result as a JSON object." }),
+    ).toBeVisible();
+    await page
+      .getByLabel("Expected result (JSON)")
+      .fill(JSON.stringify(expectedOutput, null, 2));
+    const creating = page.waitForResponse(
+      `**/v1/training/corrections/${entry!.correction.id}/candidates`,
+    );
+    await page
+      .getByRole("button", { name: "Create training proposal" })
+      .click();
+    const createdResponse = await creating;
+    expect(createdResponse.ok()).toBe(true);
+    const candidate = (await createdResponse.json()) as TrainingCandidate;
+    acceptedTrainingId = candidate.id;
+    expect(candidate.status).toBe("proposed");
+    expect(candidate.eligible_for_testing).toBe(true);
+    expect(candidate.readiness_established).toBe(false);
+    await expect(page).toHaveURL(new RegExp(`/training/${candidate.id}$`));
+    await expect(page.getByText(rule, { exact: true })).toBeVisible();
+    await expect(page.getByText(/Recorded on .* by you\./)).toBeVisible();
+    await expect(page.locator("main img")).toHaveCount(0);
+    await expect(page.locator("main b")).toHaveCount(0);
+    const repeated = await page.request.post(
+      `/v1/training/corrections/${entry!.correction.id}/candidates`,
+      { data: payload, headers: { Origin: origin } },
+    );
+    expect(repeated.ok()).toBe(true);
+    expect((await repeated.json()).id).toBe(candidate.id);
+    const conflicting = await page.request.post(
+      `/v1/training/corrections/${entry!.correction.id}/candidates`,
+      {
+        data: { ...payload, rule: "A different proposed rule" },
+        headers: { Origin: origin },
+      },
+    );
+    expect(conflicting.status()).toBe(409);
+    await screenshots("owner-console-training-proposal");
+
+    await page.getByRole("button", { name: "Pause everything" }).click();
+    await page
+      .getByRole("dialog", { name: "Pause everything?" })
+      .getByRole("button", { name: "Pause everything now" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Accept for testing" }),
+    ).toBeDisabled();
+    const pausedReview = await page.request.post(
+      `/v1/training/candidates/${candidate.id}/review`,
+      { data: {}, headers: { Origin: origin } },
+    );
+    expect(pausedReview.status()).toBe(409);
+    await banner.getByRole("button", { name: "Resume", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Accept for testing" }),
+    ).toBeEnabled();
+    await page
+      .getByLabel("Review note")
+      .fill("Keep this case for regression testing only.");
+    const reviewing = page.waitForResponse(
+      `**/v1/training/candidates/${candidate.id}/review`,
+    );
+    await page.getByRole("button", { name: "Accept for testing" }).click();
+    expect((await reviewing).status()).toBe(200);
+    await expect(
+      page.getByText("Accepted for testing", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("status")).toContainText(
+      "No instructions have been deployed.",
+    );
+
+    await page.goto(
+      `/training/corrections/${state.training_legacy_correction_id}`,
+    );
+    await expect(
+      page.getByText("Incomplete provenance", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Recorded source draft")).toBeDisabled();
+    await page
+      .getByLabel("Proposed rule", { exact: true })
+      .fill("Retain this legacy correction for an owner review.");
+    const creatingLegacy = page.waitForResponse(
+      `**/v1/training/corrections/${state.training_legacy_correction_id}/candidates`,
+    );
+    await page
+      .getByRole("button", { name: "Create training proposal" })
+      .click();
+    const legacyCandidate = (await (
+      await creatingLegacy
+    ).json()) as TrainingCandidate;
+    expect(legacyCandidate.eligible_for_testing).toBe(false);
+    await expect(page).toHaveURL(
+      new RegExp(`/training/${legacyCandidate.id}$`),
+    );
+    await expect(
+      page.getByRole("button", { name: "Accept for testing" }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "Pause everything" }).click();
+    await page
+      .getByRole("dialog", { name: "Pause everything?" })
+      .getByRole("button", { name: "Pause everything now" })
+      .click();
+    const rejecting = page.waitForResponse(
+      `**/v1/training/candidates/${legacyCandidate.id}/reject`,
+    );
+    await page.getByRole("button", { name: "Reject proposal" }).click();
+    expect((await rejecting).status()).toBe(200);
+    await expect(page.getByText("Rejected", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("No source draft was recorded for this proposal."),
+    ).toBeVisible();
+    await screenshots("owner-console-training-incomplete");
+    await banner.getByRole("button", { name: "Resume", exact: true }).click();
+    await expect(banner).toHaveCount(0);
+
+    const saved = (await (
+      await page.request.get(`/v1/training/candidates/${candidate.id}`)
+    ).json()) as TrainingCandidate;
+    expect(saved.status).toBe("accepted_for_testing");
+    expect(saved.rule).toBe(rule);
+    expect(saved.expected_output).toEqual(expectedOutput);
+    expect(saved.readiness_established).toBe(false);
+    expect(saved.regression_case?.owner_reviewed).toBe(false);
+    expect(await (await page.request.get("/v1/approvals")).json()).toEqual(
+      approvalsBefore,
+    );
+    expect(
+      await (
+        await page.request.get("/v1/audit?kind=autonomy&limit=1000")
+      ).json(),
+    ).toEqual(autonomyBefore);
+    expect(
+      state.training_protected_files.map((file) =>
+        fs.readFileSync(file, "utf8"),
+      ),
+    ).toEqual(protectedBefore);
+    expect(sends()).toHaveLength(2);
+  });
+
   await test.step("signing out revokes browser access", async () => {
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/auth\/login/);
@@ -804,6 +1011,24 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     expect((await login).status()).toBe(200);
     const staff = await (await page.request.get("/v1/auth/me")).json();
     expect(staff.role).toBe("staff");
+    await expect(
+      page.getByRole("link", { name: "Training", exact: true }),
+    ).toHaveCount(0);
+    await page.goto("/training");
+    await expect(
+      page.getByRole("heading", { name: "Owner access required" }),
+    ).toBeVisible();
+    expect((await page.request.get("/v1/training/corrections")).status()).toBe(
+      403,
+    );
+    expect(
+      (
+        await page.request.post(
+          `/v1/training/candidates/${acceptedTrainingId}/review`,
+          { data: {}, headers: { Origin: origin } },
+        )
+      ).status(),
+    ).toBe(403);
     await page.getByRole("button", { name: "Pause everything" }).click();
     const dialog = page.getByRole("dialog", { name: "Pause everything?" });
     await dialog

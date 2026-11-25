@@ -1,5 +1,123 @@
 # Build log
 
+## 2026-11-21 Owner decisions on the #7 to #9 open items
+
+The owner asked for the best call on each open item, approved in advance.
+Each change was written by a subagent, reviewed by a fresh one, fixed until
+the review passed, and then merged into this branch. After the merge, pytest,
+ruff, mypy and `biz doctor` for both apps passed. These decisions settle most
+of the "Waiting on the owner" items in the 2026-11-20 entry below.
+
+### Decided
+
+- **Shadow suppression is terminal.** A suppressed staged operation becomes
+  `shadowed` in the same transaction as its audit record. It leaves the
+  approval queue, can't be approved, edited or rejected, and never executes
+  later, even after the mode becomes supervised. Repeat calls write no new audit.
+- **Only the owner can loosen the mode.** `BIZ_EXECUTION_MODE` can only make
+  it stricter. Supervised needs `supervised_authorization` (`authorized_by`,
+  `authorized_on`, `pilot_exit_evidence`) in the composition. The runtime
+  refuses to start without it, and doctor and preflight report it. A
+  composition without `execution_mode` now defaults to shadow. HIVE has no
+  authorization. apps/demo has a fixture one, since its ports are fakes.
+- **Shadow audit keeps the would-be verdict.** `PolicyEngine.evaluate` is a
+  side-effect-free twin of `check`. Shadow mode refuses a cloud model port
+  unless policy sets `shadow.allow_cloud_model: true` (only apps/demo, fake).
+  Approvals made in shadow mode still count toward autonomy promotion, which
+  stays an owner action.
+- **Private eval data fails closed to the cloud.** It needs
+  `--allow-cloud-data` and `eval.cloud_data: allow` in app policy; no app
+  has the opt-in. Every case carries a private or public provenance, and a run
+  that leaves the machine refuses cases without one. The harness enforces the
+  loopback check for the local tier. Each disclosure is written to
+  `cloud_disclosures.jsonl` in the private workspace before the first cloud
+  call, with no case content. In-process forgery is out of scope.
+- **Eval follow-ups.** Failed cases keep their spend, but port errors keep
+  their type and stay retryable. The owner receipt binds the threshold and
+  prompt hash, so older receipts must be confirmed again. Reports show the
+  scored and deployed prompt hashes. `eval-data confirm` takes `--operator`.
+- **Outside signers reach DocuSeal again, narrowly.** The public gateway
+  routes only signer paths on `DOCUSEAL_HOST`, which defaults to
+  `signing-disabled.invalid`. Every route checks the raw URI and returns 404
+  for encoded `.`, `/`, `\`, `%`, `#`, a raw `#`, `\`, `//`, dot-segments and
+  method overrides. Preflight requires the exact guards, and fails on any
+  DocuSeal route outside them. `APP_URL` is `https://${DOCUSEAL_HOST}`.
+- **Storage and proxies.** The README has steps for migrating stored object
+  paths. memory_sources and audit_log are cited history and are not
+  rewritten. The app network is pinned to `BIZ_APP_SUBNET` (172.30.250.0/24),
+  which `BIZ_TRUSTED_PROXIES` defaults to. Existing installs must run
+  `down`, then `up`.
+
+### Still open
+
+- **Caddy not run.** `caddy validate` and live attack requests against
+  PublicCaddyfile haven't been run anywhere. The reviewer confirmed the Caddy
+  v2.11.9 behaviours the guards rely on from source. Run both on the
+  appliance, or let CI's docker-smoke load it, before enabling a signing host.
+- **DocuSeal free edition.** The port posts to `/api/submissions/pdf`, which
+  is paid-only in DocuSeal 3.3.8, so `request_signature` will probably fail.
+- **Cloud model behind Ollama.** A cloud model run through `model_ollama` is
+  caught only by preflight's model-name check, not by runtime or doctor.
+- **Cosmetic.** A `Case(**asdict(c))` rebuild is refused with AttributeError,
+  not a clear message. The mount check refuses one directory reached by two
+  spellings.
+
+## 2026-11-20 Review and merge of #7, #8 and #9
+
+Subagents reviewed each PR, fixed what the reviewers proved, then re-reviewed
+the fixes. #8 merged by squash. #7 and then #9 merged by merge commit to keep
+the stack clean. Before #9 merged, the #7 head was merged into it. After each
+merge, pytest, ruff, mypy and `biz doctor` for both apps passed on main.
+
+### Fixes made during review
+
+- **#7 backups fail closed on mount drift.** `deploy/backups/common.sh` checks
+  the object bind mount of biz-api and biz-worker. It reads the live
+  containers when they exist, otherwise `docker compose config`. Backup or
+  restore stops unless that mount is the directory being archived. Recovery
+  step 2 in the README now says `BIZ_STORAGE_HOST_ROOT`.
+- **#7 preflight** rejects `network_mode: service:*` and `container:*`.
+- **#8 unreported usage is unmetered.** `Usage.take()` returns `None` when an
+  adapter reports nothing. The router counts `unmetered_calls`, and the eval
+  counts those cases as unmetered instead of free.
+- **#8 the kernel names no role.** Private eval reads its task, categories,
+  prompt, schema and dataset from the role's `_task.yaml` (`historical:` block).
+  `eval-data confirm` now takes `--template`. A new invariant,
+  `test_shared_code_names_no_role`, enforces this.
+
+### Waiting on the owner
+
+- **Approvals left behind by shadow mode (#9).** An action approved but
+  suppressed stays `approved`. If the mode later becomes supervised,
+  `staged.execute` (e.g. payables /apply) would send it with no fresh
+  approval. Should suppression cancel it?
+- **Exit from shadow mode (#9).** `BIZ_EXECUTION_MODE=supervised` overrides
+  HIVE's default, and preflight accepts it. Nothing enforces the pilot-exit
+  evidence or owner sign-off.
+- **No policy verdict in shadow audit (#9).** Suppression runs before
+  `policy.check`, so the audit never says whether policy would have allowed,
+  asked or denied. Shadow mode also has no rule against cloud models.
+- **Cloud data in private eval (#8).** `--allow-cloud-data` is the only gate
+  on sending historical enquiries to a cloud model. It bypasses `policy.check`
+  and the approval queue.
+- **Private eval gaps (#8).** The prompt is frozen at confirm time, so
+  `deployment_ready` can be true for a prompt that isn't deployed. The shadow
+  threshold isn't covered by the owner receipt. Spend on cases where every
+  cloud attempt failed isn't recorded. A cloud adapter that reports no usage
+  is still free in budgets.
+- **Signing links (#7).** The public gateway no longer routes DocuSeal `/s`
+  and `/d`, so HIVE's outside signers can't open signing URLs.
+- **Storage path (#7).** The container path is now fixed. Existing installs on
+  another path need a migration note for stored `file://` URIs.
+  `BIZ_TRUSTED_PROXIES` is unset by default, which trusts the Docker bridges,
+  and preflight doesn't check it.
+
+### Minor follow-ups
+
+- `read_template` raises a raw AttributeError or TypeError on some malformed
+  schemas, not a CLI error.
+- The backup mount check refuses one directory reached by two spellings.
+
 ## 2026-11-20 Shadow meeting offers in the owner console
 
 - The task activity shows “Prepared, not sent” for a meeting offer with

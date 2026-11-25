@@ -64,9 +64,50 @@ require_stopped_writers() {
   [[ -z "$active" ]] || fail "stop biz-api, biz-worker and docuseal before proceeding"
 }
 
+object_mount_hint() {
+  printf '%s' "set BIZ_STORAGE_HOST_ROOT in the environment file to the directory the" \
+    " API and worker mount (recreate the containers if they use another) before proceeding"
+}
+
+# Prints the host source Compose would bind at the object path for biz-api and biz-worker.
+configured_object_mount() {
+  dc config --format json 2>/dev/null | python3 -I -c '
+import json, sys
+services = json.load(sys.stdin).get("services") or {}
+sources = set()
+for name in ("biz-api", "biz-worker"):
+    mounts = [
+        volume for volume in (services.get(name) or {}).get("volumes") or []
+        if isinstance(volume, dict) and volume.get("type") == "bind"
+        and volume.get("target") == "/var/lib/biz-os/objects"
+    ]
+    if len(mounts) != 1:
+        sys.exit(1)
+    sources.add(str(mounts[0].get("source") or ""))
+if len(sources) != 1:
+    sys.exit(1)
+print(sources.pop())
+'
+}
+
+require_same_objects() {
+  local label="$1" source="$2" canonical
+  canonical="$(cd "$source" 2>/dev/null && pwd -P)" || canonical="$source"
+  [[ "$canonical" == "$STORAGE" ]] ||
+    fail "$label object mount differs from $HOST_OBJECTS (it is $canonical);" \
+      "$(object_mount_hint)"
+}
+
+# Fail closed unless the archived directory is the one the API and worker mount, both as
+# Compose would create them now and as any existing containers were created. A legacy
+# .env with only BIZ_STORAGE_ROOT may name a directory Compose no longer mounts.
 verify_installed_object_mounts() {
-  [[ -n "${BIZ_STORAGE_HOST_ROOT:-}" ]] || return 0  # legacy custom topology
-  local ids id mount canonical
+  local configured ids id mount
+  configured="$(configured_object_mount)" ||
+    fail "cannot resolve one Compose bind mount for biz-api and biz-worker objects;" \
+      "$(object_mount_hint)"
+  [[ "$configured" == /* ]] || fail "Compose object mount must be an absolute host path"
+  require_same_objects "Compose" "$configured"
   ids="$(dc ps -a -q biz-api biz-worker 2>/dev/null)" ||
     fail "cannot check the installed object mounts"
   [[ -n "$ids" ]] || return 0  # clean recovery may have no application containers
@@ -79,10 +120,7 @@ verify_installed_object_mounts() {
       mount="${mount#/host_mnt}"
     fi
     [[ "$mount" == /* ]] || fail "installed application lacks a bind mount for its objects"
-    canonical="$(cd "$mount" 2>/dev/null && pwd -P)" ||
-      fail "cannot resolve the installed object mount"
-    [[ "$canonical" == "$STORAGE" ]] ||
-      fail "installed application object mount differs from BIZ_STORAGE_HOST_ROOT"
+    require_same_objects "installed application" "$mount"
   done <<<"$ids"
 }
 

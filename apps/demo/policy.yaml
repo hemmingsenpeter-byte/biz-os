@@ -9,6 +9,8 @@ limits:
   max_amount: { default: 500 }
   max_daily: { default: 2000 }   # running total per local day, every role's money actions
   over_limit: deny
+shadow:
+  allow_cloud_model: true   # model_cloud is a fake here; nothing leaves the machine
 hard_rules:
   deny_tools: []
   deny_decision_types: []

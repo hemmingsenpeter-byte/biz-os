@@ -113,6 +113,23 @@ def doctor_cmd(
             report(True, f"heartbeat cadence {cadence} for role {r}")
         except ValueError:
             report(False, f"heartbeat cadence {cadence!r} for role {r} does not parse")
+    from biz_kernel.tools.shadow import ExecutionMode, mode_problems
+
+    override = os.environ.get("BIZ_EXECUTION_MODE") or None
+    mode, problems = mode_problems(
+        manifest.execution_mode,
+        manifest.supervised_authorization,
+        override=override,
+        ports=manifest.ports,
+        policy=manifest.policy,
+    )
+    label = f"execution mode {mode or manifest.execution_mode}"
+    if override:
+        label += f" (BIZ_EXECUTION_MODE={override})"
+    if mode == ExecutionMode.SUPERVISED and not problems:
+        auth = manifest.supervised_authorization or {}
+        label += f", authorized by {auth['authorized_by']} on {auth['authorized_on']}"
+    report(not problems, label + "".join(f"\n  {p}" for p in problems))
     from biz_kernel.policy.engine import limit_problems
 
     problems = limit_problems(manifest.policy.get("limits") or {})
@@ -125,6 +142,18 @@ def doctor_cmd(
     report(
         not problems,
         ("time-saved baseline is usable" if timed else "time-saved baseline not set (optional)")
+        + "".join(f"\n  {p}" for p in problems),
+    )
+    from biz_kernel.models.eval.private import cloud_data_allowed, cloud_data_problems
+
+    problems = cloud_data_problems(manifest.policy.get("eval"))
+    report(
+        not problems,
+        (
+            "private evaluation data may be sent to a cloud model (eval.cloud_data: allow)"
+            if cloud_data_allowed(manifest.policy)
+            else "private evaluation data stays local (eval.cloud_data not allowed)"
+        )
         + "".join(f"\n  {p}" for p in problems),
     )
     if failed:
@@ -323,6 +352,9 @@ def worker_cmd(app_dir: Path, repo_root: RepoRoot = None) -> None:
 # ---- biz eval: provided by biz_kernel.models.eval.cli (a Typer sub-app) -----------------
 try:
     from biz_kernel.models.eval.cli import eval_cmd as _eval_cmd
+    from biz_kernel.models.eval.data_cli import app as _eval_data
+
+    app.add_typer(_eval_data, name="eval-data")
 
     @app.command("eval")
     def eval_task(
@@ -332,9 +364,33 @@ try:
         json_output: Annotated[bool, typer.Option("--json")] = False,
         output: Annotated[Path | None, typer.Option("--output")] = None,
         gate: Annotated[bool, typer.Option("--gate")] = False,
+        allow_cloud_data: Annotated[bool, typer.Option("--allow-cloud-data")] = False,
+        local_model_version: str = "",
+        cloud_model_version: str = "",
+        app_dir: Annotated[
+            Path | None,
+            typer.Option("--app", help="App whose policy must allow private cloud data"),
+        ] = None,
+        repo_root: RepoRoot = None,
+        operator: Annotated[
+            str, typer.Option("--operator", help="Non-personal ID of who runs it (audited)")
+        ] = "",
     ) -> None:
         """Score a model task on golden cases."""
-        _eval_cmd(task, tier, cases, json_output=json_output, output=output, gate=gate)
+        _eval_cmd(
+            task,
+            tier,
+            cases,
+            json_output=json_output,
+            output=output,
+            gate=gate,
+            allow_cloud_data=allow_cloud_data,
+            local_model_version=local_model_version,
+            cloud_model_version=cloud_model_version,
+            app=app_dir,
+            repo_root=repo_root,
+            operator=operator,
+        )
 except ImportError:  # eval harness not installed yet
     pass
 

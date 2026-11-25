@@ -33,6 +33,26 @@ class UntrustedNotFenced(ValueError):
     """A prompt contained untrusted text outside <untrusted> tags."""
 
 
+class GenerationFailed(ValueError):
+    """No attempt produced a valid output. `result` keeps the attempts and usage incurred."""
+
+    def __init__(self, message: str, result: RoutedResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+def spent_before(exc: BaseException) -> RoutedResult | None:
+    """The attempts and usage a failed `generate` had already incurred, if any.
+
+    Validation failures raise GenerationFailed. A port error keeps its own type (so
+    callers can still retry a transient one) and carries the result as an attribute.
+    """
+    if isinstance(exc, GenerationFailed):
+        return exc.result
+    result = getattr(exc, "biz_routed_result", None)
+    return result if isinstance(result, RoutedResult) else None
+
+
 def fence(text: str) -> str:
     """Untrusted text (emails, web pages, transcripts, packet bodies) is always fenced.
 
@@ -70,6 +90,8 @@ class RoutedResult:
     escalated: list[str] = field(default_factory=list)
     flagged: bool = False
     usage: usage_mod.Usage = field(default_factory=usage_mod.Usage)
+    # Calls whose adapter reported no usage at all (distinct from reporting zero).
+    unmetered_calls: int = 0
 
     @property
     def cost_usd(self) -> Decimal:
@@ -89,7 +111,7 @@ class Router:
         if tier_hint:
             return tier_hint
         default = self.task_tiers.get(task, "local")  # rule 1
-        # rule 2: the list may name the full task ("estimator.pricing") or the topic ("pricing")
+        # rule 2: the list may name the full task ("<role>.<topic>") or the topic alone
         topic = task.rsplit(".", 1)[-1]
         if (task in self.high_stakes or topic in self.high_stakes) and self.cloud is not None:
             return "cloud"
@@ -137,8 +159,18 @@ class Router:
         async def call(tier: Tier) -> dict[str, Any]:
             port = self.cloud if tier == "cloud" and self.cloud else self.local
             usage_mod.take()
-            out = await port.structured(system, messages, schema, tier)
-            used = usage_mod.take()
+            try:
+                out = await port.structured(system, messages, schema, tier)
+            except Exception as exc:
+                # Keep the exception's type (a transient error stays retryable) and attach
+                # what earlier attempts already spent; see spent_before().
+                if result.attempts:
+                    exc.biz_routed_result = result  # type: ignore[attr-defined]
+                raise
+            reported = usage_mod.take()
+            if reported is None:
+                result.unmetered_calls += 1
+            used = reported or usage_mod.Usage()
             if tier == "local":
                 used.cost_usd = Decimal(0)
             result.usage = result.usage + used
@@ -190,7 +222,9 @@ class Router:
         if tier == "cloud" or not escalate:
             if best is not None:
                 return self._done(result, session, role, task)
-            raise ValueError(f"model output failed validation for {task}: {last_problem}")
+            raise GenerationFailed(
+                f"model output failed validation for {task}: {last_problem}", result
+            )
 
         reason = f"{task}: local {last_problem}"
         if cloud_allowed():
@@ -206,12 +240,14 @@ class Router:
                 if last_problem is None:
                     result.output, result.tier = out, "cloud"
                     return self._done(result, session, role, task)
-            raise ValueError(f"model output failed validation for {task}: {last_problem}")
+            raise GenerationFailed(
+                f"model output failed validation for {task}: {last_problem}", result
+            )
         if best is not None:  # budget reached or no cloud: keep the local answer, flagged
             result.flagged = True
             return self._done(result, session, role, task)
         result.flagged = True
-        raise ValueError(f"model output failed validation for {task}: {last_problem}")
+        raise GenerationFailed(f"model output failed validation for {task}: {last_problem}", result)
 
     def _done(
         self, result: RoutedResult, session: Session | None, role: str | None, task: str

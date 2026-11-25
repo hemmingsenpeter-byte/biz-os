@@ -18,9 +18,12 @@ from biz_kernel.control import service as control
 from biz_kernel.db import utcnow
 from biz_kernel.policy.types import Action, Deny, NeedsApproval
 from biz_kernel.tools.registry import CallResult, PolicyChecker, ToolRegistry
+from biz_kernel.tools.shadow import SHADOW_REASON, Suppression
 
 OWNER = "owner"
 IDEMPOTENCY_KEY = "idempotency_key"
+SHADOWED = "shadowed"  # terminal: shadow mode suppressed the approved operation
+TERMINAL = ("executed", "rejected", SHADOWED)
 
 
 class ApprovalError(Exception):
@@ -212,7 +215,7 @@ def edit(
 
 def reject(session: Session, op_id: uuid.UUID, by: str, reason: str = "") -> StagedOperation:
     op = _locked(session, op_id)
-    if op.status in ("executed", "rejected"):
+    if op.status in TERMINAL:
         raise ApprovalError(f"operation is {op.status}")
     op.status = "rejected"
     op.approved_by = op.approved_version = op.approved_sha256 = None
@@ -224,18 +227,47 @@ def reject(session: Session, op_id: uuid.UUID, by: str, reason: str = "") -> Sta
 def execute(
     session: Session, op_id: uuid.UUID, registry: ToolRegistry, policy: PolicyChecker
 ) -> CallResult:
-    """Run exactly the approved inputs, once. A second call raises AlreadyExecuted."""
+    """Run exactly the approved inputs, once. A second call raises AlreadyExecuted.
+
+    In shadow mode the approved operation is suppressed instead, and that is terminal: the
+    operation leaves the queue and never runs, whatever the mode later. A repeat call
+    returns the original suppression without recording another.
+    """
     op = _locked(session, op_id)
     if op.status == "executed":
         raise AlreadyExecuted(op)
+    if op.status == SHADOWED:
+        return _shadowed(op)
     if op.status != "approved" or op.approved_version != op.version:
         raise NotApproved(f"operation is {op.status}")
     if digest(op.inputs) != op.inputs_sha256 or op.inputs_sha256 != op.approved_sha256:
         raise NotApproved("inputs do not match the approved version")
     suppressed = registry.suppress_in_shadow(
-        session, actor=op.actor, name=op.tool, args=op.inputs, decision_type=op.decision_type
+        session,
+        actor=op.actor,
+        name=op.tool,
+        args=op.inputs,
+        decision_type=op.decision_type,
+        policy=policy,
+        pre_approved=True,
+        staged_op_id=str(op.id),
     )
     if suppressed is not None:
+        assert suppressed.suppression is not None
+        # Same transaction as the suppression record: both commit, or neither does.
+        op.status = SHADOWED
+        op.result = {SHADOWED: {"audit_id": str(suppressed.suppression.audit_id)}}
+        session.flush()
+        record(
+            session,
+            op.actor,
+            "approval",
+            str(op.id),
+            event=SHADOWED,
+            version=op.version,
+            sha256=op.inputs_sha256,
+            audit_id=str(suppressed.suppression.audit_id),
+        )
         return suppressed
     action = Action(
         actor=op.actor,
@@ -274,6 +306,13 @@ def execute(
         sha256=op.inputs_sha256,
     )
     return result
+
+
+def _shadowed(op: StagedOperation) -> CallResult:
+    audit_id = ((op.result or {}).get(SHADOWED) or {}).get("audit_id")
+    if not isinstance(audit_id, str):
+        raise NotApproved("operation was shadowed without a suppression record")
+    return CallResult(Deny(SHADOW_REASON), suppression=Suppression(uuid.UUID(audit_id)))
 
 
 def run_or_stage(

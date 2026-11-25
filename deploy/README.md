@@ -113,10 +113,24 @@ composition. Use mode 0700 and grant the API/worker user write access through
 the bind mount. The stock images run as UID 1000. Test permissions on the
 target Docker installation before using the directory with real documents.
 Both application services see the directory at `/var/lib/biz-os/objects`; the
-worker and API share this location and backup reads its host path. For an
-existing deployment, copy its objects while the writers are stopped and retain
-the adapter's existing in-container path if database file URIs already use it.
-Changing that path requires a separate migration.
+worker and API share this location and backup reads its host path. Stored
+documents and recordings are referenced by absolute `file://` URIs, so an
+existing install whose URIs use another in-container path must follow
+[Migrating stored object paths](#migrating-stored-object-paths) before the new
+release starts. Preflight warns when the env file still sets the legacy
+`BIZ_STORAGE_ROOT` to a different path.
+
+`BIZ_TRUSTED_PROXIES` lists the proxies whose `CF-Connecting-IP` and
+`X-Forwarded-For` headers the API believes when it records a caller's address and
+rate-limits public webhooks. Set it to the application network that `caddy` and
+`tunnel-ingress` use to reach the API: Compose fixes that subnet with
+`BIZ_APP_SUBNET` (default `172.30.250.0/24`), and `.env.example` sets both to the
+same value. When it is empty, the API trusts every private range, including other
+Docker bridges, and preflight warns. Pick another `BIZ_APP_SUBNET` if the default
+overlaps a network on the host, and keep `BIZ_TRUSTED_PROXIES` equal to it.
+Upgrading from a release without a fixed subnet, or changing it, recreates the
+application network: run `docker compose ... down` (without `--volumes`) and then
+`up -d`.
 
 Run the offline preflight from the repository root with Docker Compose v2
 available. It resolves the stack's configuration without starting services or
@@ -126,6 +140,69 @@ contacting providers:
 uv sync --locked
 uv run python -m deploy.preflight --env-file deploy/.env
 ```
+
+`Preflight failed:` lines block the deployment. `Preflight warning:` lines do not
+fail the check, but resolve them before handling real traffic.
+
+### Migrating stored object paths
+
+The local storage adapter records each object as an absolute URI such as
+`file:///var/lib/biz-os/objects/ab/<sha256>.pdf`, and it refuses URIs outside
+its root. An install created with another in-container path (for example a
+Compose override that mounted `BIZ_STORAGE_ROOT=/srv/biz/objects` at the same
+path) keeps working only after its stored URIs are rewritten. Files stay where
+they are; only the in-container prefix changes. In the commands below,
+`compose` means `docker compose -f deploy/docker-compose.yml --env-file deploy/.env`
+with any override files the install uses.
+
+1. Settle in-flight workflows and pending approvals that attach documents or
+   recordings, then stop the writers: `compose stop biz-api biz-worker`.
+2. Take a backup with `bash deploy/backups/backup.sh` and record the snapshot ID.
+3. List the object-store prefixes in use. The query matches only URIs shaped
+   like stored objects (`file:///<root>/<2 hex>/<sha256><ext>`), so profile
+   sources such as `file:hours.md` are not listed. Every row should show one old
+   prefix, for example `file:///srv/biz/objects`. Drop the
+   `cap_voice_capture_notes` line if that table does not exist:
+
+   ```sh
+   compose exec -T postgres psql -U biz -d biz -Atc "
+     SELECT DISTINCT regexp_replace(uri, '/[0-9a-f]{2}/[^/]+$', '') FROM documents WHERE uri ~ '^file:///.+/[0-9a-f]{2}/[0-9a-f]{64}(\.[A-Za-z0-9]{1,10})?$'
+     UNION SELECT DISTINCT regexp_replace(audio_uri, '/[0-9a-f]{2}/[^/]+$', '') FROM cap_voice_capture_notes WHERE audio_uri ~ '^file:///.+/[0-9a-f]{2}/[0-9a-f]{64}(\.[A-Za-z0-9]{1,10})?$'"
+   ```
+4. In `deploy/.env`, set `BIZ_STORAGE_HOST_ROOT` to the absolute host directory
+   that holds those files (the source of the old mount), keep it mode 0700, and
+   delete the `BIZ_STORAGE_ROOT` line. Run preflight and confirm that the legacy
+   path warning is gone.
+5. Rewrite the prefix in one transaction. Replace `file:///srv/biz/objects` with
+   the exact prefix printed in step 3, including any percent-encoding. As in
+   step 3, drop the `cap_voice_capture_notes` statement if that table does not exist.
+   `memory_sources` is not touched (see below):
+
+   ```sh
+   compose exec -T postgres psql -U biz -d biz -v ON_ERROR_STOP=1 \
+     -v old='file:///srv/biz/objects' -v new='file:///var/lib/biz-os/objects' <<'SQL'
+   BEGIN;
+   UPDATE documents SET uri = :'new' || substr(uri, length(:'old') + 1)
+     WHERE starts_with(uri, :'old' || '/');
+   UPDATE cap_voice_capture_notes SET audio_uri = :'new' || substr(audio_uri, length(:'old') + 1)
+     WHERE starts_with(audio_uri, :'old' || '/');
+   COMMIT;
+   SQL
+   ```
+6. Rerun the query from step 3. It must print only `file:///var/lib/biz-os/objects`.
+   Start the writers with `compose up -d biz-api biz-worker`, open a stored
+   document from the owner console, and take a fresh backup.
+
+Audit events, memory sources and completed workflow results keep the old URI
+as history and are not rewritten. The audit log is hash-chained, and
+`memory_sources` is append-only: a trigger rejects every update, so including it
+would roll back the whole transaction. Old citations still resolve, because a
+citation points at its memory source row, which stores the cited text and its
+SHA-256. The excerpt and quote come from that row, never from the file. The
+old `file://` URI on a source is shown only as a historical label. To open the
+file itself, use the document record, whose URI step 5 rewrote. To roll back, stop the
+writers and restore the step 2 snapshot as described in
+[Back up and recover](#5-back-up-and-recover-the-compose-install).
 
 Start PostgreSQL first. For a fresh installation using DocuSeal, initialize
 its database once before starting the service:
@@ -161,10 +238,51 @@ When inbound webhooks are approved, configure the Cloudflare hostname to
 use `http://tunnel-ingress:8081`. Start the separate profile with
 `docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile public up -d`.
 The tunnel container shares a bridge with the public gateway and has no
-attachment to the application network. The public gateway exposes only
-`POST /webhooks/telephony` and `POST /webhooks/form`. All other paths return 404,
-including `/v1`, the owner console, and signing links. Verify the public
-hostname fails closed and that the tailnet origin serves `/v1/health`.
+attachment to the application network. On every hostname the public gateway
+exposes the API only through `POST /webhooks/telephony` and `POST /webhooks/form`.
+All other API and console paths return 404, including `/v1` and the owner console.
+Verify the public hostname fails closed and that the tailnet origin serves `/v1/health`.
+
+Outside signers open DocuSeal links on a separate signing hostname. Set it only
+when the composition binds the `sign_docuseal` port: put the hostname in
+`DOCUSEAL_HOST` and route it in Cloudflare to the same `http://tunnel-ingress:8081`
+origin. Compose then sets DocuSeal's `APP_URL` to `https://<DOCUSEAL_HOST>`, so the
+links the port returns are `https://<DOCUSEAL_HOST>/s/<slug>`. Preflight checks this
+and flags `DOCUSEAL_HOST` as unused for a composition without the signing port.
+With `DOCUSEAL_HOST` empty, the gateway's signing routes match no request.
+
+On the signing hostname, the gateway forwards only what the pinned DocuSeal
+signing page needs:
+
+| Paths | Methods | Purpose |
+| --- | --- | --- |
+| `/s/*` | GET, HEAD, POST, PUT, PATCH | Submitter form, its field values, uploads, decline, completion and document download |
+| `/d/*` | GET, HEAD, POST, PUT, PATCH | Shared template form and its completion page |
+| `/p/*` | GET, HEAD, POST, PUT, PATCH | Phone signature pad opened from the form's QR code |
+| `/submit_form_email_2fa`, `/start_form_email_2fa_send`, `/resubmit_form` | GET, HEAD, POST, PUT, PATCH | E-mail verification codes and re-signing |
+| `/packs/*`, `/fonts/DancingScript-Regular.otf`, favicons | GET, HEAD | Form scripts, styles and the typed-signature font |
+| `/preview/*`, `/disk/*`, `/blobs_proxy/*` | GET, HEAD | Signed page images and signed file links |
+
+Administration, sign-in, setup, settings, templates and `/api` return 404 there.
+Caddy matches the decoded, cleaned path, but DocuSeal routes the raw one. The
+gateway therefore returns 404 for any signing request whose raw path (everything
+before the first `?`) contains `#`, an escaped dot, slash, backslash, percent
+sign or `#`, a backslash, `//` or a dot-segment. Go keeps a raw `#` in the path,
+so it cannot hide what follows. The one exception is `%2F` inside `/disk/` keys,
+and only away from slashes and dot-segments. The gateway also refuses a `_method`
+query parameter or an `X-HTTP-Method-Override` header. These guards alone prevent
+traversal. The form and asset handlers also rewrite to
+`{http.request.uri.path}`, but that only canonicalizes escapes and does not
+clean dot-segments. A `_method` field in a form body cannot be inspected at the
+gateway. Rails can use it only to change the method on the same allowed path, and
+no signer route accepts DELETE.
+Preflight fails if a DocuSeal route loses these guards or its guard pattern differs
+from the expected one.
+The signing form tries some legacy `/api/...` endpoints only after a `/s/...`
+request returns 404, so the pinned version does not need them. When updating the
+DocuSeal pin, review its `config/routes.rb` and the form pack for new signer paths.
+Because `APP_URL` becomes the public origin, absolute links in the loopback
+DocuSeal administration also point at the signing hostname.
 Configure provider URLs against the public hostname only when connecting
 the corresponding inbound provider. A DocuSeal service in this Compose
 project uses the internal callback `http://biz-api:8000/webhooks/documents/sign`
@@ -201,7 +319,9 @@ databases, or a separate document store requires a different recovery procedure.
 2. Set `BIZ_STORAGE_HOST_ROOT` to the absolute host directory mounted into the
    API and worker. For a demo with fake storage, provision an empty private
    directory. The backup script also supports the legacy host variable
-   `BIZ_STORAGE_ROOT` for a Compose override that still uses that layout.
+   `BIZ_STORAGE_ROOT` for a Compose override that still uses that layout. Both
+   scripts refuse to run unless this directory is the object bind mount that the
+   resolved Compose configuration and any existing API and worker containers use.
 3. Put the restic settings and document path in the trusted, shell-compatible
    `deploy/.env` and restrict its permissions. Set `BIZ_DUMP_DIR` for private working
    space if needed (default `~/biz-backups/dumps`). Leave free space for staging and
@@ -239,7 +359,9 @@ running and remove the stale staging directory and lock before retrying.
 2. Use a fresh Compose project and fresh volumes, with the same PostgreSQL major
    version, extensions and role. In a recovery Compose override, set
    `services.postgres.environment.POSTGRES_DB: postgres` so Compose creates no
-   application databases. Set the same absolute `BIZ_STORAGE_ROOT` and make it empty.
+   application databases. Set `BIZ_STORAGE_HOST_ROOT` in `deploy/.env` to the same
+   absolute directory as the backed-up install and make it empty. The restore script
+   checks that Compose will mount it into the API and worker.
    Start only PostgreSQL, then create the stopped DocuSeal container with
    `docker compose ... create docuseal`. Use the same project/env/file
    selections for those commands and the restore script.
@@ -278,13 +400,20 @@ uses the fake speech adapter.
 
 HIVE starts in shadow mode with the receptionist as its active role. Compose
 passes the same execution mode to the API and worker. An empty
-`BIZ_EXECUTION_MODE` selects the composition default. The demo retains its
-supervised fake-provider behavior.
+`BIZ_EXECUTION_MODE` selects the composition default. The variable can only make
+the mode stricter: `supervised` over a shadow composition is refused at startup,
+by `biz doctor` and by preflight. A composition runs supervised only when its
+`supervised_authorization` records `authorized_by`, `authorized_on` and
+`pilot_exit_evidence`. In shadow mode a cloud model port is refused unless the
+policy sets `shadow.allow_cloud_model: true`. The demo records a fixture
+authorization and keeps its supervised fake-provider behavior.
 
 In shadow mode, the runtime can collect enquiries, classify them and prepare
 internal drafts. The dispatch guard stops external and money actions, including
 a previously approved staged action. Suppressions are recorded as
-`shadow.suppressed` audit events. Workflow suppressions appear on the task
+`shadow.suppressed` audit events with the verdict policy would have given. A
+suppressed approved action is terminal (`shadowed`): it leaves the approval
+queue and never runs, even after the mode becomes supervised. Workflow suppressions appear on the task
 evidence timeline and leave the task open for owner review. Use an owner
 passkey to access the console.
 

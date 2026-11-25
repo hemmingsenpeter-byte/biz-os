@@ -111,7 +111,9 @@ class PolicyEngine:
             return None
         return _money(per, "limit") if per is not None else None
 
-    def _daily(self, session: Session, action: Action) -> tuple[float, Decimal] | None:
+    def _daily(
+        self, session: Session, action: Action, pure: bool = False
+    ) -> tuple[float, Decimal] | None:
         """(daily limit, spent so far today) or None. Raises BadMoney for an unusable limit.
 
         `limits.max_daily` is keyed like max_amount. A tool or decision-type key counts only
@@ -138,7 +140,8 @@ class PolicyEngine:
             ZoneInfo(tz)
         except (TypeError, ValueError, ZoneInfoNotFoundError):
             raise BadMoney(f"day_timezone {tz!r} is not a known time zone") from None
-        spend.lock(session)  # held to commit, so the check and the ledger insert can't race
+        if not pure:  # a pure evaluation reads the total but never takes the lock
+            spend.lock(session)  # held to commit, so the check and the ledger insert can't race
         return limit, spend.spent_today(session, self.now(), tz, **narrow)
 
     def _hard_deny(self, action: Action) -> Deny | None:
@@ -177,7 +180,7 @@ class PolicyEngine:
         packed = [int(own[k]) for k in (action.tool, action.decision_type) if k and k in own]
         return min([default, *packed])
 
-    def _own(self, session: Session, action: Action) -> Decision:
+    def _own(self, session: Session, action: Action, pure: bool = False) -> Decision:
         # Order matters: hard rules, then money limits (a deny limit applies at every
         # autonomy level, so an approval can never authorise it), then the ladder.
         if (deny := self._hard_deny(action)) is not None:
@@ -205,7 +208,7 @@ class PolicyEngine:
                     approver, f"amount {action.amount} is over the limit {limit}"
                 )
             try:
-                daily = self._daily(session, action)
+                daily = self._daily(session, action, pure)
             except BadMoney as exc:
                 return Deny(str(exc))
             if daily is not None and amount is not None:
@@ -228,8 +231,10 @@ class PolicyEngine:
             return tool.side_effect, tool.inner
         return SideEffect.EXTERNAL, ()  # unknown inner tool: assume the strictest class
 
-    def _collect(self, session: Session, action: Action, depth: int) -> list[Decision]:
-        out = [self._own(session, action)]
+    def _collect(
+        self, session: Session, action: Action, depth: int, pure: bool = False
+    ) -> list[Decision]:
+        out = [self._own(session, action, pure)]
         if depth > MAX_DEPTH:
             return [Deny("composite nesting too deep")]
         for name in action.inner:
@@ -243,9 +248,18 @@ class PolicyEngine:
                 inner=deeper,
                 amount=action.amount,
             )
-            out.extend(self._collect(session, sub, depth + 1))
+            out.extend(self._collect(session, sub, depth + 1, pure))
         return out
 
     def check(self, session: Session, action: Action) -> Decision:
         """Strictest of the action's own gate and every inner tool's gate."""
         return strictest(self._collect(session, action, 0))
+
+    def evaluate(self, session: Session, action: Action) -> Decision:
+        """What check would return, with no side effects: no lock, no flush, no writes.
+
+        For records only (shadow-mode suppressions). Never use it to authorise an action:
+        without the spend lock a concurrent money action can change the answer.
+        """
+        with session.no_autoflush:
+            return strictest(self._collect(session, action, 0, pure=True))

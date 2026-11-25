@@ -438,7 +438,9 @@ def _op_state(op_id: str) -> str:
         op = s.get(StagedOperation, uuid.UUID(op_id))
         if op is None or op.status == "rejected":
             return "rejected"
-        if op.status in ("approved", "executed") and op.approved_version == op.version:
+        # A shadowed operation was approved, then suppressed: the execute step replays the
+        # original suppression, so the run ends shadowed instead of waiting forever.
+        if op.status in ("approved", "executed", "shadowed") and op.approved_version == op.version:
             return "approved"
         return "pending"
 

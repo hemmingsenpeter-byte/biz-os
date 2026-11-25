@@ -43,9 +43,7 @@ def _clean(path: str) -> str:
 
 def _caddy_matches(raw_path: str, patterns: list[str]) -> bool:
     cleaned = _clean(unquote(raw_path).lower())
-    return any(
-        cleaned.startswith(p[:-1]) if p.endswith("*") else cleaned == p for p in patterns
-    )
+    return any(cleaned.startswith(p[:-1]) if p.endswith("*") else cleaned == p for p in patterns)
 
 
 # Devise's POST /sign_in(.:format): format segment = [^/.?]+ against the escaped path.

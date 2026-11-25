@@ -1,4 +1,4 @@
-"""UPDATE or DELETE on append-only tables fails at the database, whatever the caller."""
+"""UPDATE, DELETE and TRUNCATE fail on append-only tables, whatever the caller."""
 
 import pytest
 from biz_kernel.audit.log import APPEND_ONLY_TABLES, record
@@ -65,7 +65,12 @@ def test_core_tables_are_registered(table):
 
 
 @pytest.mark.parametrize(
-    "stmt", ["UPDATE {t} SET id = id WHERE id = :i", "DELETE FROM {t} WHERE id = :i"]
+    "stmt",
+    [
+        "UPDATE {t} SET id = id WHERE id = :i",
+        "DELETE FROM {t} WHERE id = :i",
+        "TRUNCATE TABLE {t} CASCADE",
+    ],
 )
 @pytest.mark.parametrize("table", sorted(set(APPEND_ONLY_TABLES)))
 def test_audit_append_only(session, table, stmt):
@@ -73,3 +78,4 @@ def test_audit_append_only(session, table, stmt):
     assert row_id is not None, f"add a row factory for {table} to _row()"
     with pytest.raises(DBAPIError, match="append-only"), session.begin_nested():
         session.execute(text(stmt.format(t=table)), {"i": row_id})
+    assert session.execute(text(f"SELECT id FROM {table} WHERE id = :i"), {"i": row_id}).scalar()

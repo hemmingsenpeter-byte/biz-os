@@ -10,6 +10,7 @@ from biz_kernel.audit import log
 from biz_kernel.db import Base
 from biz_kernel.models_registry import import_all_models
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 
 
@@ -21,6 +22,19 @@ def _tables(url: str) -> set[str]:
         eng.dispose()
 
 
+def _triggers(engine: Engine) -> dict[str, tuple[str, str, str]]:
+    with engine.connect() as conn:
+        return {
+            name: (table, enabled, definition)
+            for name, table, enabled, definition in conn.execute(
+                text(
+                    "select tgname, tgrelid::regclass::text, tgenabled::text, "
+                    "pg_get_triggerdef(oid) from pg_trigger where not tgisinternal"
+                )
+            )
+        }
+
+
 def test_upgrade_matches_metadata_and_downgrade_empties(fresh_db: str) -> None:
     import_all_models()
     importlib.import_module("biz_cap_demo_desk.models")
@@ -28,11 +42,20 @@ def test_upgrade_matches_metadata_and_downgrade_empties(fresh_db: str) -> None:
     assert _tables(fresh_db) == set(Base.metadata.tables)
 
     eng = create_engine(fresh_db)
-    with eng.connect() as conn:
-        trig = {
-            r[0] for r in conn.execute(text("select tgname from pg_trigger where not tgisinternal"))
-        }
-    assert trig == {f"{t}_append_only" for t in log.APPEND_ONLY_TABLES} | {"tasks_done_guard"}
+    triggers = _triggers(eng)
+    assert set(triggers) == {
+        f"{table}_{suffix}"
+        for table in log.APPEND_ONLY_TABLES
+        for suffix in ("append_only", "reject_truncate")
+    } | {"tasks_done_guard"}
+    for table in log.APPEND_ONLY_TABLES:
+        owner, enabled, definition = triggers[f"{table}_reject_truncate"]
+        assert (owner, enabled) == (table, "O")
+        assert "BEFORE TRUNCATE" in definition
+        assert "FOR EACH STATEMENT" in definition
+        assert "biz_reject_mutation()" in definition
+        with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:
+            conn.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
 
     with pytest.raises(DBAPIError, match="append-only"), eng.begin() as conn:
         conn.execute(
@@ -42,6 +65,11 @@ def test_upgrade_matches_metadata_and_downgrade_empties(fresh_db: str) -> None:
             )
         )
         conn.execute(text("update audit_log set actor = 'b'"))
+
+    migrations.downgrade(fresh_db, "0022")
+    assert set(_triggers(eng)) == {f"{table}_append_only" for table in log.APPEND_ONLY_TABLES} | {
+        "tasks_done_guard"
+    }
     eng.dispose()
 
     migrations.downgrade(fresh_db, allow_data_loss=True)

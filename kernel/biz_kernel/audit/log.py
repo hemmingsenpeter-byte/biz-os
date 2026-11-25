@@ -1,7 +1,7 @@
 """Append-only, hash-chained audit log.
 
-A trigger rejects UPDATE and DELETE (see `append_only_ddl`). Because someone with database
-access could drop that trigger and edit rows, rows are also hash-chained: each sealed row
+A trigger rejects UPDATE, DELETE and TRUNCATE (see `append_only_ddl`). Because someone with
+database access could drop that trigger and edit rows, rows are also hash-chained: each sealed row
 stores its position (`seq`, 1, 2, 3, ... with no gaps), the hash of the row before it
 (`prev_hash`) and its own `hash` over a canonical encoding of its fields plus `prev_hash`.
 
@@ -54,7 +54,7 @@ class AuditEntry(Base):
     hash: Mapped[str | None] = mapped_column(String(64))
 
 
-# Tables that must never be updated or deleted. Other modules append to this list.
+# Tables that need row and statement guards. Other modules append to this list.
 APPEND_ONLY_TABLES: list[str] = ["audit_log"]
 
 APPEND_ONLY_FN = """
@@ -94,6 +94,9 @@ def append_only_ddl(table: str) -> str:
         f"DROP TRIGGER IF EXISTS {table}_append_only ON {table};"
         f"CREATE TRIGGER {table}_append_only BEFORE UPDATE OR DELETE ON {table} "
         f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+        f"DROP TRIGGER IF EXISTS {table}_reject_truncate ON {table};"
+        f"CREATE TRIGGER {table}_reject_truncate BEFORE TRUNCATE ON {table} "
+        "FOR EACH STATEMENT EXECUTE FUNCTION biz_reject_mutation();"
     )
 
 

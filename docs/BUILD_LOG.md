@@ -1,5 +1,60 @@
 # Build log
 
+## 2026-11-25 Receptionist shadow pilot coding sprint
+
+The owner approved the sprint in `docs/SPRINT_2026-11-25.md`. This branch adapts
+the useful scope of drafts #10, #12, #13 and #14 to current main and closes the
+Ollama locality gap. M7–M9 remain frozen.
+
+### Changes and review decisions
+
+- Migration `0023` adds statement-level TRUNCATE guards to all seven append-only
+  tables. Fresh metadata gets the same guards. Real database tests attempt the
+  forbidden operations and check that rows survive; downgrade retains the row
+  guards. Independent review found no blocker.
+- Runtime, doctor and Compose preflight share resolved Ollama URL, generation
+  model and embedding model checks. Runtime also checks concrete model overrides
+  before embedding setup, including a cloud adapter supplied in a local slot.
+  Compose retains its stricter appliance restriction; existing cloud permission
+  semantics remain unchanged. Appliance HTTP calls bypass inherited proxies.
+- Historical triage scoring now follows role data: a correct `other` label may
+  pass below 0.6; actionable categories retain the threshold. Confirmation resolves
+  generic template conditions into frozen checks. New receipts bind schema,
+  checks, task metadata and gate settings to the current template. Review exposed
+  two older readiness gaps: an outdated deployed prompt and newly tightened gate
+  settings could still produce a ready flag. Both now invalidate readiness and
+  have regression tests. Legacy cohorts remain scoreable without being rewritten.
+- Task-specific shadow meeting offers show **Prepared, not sent**. Shared job
+  evidence retains its generic label. Browser acceptance checks no pending
+  dispatch, no sent evidence, zero fake provider sends and mobile layout.
+- The scenario runner exercises R01/R04/R12/R15 through isolated PostgreSQL/DBOS
+  workflows, forced shadow mode and fake business providers. Fixture inference
+  proves workflow wiring only. Missing R04 warranty escalation is explicitly false
+  in readiness checks; offered-slot accuracy stays unverified. Actual-model runs
+  fail unmet readiness checks or require manual review. Review found and fixed
+  first-attempt interruption losing its report: the initial plan is persisted,
+  interrupted counters stay provisional and the CLI exits 130 after cleanup.
+- CI now runs fixture scenario assurance and the existing encrypted restore drill.
+  Guides describe current activation, scoring receipts and shadow evidence.
+
+### Verification and remaining acceptance
+
+Ruff lint/format, mypy (307 source files), both composition doctors, frontend
+lint/typecheck/build and the combined real-backend browser acceptance passed.
+The disposable restore drill recovered three databases, both file stores, the
+audit head and pending workflow; replay made one fake mail invocation total.
+Its measured fixture RPO was 6.29 seconds and RTO 25.17 seconds.
+
+The local packaged Docker build exceeded this computer's 8 GB filesystem under
+Docker's VFS storage driver. Its generated layers and images were cleaned up;
+packaged acceptance remains enforced by the PR's Docker smoke job before merge.
+The clean full Python suite passed: **1042 tests in 276.04 seconds**.
+
+No live provider or real model was exercised, and no HIVE cloud or supervised
+authorization was added. Owner-labelled history, the timed baseline, actual model
+and mailbox setup, appliance acceptance and two weeks of shadow evidence remain
+the live pilot gates. The Stage 2 correction-to-rule training loop is future work.
+
 ## 2026-11-21 Owner decisions on the #7 to #9 open items
 
 The owner asked for the best call on each open item, approved in advance.

@@ -22,6 +22,13 @@ Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. 
 
 ## Status
 
+The active build order is [docs/PLAN.md](docs/PLAN.md). HIVE is configured for a
+receptionist-only shadow pilot: it can prepare internal drafts while dispatch is
+suppressed. Real-model evaluation, owner baseline measurements and live pilot
+evidence remain acceptance gates. M7–M9 stay frozen until Stage 2 passes. The
+milestones below describe built capabilities, including roles that are inactive
+at HIVE.
+
 | Milestone | State |
 | --- | --- |
 | M0 Kernel and demo app | Built. Acceptance passes in `apps/demo` and `apps/hive`. Mac mini deploy not yet run (see `deploy/README.md`) |

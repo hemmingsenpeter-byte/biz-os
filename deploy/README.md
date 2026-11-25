@@ -419,7 +419,13 @@ passkey to access the console.
 
 External provider credentials are provisioned separately at the approved access
 and pilot gates. Preflight requires on-appliance Ollama for shadow Compose
-deployments. Verify the approved model is installed on the Mac mini before
+deployments. Runtime startup and `biz doctor` also validate the resolved Ollama
+endpoint and both generation and embedding model names before inference. Host runs
+accept loopback or the appliance Docker host; Compose preflight continues to require
+`host.docker.internal` and noncloud models. The existing cloud policy permission does
+not relax Compose's appliance restrictions. Appliance inference bypasses inherited
+HTTP proxies. These offline checks do not replace verifying the trusted Ollama server
+and the installed model's actual routing. Verify the approved model is installed on the Mac mini before
 connecting a mailbox. Before replacing an older release, settle in-flight work
 for the inactive roles and stop the old API and workers. Update and restart
 both application services together. The supervised transition requires pilot

@@ -83,6 +83,8 @@ def main() -> None:
 
     from biz_kernel.cli.main import find_repo_root
     from biz_kernel.runtime import build_runtime
+    from biz_kernel.workflows import runner
+    from biz_kernel.workflows.versions import assert_startup_compatible
 
     logging.basicConfig(level=logging.INFO)
     app_dir = Path(os.environ["BIZ_APP_DIR"])
@@ -96,6 +98,8 @@ def main() -> None:
     migrations.upgrade(url)
     ensure_database(sys_url)
     rt = build_runtime(app_dir, repo_root)
+    with db.session_scope() as session:
+        assert_startup_compatible(session, runner.ctx().roles)
     DBOS(config=dbos_config(rt.manifest.name, sys_url))  # type: ignore[arg-type]
     DBOS.launch()
     stop = threading.Event()

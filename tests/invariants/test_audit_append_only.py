@@ -54,6 +54,58 @@ def _row(session, table: str):
         op = staged.stage(session, action, "owner")
         staged.edit(session, op.id, {"a": 2}, by="owner", severity="factual", version=op.version)
         return session.scalar(select(Correction.id))
+    if table in ("training_draft_snapshots", "training_candidates", "training_reviews"):
+        from biz_kernel.approvals.models import Correction
+        from biz_kernel.training.models import DraftSnapshot, TrainingCandidate, TrainingReview
+        from biz_kernel.workflows.models import SopRun
+
+        correction = session.get(Correction, _row(session, "approval_corrections"))
+        run = SopRun(
+            id=f"training-invariant:{correction.id}",
+            role=correction.actor,
+            sop="sample",
+            waiting_op_id=str(correction.op_id),
+        )
+        session.add(run)
+        session.flush()
+        snapshot = DraftSnapshot(
+            run_id=run.id,
+            step_id="draft",
+            actor=correction.actor,
+            task="sample",
+            prompt_path="prompts/sample.md",
+            system="A fixture prompt.",
+            output_schema={"type": "object"},
+            untrusted_text="Fixture input.",
+            output={"a": 1},
+            tier="local",
+            backend="fixture",
+            system_sha256="0" * 64,
+            schema_sha256="0" * 64,
+            input_sha256="0" * 64,
+            output_sha256="0" * 64,
+            payload_sha256="0" * 64,
+        )
+        session.add(snapshot)
+        session.flush()
+        if table == "training_draft_snapshots":
+            return snapshot.id
+        candidate = TrainingCandidate(
+            correction_id=correction.id,
+            snapshot_id=snapshot.id,
+            rule="Use the corrected value.",
+            expected_output={"a": 2},
+            created_by="owner",
+            payload_sha256="0" * 64,
+        )
+        session.add(candidate)
+        session.flush()
+        if table == "training_candidates":
+            return candidate.id
+        review = TrainingReview(candidate_id=candidate.id, decision="rejected", by="owner")
+        session.add(review)
+        session.flush()
+        return review.id
     return session.execute(text(f"SELECT id FROM {table} LIMIT 1")).scalar()
 
 

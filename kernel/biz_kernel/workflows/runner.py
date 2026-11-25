@@ -29,9 +29,11 @@ from biz_kernel.models.router import Router
 from biz_kernel.packets.bus import Bus, Packet
 from biz_kernel.records.models import Task
 from biz_kernel.tools.shadow import SHADOW_EVIDENCE, Suppression
+from biz_kernel.training.service import capture_draft
 from biz_kernel.workflows.escalation import CONFIDENCE, Condition, check
 from biz_kernel.workflows.models import SopRun, SopStep
 from biz_kernel.workflows.templating import TemplateError, holds, render
+from biz_kernel.workflows.versions import assert_run_compatible, definition_sha256, unfinished
 
 
 class Gate(Protocol):
@@ -232,6 +234,14 @@ def sop_workflow(role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
 
 
 def _run(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, Any]:
+    # This check is outside checkpointed steps: an old begin result must not bypass it.
+    with db.session_scope() as session:
+        existing = session.get(SopRun, run_id)
+        if existing is not None:
+            if not unfinished(existing):
+                return {"run_id": run_id, "status": existing.status}
+            assert_run_compatible(existing, ctx().roles)
+
     def do(fn: Any, *args: Any) -> Any:
         return _attempt(run_id, role, functools.partial(fn, *args))
 
@@ -489,6 +499,7 @@ def _begin(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, A
                 id=run_id,
                 role=role,
                 sop=sop_name,
+                definition_sha256=definition_sha256(ctx().roles[role], sop_name),
                 packet_id=packet.id,
                 job_id=packet.job_id,
                 task_id=task.id,
@@ -496,6 +507,8 @@ def _begin(run_id: str, role: str, sop_name: str, packet_id: str) -> dict[str, A
             )
             s.add(run)
             record(s, role, "sop.start", sop_name, run_id=run_id, packet_id=packet.id)
+        else:
+            assert_run_compatible(run, ctx().roles)
         return {
             "packet": pkt,
             "steps": {},
@@ -606,10 +619,30 @@ def _draft_step(run_id: str, role: str, step: dict[str, Any], state: dict[str, A
     inputs = render(step.get("inputs", {}), state)
     # Drafting gets no tools, and every input is untrusted data.
     task = step.get("task", f"{role}.{state.get('sop', step['id'])}")
-    result = _generate(role, task, system, step["schema"], _as_text(inputs))
+    draft_text = _as_text(inputs)
+    result = _generate(role, task, system, step["schema"], draft_text)
     with db.session_scope() as s:
         if _ledger(s, run_id, step["id"]) is None:
             _save(s, run_id, step["id"], result.output)
+            port = c.router.cloud if result.tier == "cloud" else c.router.local
+            model = getattr(port, "model", None)
+            revision = getattr(port, "model_revision", None)
+            capture_draft(
+                s,
+                run_id=run_id,
+                step_id=step["id"],
+                actor=role,
+                task=task,
+                prompt_path=str(step["prompt"]),
+                system=system,
+                schema=step["schema"],
+                untrusted_text=draft_text,
+                output=result.output,
+                tier=result.tier,
+                backend=f"{type(port).__module__}.{type(port).__qualname__}",
+                configured_model=model if isinstance(model, str) else None,
+                model_revision=revision if isinstance(revision, str) else None,
+            )
             record(s, role, "draft", task, run_id=run_id, tier=result.tier)
     return result.output
 

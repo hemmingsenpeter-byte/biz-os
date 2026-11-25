@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -12,19 +13,28 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
-def prod_app(monkeypatch: pytest.MonkeyPatch) -> Any:
+def prod_app(monkeypatch: pytest.MonkeyPatch, fresh_db: str) -> Iterator[Any]:
     import dbos
+    from biz_kernel import db
     from biz_kernel.api import main
     from biz_kernel.workflows import runner
 
     # build_app installs a module-level DBOS client; undo it after the test so later
     # tests that run DBOS in-process don't send through this stub.
     monkeypatch.setattr(runner, "_CLIENT", None, raising=False)
+    monkeypatch.setattr(runner, "_CTX", runner._CTX)
+    monkeypatch.setattr(db, "_engine", db._engine)
+    monkeypatch.setattr(db, "_factory", db._factory)
     monkeypatch.setenv("BIZ_APP_DIR", str(ROOT / "apps" / "demo"))
     monkeypatch.setenv("BIZ_REPO_ROOT", str(ROOT))
     monkeypatch.setenv("BIZ_SECRET_KEY", "test-secret-not-real")
+    monkeypatch.setenv("BIZ_DATABASE_URL", fresh_db)
     monkeypatch.setattr(dbos, "DBOSClient", lambda **kw: object())
-    return main.build_app()
+    app = main.build_app()
+    try:
+        yield app
+    finally:
+        db.engine().dispose()
 
 
 def test_production_app_exposes_the_mail_port(prod_app: Any) -> None:

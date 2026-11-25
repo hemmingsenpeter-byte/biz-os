@@ -62,7 +62,7 @@ def test_reconciles_every_legacy_shape_and_preserves_records(fresh_db: str, orig
     migrations.upgrade(fresh_db)
     migrations.upgrade(fresh_db)  # repeated startup must be a no-op
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0023"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0024"
         if origin in {"tax", "combined"}:
             assert connection.execute(
                 text(
@@ -133,7 +133,7 @@ def test_reconciliation_refuses_incompatible_tax_and_rolls_back(fresh_db: str) -
 
 def test_reconciliation_has_one_head_and_guards_tax_rollback(fresh_db: str) -> None:
     scripts = ScriptDirectory.from_config(migrations.make_config(fresh_db))
-    assert scripts.get_heads() == ["0023"]
+    assert scripts.get_heads() == ["0024"]
     migrations.upgrade(fresh_db)
     with pytest.raises(RuntimeError, match="drops tax data"):
         migrations.downgrade(fresh_db, "0020")

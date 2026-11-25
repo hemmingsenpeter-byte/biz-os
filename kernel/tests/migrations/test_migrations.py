@@ -67,7 +67,8 @@ def test_upgrade_matches_metadata_and_downgrade_empties(fresh_db: str) -> None:
         conn.execute(text("update audit_log set actor = 'b'"))
 
     migrations.downgrade(fresh_db, "0022")
-    assert set(_triggers(eng)) == {f"{table}_append_only" for table in log.APPEND_ONLY_TABLES} | {
+    remaining = set(log.APPEND_ONLY_TABLES) & _tables(fresh_db)
+    assert set(_triggers(eng)) == {f"{table}_append_only" for table in remaining} | {
         "tasks_done_guard"
     }
     eng.dispose()

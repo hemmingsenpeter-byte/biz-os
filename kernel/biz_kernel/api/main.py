@@ -9,12 +9,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from biz_kernel import db
+from biz_kernel import db, migrations
 from biz_kernel.api.app import create_app
 from biz_kernel.cli.main import find_repo_root
 from biz_kernel.loader import load_composition
 from biz_kernel.runtime import build_runtime, capability_routes
 from biz_kernel.workflows import runner
+from biz_kernel.workflows.versions import assert_startup_compatible
 from biz_kernel.workflows.worker import dbos_system_url
 
 
@@ -26,11 +27,14 @@ def build_app():  # type: ignore[no-untyped-def]
     manifest = load_composition(app_dir, root or find_repo_root(app_dir))
     url = os.environ.get("BIZ_DATABASE_URL") or db.database_url()
     db.configure(url)
+    migrations.upgrade(url)
     sys_url = os.environ.get("BIZ_DBOS_SYSTEM_URL") or dbos_system_url(url)
     runner._CLIENT = DBOSClient(system_database_url=sys_url, lazy=True)  # type: ignore[attr-defined]
     # The runtime resolves the composition's ports (mail, telephony, ...) and builds the
     # capability routes. Building it launches no DBOS.
     rt = build_runtime(app_dir, root or find_repo_root(app_dir))
+    with db.session_scope() as session:
+        assert_startup_compatible(session, runner.ctx().roles)
     app = create_app(manifest, mail=rt.ports.get("mail"), execution_mode=rt.registry.execution_mode)
     for name, router in capability_routes(rt):
         # Public paths only: /webhooks/* is what the tunnel exposes; /v1 stays private.

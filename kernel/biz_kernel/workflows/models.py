@@ -18,6 +18,8 @@ class SopRun(Base):
     id: Mapped[str] = mapped_column(String(200), primary_key=True)  # DBOS workflow id
     role: Mapped[str] = mapped_column(String(80))
     sop: Mapped[str] = mapped_column(String(120))
+    # Null identifies pre-pin legacy runs, which must drain on their original release.
+    definition_sha256: Mapped[str | None] = mapped_column(String(64))
     packet_id: Mapped[uuid.UUID | None]
     job_id: Mapped[uuid.UUID | None]
     task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id"))

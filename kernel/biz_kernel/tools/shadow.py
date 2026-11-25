@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -30,6 +33,10 @@ AUTHORIZATION_KEY = "supervised_authorization"
 AUTHORIZATION_FIELDS = ("authorized_by", "authorized_on", "pilot_exit_evidence")
 CLOUD_MODEL_SLOT = "model_cloud"
 CLOUD_MODEL_PORTS = frozenset({"model_claude"})  # adapters that send prompts off the appliance
+LOCAL_MODEL_PORT = "model_ollama"  # local only while its endpoint and model stay on the appliance
+LOCAL_MODEL_DEFAULT_URL = "http://localhost:11434"
+LOCAL_MODEL_HOSTS = frozenset({"localhost", "host.docker.internal"})
+_CLOUD_MODEL_TAG = re.compile(r"(?:^|[/:_-])cloud(?:$|[/:])", re.I)
 
 
 class ExecutionModeError(ValueError):
@@ -88,6 +95,51 @@ def cloud_model_slots(ports: Mapping[str, Any]) -> list[str]:
     )
 
 
+def _local_endpoint(url: str) -> bool:
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    if host.lower() in LOCAL_MODEL_HOSTS:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
+
+
+def local_model_problems(ports: Mapping[str, Any], environ: Mapping[str, str]) -> list[str]:
+    """A "local" model port that would still send prompts off the appliance.
+
+    Ollama can serve hosted cloud models (a `cloud` tag) or point at a remote host, so
+    the adapter name alone does not prove the data stays local.
+    """
+    problems: list[str] = []
+    for slot, port in sorted(ports.items()):
+        if isinstance(port, str):
+            if port != LOCAL_MODEL_PORT:
+                continue
+            url = environ.get("BIZ_OLLAMA_URL") or LOCAL_MODEL_DEFAULT_URL
+            models = [
+                environ.get("BIZ_OLLAMA_MODEL", ""),
+                environ.get("BIZ_OLLAMA_EMBED_MODEL", ""),
+            ]
+        elif type(port).__module__.startswith("biz_port_" + LOCAL_MODEL_PORT):
+            url = str(getattr(port, "base_url", "") or "")
+            models = [
+                str(getattr(port, "model", "") or ""),
+                str(getattr(port, "embed_model", "") or ""),
+            ]
+        else:
+            continue
+        if not _local_endpoint(url):
+            problems.append(f"port {slot} sends prompts to a host off the appliance")
+        if any(_CLOUD_MODEL_TAG.search(m) for m in models):
+            problems.append(f"port {slot} names a cloud-hosted model")
+    return problems
+
+
 def allows_cloud_in_shadow(policy: Mapping[str, Any]) -> bool:
     section = policy.get("shadow")
     return isinstance(section, Mapping) and section.get("allow_cloud_model") is True
@@ -101,6 +153,7 @@ def mode_problems(
     ports: Mapping[str, Any],
     policy: Mapping[str, Any],
     today: date | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> tuple[ExecutionMode | None, list[str]]:
     """(effective mode, problems). Any problem means the composition must not start.
 
@@ -132,6 +185,10 @@ def mode_problems(
             f"port {slot} is a cloud model; shadow mode needs policy shadow.allow_cloud_model: true"
             for slot in cloud_model_slots(ports)
         ]
+        problems += [
+            f"{p}; shadow mode needs policy shadow.allow_cloud_model: true"
+            for p in local_model_problems(ports, os.environ if environ is None else environ)
+        ]
     return effective, problems
 
 
@@ -151,6 +208,7 @@ def resolve_mode(
         override=env.get("BIZ_EXECUTION_MODE") or None,
         ports=ports,
         policy=policy,
+        environ=env,
     )
     if problems or mode is None:
         raise ExecutionModeError("; ".join(problems))

@@ -527,6 +527,7 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
         override=api.get("BIZ_EXECUTION_MODE") or None,
         ports=manifest.ports,
         policy=manifest.policy,
+        environ=api,
     )
     problems.extend(mode_issues)
     if mode == ExecutionMode.SHADOW and "model_ollama" in ports:

@@ -159,7 +159,12 @@ def test_shadow_preflight_requires_the_appliance_model(
             BIZ_OLLAMA_URL="https://remote.example.invalid",
             BIZ_OLLAMA_MODEL="fixture:cloud",
         )
+    needs_policy = "; shadow mode needs policy shadow.allow_cloud_model: true"
     assert preflight.validate(config, preflight.ROOT) == [
+        # the runtime rule, shared with biz doctor and the API/worker start
+        "port model_local sends prompts to a host off the appliance" + needs_policy,
+        "port model_local names a cloud-hosted model" + needs_policy,
+        # the appliance's stricter deploy rule
         "Shadow Ollama must use the appliance host.docker.internal endpoint",
         "BIZ_OLLAMA_MODEL cannot use a cloud model in shadow mode",
     ]

@@ -377,3 +377,65 @@ def test_datetime_authorization_date_is_accepted_not_crashing():
     assert authorization_problems(authorization) == []
     authorization["authorized_on"] = datetime(2999, 1, 1, 9, 0)
     assert any("future" in p for p in authorization_problems(authorization))
+
+
+@pytest.mark.parametrize(
+    ("environ", "problem"),
+    [
+        ({"BIZ_OLLAMA_MODEL": "gpt-oss:120b-cloud"}, "names a cloud-hosted model"),
+        ({"BIZ_OLLAMA_EMBED_MODEL": "cloud/embed"}, "names a cloud-hosted model"),
+        ({"BIZ_OLLAMA_URL": "https://ollama.com"}, "sends prompts to a host off the appliance"),
+        (
+            {"BIZ_OLLAMA_URL": "http://8.8.8.8:11434"},
+            "sends prompts to a host off the appliance",
+        ),
+    ],
+)
+def test_shadow_refuses_a_cloud_model_behind_the_local_port(environ, problem):
+    from biz_kernel.tools.shadow import ExecutionMode, mode_problems
+
+    mode, problems = mode_problems(
+        "shadow", None, override=None, ports={"model": "model_ollama"}, policy={}, environ=environ
+    )
+    assert mode == ExecutionMode.SHADOW
+    assert any(problem in p for p in problems), problems
+    allowed = {"shadow": {"allow_cloud_model": True}}
+    _, problems = mode_problems(
+        "shadow",
+        None,
+        override=None,
+        ports={"model": "model_ollama"},
+        policy=allowed,
+        environ=environ,
+    )
+    assert problems == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://[::1]:11434",
+        "http://host.docker.internal:11434",
+        "http://10.0.0.5:11434",
+    ],
+)
+def test_shadow_accepts_an_on_appliance_ollama(url):
+    from biz_kernel.tools.shadow import mode_problems
+
+    environ = {"BIZ_OLLAMA_URL": url, "BIZ_OLLAMA_MODEL": "qwen3:8b"} if url else {}
+    _, problems = mode_problems(
+        "shadow", None, override=None, ports={"model": "model_ollama"}, policy={}, environ=environ
+    )
+    assert problems == []
+
+
+def test_resolve_mode_checks_an_ollama_port_object():
+    from biz_kernel.tools.shadow import ExecutionModeError, resolve_mode
+    from biz_port_model_ollama import OllamaModel
+
+    port = OllamaModel("https://ollama.com", "gpt-oss:120b-cloud")
+    with pytest.raises(ExecutionModeError, match="off the appliance"):
+        resolve_mode("shadow", None, ports={"model": port}, policy={}, environ={})

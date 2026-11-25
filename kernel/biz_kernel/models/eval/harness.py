@@ -179,6 +179,8 @@ def _read(path: Path) -> Any:
 
 
 def is_private(data: dict[str, Any]) -> bool:
+    if "private" in data and type(data["private"]) is not bool:
+        raise ValueError("evaluation private flag must be a boolean")
     return data.get("private") is True or data.get("provenance") in ("historical", "mixed")
 
 
@@ -197,9 +199,8 @@ def read_task(cases: Path | str) -> dict[str, Any]:
 def load_cases(cases: Path | str) -> list[Case]:
     if not Path(cases).is_dir():
         raise ValueError(f"case directory does not exist: {cases}")
-    provenance = Provenance(
-        "private" if is_private(read_task(cases)) else "public", str(Path(cases).resolve())
-    )
+    private_dataset = is_private(read_task(cases))
+    directory = str(Path(cases).resolve())
     out = []
     for f in sorted(Path(cases).glob("*.y*ml")):
         if f.name.startswith("_"):
@@ -207,6 +208,12 @@ def load_cases(cases: Path | str) -> list[Case]:
         d = _read(f)
         if not isinstance(d, dict):
             raise ValueError(f"invalid case mapping: {f.name}")
+        # A standalone exported case can carry customer material without a dataset
+        # manifest. Its privacy flag can only tighten the enclosing dataset's status.
+        private_case = is_private(d)
+        provenance = Provenance(
+            "private" if private_dataset or private_case else "public", directory
+        )
         system = d.get("system") or ""
         if d.get("system_file"):
             system = (f.parent / d["system_file"]).read_text()
@@ -287,6 +294,10 @@ def dataset_metadata(
             raise ValueError("private cases differ from their confirmed dataset")
         return dataset_metadata(origin, full, repo_root=repo_root)
     data = {} if isinstance(cases, list) else read_task(cases)
+    if origin is not None:
+        # A per-case declaration also requires the existing private cohort receipt
+        # and integrity checks; ad-hoc previews are not confirmed evaluation datasets.
+        data["private"] = True
     rate, minimum = data.get("required_pass_rate", 0.95), data.get("min_cases", 50)
     if (
         isinstance(rate, bool)

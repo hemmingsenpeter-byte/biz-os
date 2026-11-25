@@ -137,6 +137,12 @@ loopback. A case marked public counts as private when its directory holds a priv
 dataset, and its content must then match that dataset. The harness connects to a
 `localhost` Ollama URL through 127.0.0.1 directly.
 
+An individual case file may also declare `private: true`; an explicit flag must
+be a boolean. This tightens the directory's privacy setting, and `private: false`
+cannot make a private dataset public. Private training previews saved as standalone
+case files are refused before inference when they lack the existing owner receipt
+and cohort-integrity evidence. Testing review does not substitute for that evidence.
+
 These gates guard against mistakes, not against hostile code in the same process.
 Code that runs in-process is trusted. Deliberately forged provenance, such as a
 private case relabelled public with a fixture directory, is out of scope. So is a

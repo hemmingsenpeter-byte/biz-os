@@ -1052,6 +1052,91 @@ def test_confirmed_gate_cannot_be_changed_without_its_receipt(
         dataset_metadata(heldout, load_cases(heldout))
 
 
+def _training_preview(directory: Path, private: Any = True) -> Path:
+    """An exported correction case, deliberately without dataset metadata or a receipt."""
+    directory.mkdir()
+    (directory / "case.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "correction-preview",
+                "private": private,
+                "system": "Propose a response to the supplied customer material.",
+                "untrusted": ["private customer material"],
+                "schema": {"type": "object", "required": ["reply"]},
+                "expected": {"reply": "owner correction"},
+                "checks": [{"type": "json_schema"}, {"type": "exact"}],
+            }
+        )
+    )
+    return directory
+
+
+def test_standalone_private_case_keeps_private_provenance(tmp_path: Path) -> None:
+    directory = _training_preview(tmp_path / "preview")
+    loaded = load_cases(directory)
+    assert loaded[0].provenance is not None
+    assert loaded[0].provenance.kind == "private"
+
+
+@pytest.mark.parametrize("flag", [None, "true", "false", 0, 1, [], {}])
+def test_case_private_flags_are_strict_booleans(tmp_path: Path, flag: Any) -> None:
+    directory = _training_preview(tmp_path / "preview", flag)
+    with pytest.raises(ValueError, match="private.*boolean"):
+        load_cases(directory)
+
+
+def test_case_false_cannot_loosen_private_dataset(tmp_path: Path) -> None:
+    directory = _training_preview(tmp_path / "preview", False)
+    (directory / "_task.yaml").write_text("private: true\n")
+    loaded = load_cases(directory)
+    assert loaded[0].provenance is not None
+    assert loaded[0].provenance.kind == "private"
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+@pytest.mark.parametrize("tier", ["cloud", "local"])
+@pytest.mark.parametrize("allow_cloud", [False, True])
+def test_training_preview_needs_private_integrity_before_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_list: bool, tier: str, allow_cloud: bool
+) -> None:
+    import httpx
+    from biz_port_model_ollama import OllamaModel
+
+    directory = _training_preview(tmp_path / "preview")
+    cloud = FakeModel()
+    requests: list[httpx.Request] = []
+
+    def remote(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"message": {"content": '{"reply":"owner correction"}'}})
+
+    async def evaluate() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(remote)) as client:
+            router = Router(OllamaModel("https://remote.example.invalid", client=client), cloud)
+            cases = load_cases(directory) if as_list else directory
+            options = {"cloud_data": authorised(tmp_path)} if allow_cloud else {}
+            with pytest.raises(ValueError, match="owner review receipt"):
+                await run_eval("draft", tier, router, cases, **options)  # type: ignore[arg-type]
+
+    asyncio.run(evaluate())
+    assert requests == cloud.calls == []
+
+
+@pytest.mark.parametrize("tier", ["cloud", "local"])
+def test_training_preview_cli_never_invokes_a_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier: str
+) -> None:
+    from biz_kernel.models.eval import cli
+
+    directory = _training_preview(tmp_path / "preview")
+    local, cloud = FakeModel(), FakeModel()
+    monkeypatch.setattr(cli, "build_router", lambda: Router(local, cloud))
+    result = CliRunner().invoke(app, ["eval", "draft", "--tier", tier, "--cases", str(directory)])
+    assert result.exit_code != 0 and "owner review receipt" in result.output
+    assert "private customer material" not in result.output
+    assert local.calls == cloud.calls == []
+
+
 def test_legacy_unconditional_cases_keep_their_original_scoring(tmp_path: Path) -> None:
     from biz_kernel.models.eval.harness import EvalReport, dataset_metadata, score_case
 

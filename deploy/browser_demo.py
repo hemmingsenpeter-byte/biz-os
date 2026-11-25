@@ -32,8 +32,11 @@ from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.approvals.staged import digest
 from biz_kernel.auth import tokens
 from biz_kernel.auth.users import create_user
+from biz_kernel.evidence import service as evidence
 from biz_kernel.loader import load_composition
+from biz_kernel.records.models import Job, Task
 from biz_kernel.runtime import build_runtime
+from biz_kernel.tools.shadow import SHADOW_EVIDENCE
 from biz_kernel.workflows.models import SopRun
 from biz_kernel.workflows.worker import ensure_database
 from biz_port_fakes import FakeMail, FakeModel
@@ -293,6 +296,24 @@ def main() -> None:
             )
             owner = json.loads(result.stdout)
             staff, legacy_unknown = seed_staff_and_legacy(origin)
+            with db.session_scope() as session:
+                shadow_job = Job(kind="browser_acceptance", stage="open")
+                session.add(shadow_job)
+                session.flush()
+                shadow_task = Task(
+                    title="Shadow meeting offer", kind="book_meeting", job_id=shadow_job.id
+                )
+                related_task = Task(
+                    title="Related meeting task", kind="book_meeting", job_id=shadow_job.id
+                )
+                session.add_all([shadow_task, related_task])
+                session.flush()
+                evidence.note(
+                    session, SHADOW_EVIDENCE, job_id=shadow_job.id, task_id=shadow_task.id
+                )
+                evidence.note(session, SHADOW_EVIDENCE, job_id=shadow_job.id)
+                shadow_task_id = str(shadow_task.id)
+                related_task_id = str(related_task.id)
             runtime_process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--worker"],
                 cwd=ROOT,
@@ -314,6 +335,8 @@ def main() -> None:
                         "owner": owner,
                         "staff": staff,
                         "legacy_unknown": legacy_unknown,
+                        "shadow_task_id": shadow_task_id,
+                        "related_task_id": related_task_id,
                         "operations": operations,
                         "sends": os.environ["BIZ_BROWSER_SENDS"],
                     }

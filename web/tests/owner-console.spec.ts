@@ -18,6 +18,8 @@ type State = {
   owner: { email: string; invite_url: string };
   staff: { email: string; invite_url: string };
   legacy_unknown: { id: string; actor: string; decision_type: string };
+  shadow_task_id: string;
+  related_task_id: string;
   operations: Record<
     "approve" | "reject" | "stale" | "concurrent_edit",
     Operation
@@ -146,6 +148,71 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
       .soft(mobile.document, JSON.stringify(mobile))
       .toBeLessThanOrEqual(mobile.viewport);
     await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+
+  await test.step("shadow preparation appears without a pending approval", async () => {
+    await page.goto(`/tasks/${state.shadow_task_id}`);
+    await expect(
+      page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("No pending approvals linked to this task."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Packet Message Sent", exact: true }),
+    ).toHaveCount(0);
+    const task = await (
+      await page.request.get(`/v1/tasks/${state.shadow_task_id}`)
+    ).json();
+    expect(task.status).toBe("open");
+    const activity = await (
+      await page.request.get(`/v1/tasks/${state.shadow_task_id}/activity`)
+    ).json();
+    expect(
+      activity.filter(
+        (event: { kind: string; task_id: string | null }) =>
+          event.kind === "shadow.suppressed" &&
+          event.task_id === state.shadow_task_id,
+      ),
+    ).toHaveLength(1);
+    expect(sends()).toHaveLength(0);
+    await page.screenshot({
+      path: "test-results/owner-console-shadow-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(
+      page.getByRole("navigation", { name: "Main navigation" }),
+    ).not.toBeInViewport();
+    await expect(
+      page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "test-results/owner-console-shadow-mobile.png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+
+  await test.step("shared shadow evidence does not claim another meeting was prepared", async () => {
+    await page.goto(`/tasks/${state.related_task_id}`);
+    await expect(
+      page.getByRole("heading", { name: "Related meeting task", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Shared job evidence", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Shadow Suppressed", exact: true }),
+    ).toHaveCount(1);
+    expect(sends()).toHaveLength(0);
   });
 
   await test.step("UI approval completes once with linked evidence", async () => {

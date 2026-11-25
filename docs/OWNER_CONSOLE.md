@@ -40,6 +40,11 @@ printing the invitation, and records the administration action without its token
 
 ## Review work
 
+A shadow-mode meeting-offer task shows **Prepared, not sent** when its own activity
+records dispatch suppression. The task stays open for review. This label describes
+an internal draft; it does not mean that a customer received a message or that a
+meeting was booked. Shared job activity retains its original event label.
+
 - Open **Approvals** to see pending requests. Each detail page displays the
   exact inputs, revision, requesting role, reason and linked task.
 - **Approve version N** sends that revision to the existing approval API.

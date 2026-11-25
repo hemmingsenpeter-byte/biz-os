@@ -112,7 +112,9 @@ def test_interrupt_keeps_initial_plan_and_provisional_current_attempt(
     assert "not established" in report["readiness"]
 
 
-def test_all_fixture_workflows_keep_unmet_readiness_visible(tmp_path: Path) -> None:
+def test_all_fixture_workflows_verify_guards_without_claiming_pilot_readiness(
+    tmp_path: Path,
+) -> None:
     output = tmp_path / "fixtures.json"
     process = subprocess.run(
         [
@@ -139,8 +141,11 @@ def test_all_fixture_workflows_keep_unmet_readiness_visible(tmp_path: Path) -> N
     assert all(
         not any(result["fake_external_write_invocations"].values()) for result in results.values()
     )
-    assert results["R04"]["readiness_checks"]["warranty ambiguity escalated"] is False
-    assert results["R01"]["manual_checks"]["offered_slot_accuracy"] == "unverified"
+    assert results["R04"]["readiness_checks"]["warranty ambiguity escalated"] is True
+    for case in ("R01", "R12", "R15"):
+        assert results[case]["readiness_checks"]["offered_slot_accuracy"] is True
+    assert all(all(result["readiness_checks"].values()) for result in results.values())
+    assert all(result["manual_checks"] == {} for result in results.values())
     assert report["unverified_attempts"] == []
     assert "not established" in report["readiness"]
     assert "pilot_ready" not in report

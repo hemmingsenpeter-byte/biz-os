@@ -66,6 +66,20 @@ steps:
       subject: "{{steps.route.output.subject}}"
       body: "{{steps.route.output.body}}"
       party_id: "{{steps.route.output.party_id}}"
+  - id: service_escalation
+    kind: publish
+    when: "{{steps.route.output.category}} == service_request"
+    packet: escalation.raised
+    summary: "Owner review required: {{steps.route.output.summary}}"
+    payload:
+      subject: "Service request: {{steps.route.output.subject}}"
+      reason: "Existing-customer request requires owner review. Check earlier work and applicable terms before responding; no remedy has been promised."
+      raised_by: receptionist
+      packet_id: "{{packet.id}}"
+  - id: await_owner_review
+    kind: stop
+    when: "{{steps.route.output.category}} == service_request"
+    status: escalated
   - id: declined
     kind: publish
     when: "{{steps.route.output.category}} in spam,supplier,other"

@@ -13,17 +13,9 @@ steps:
     tool: booking.offer_slots
     args: { days_ahead: 7, duration_minutes: 30, limit: 3 }
   - id: draft
-    kind: draft
-    prompt: prompts/book_meeting.md
-    decision_type: meeting_offer_drafting
-    schema:
-      type: object
-      required: [subject, body, confidence]
-      properties:
-        subject: { type: string }
-        body: { type: string }
-        confidence: { type: number, minimum: 0, maximum: 1 }
-    inputs: { enquiry: "{{steps.read.output}}", slots: "{{steps.slots.output}}" }
+    kind: tool
+    tool: booking.render_offer
+    args: { slots: "{{steps.slots.output.slots}}" }
   - id: outbox
     kind: tool
     tool: comms.draft
@@ -35,7 +27,7 @@ steps:
       party_id: "{{steps.read.output.party_id}}"
       expected_to: "{{steps.read.output.from}}"
       meta:   # the reply handler reads these back: it may only book a slot that was offered
-        offered_slots: "{{steps.slots.output.slots}}"
+        offered_slots: "{{steps.draft.output.slots}}"
         enquiry_id: "{{packet.payload.enquiry_id}}"
   - id: gate
     kind: tool

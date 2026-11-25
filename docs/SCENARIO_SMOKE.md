@@ -25,15 +25,19 @@ review. Exit code 2 indicates an unavailable or unverified model. An interrupted
 returns 130.
 
 The runner checks model category, effective routing, complaint escalation,
-duplicate intake, draft recipient, dispatch suppression and the fake provider
-invocation counters. A passing offer check confirms suppression and the intended
-recipient. The runner records offered-slot accuracy as unverified; actual-model
-offers retain `REVIEW_REQUIRED` status rather than a complete pass. Review the draft
-for accurate slots and business facts separately. R04 must produce a warranty
-escalation; routing it as a service request alone does not pass that readiness check.
-Workflow checks and readiness checks are recorded separately. Fixture assurance can
-pass workflow wiring while still reporting R04's missing warranty escalation as a
-false readiness check. Actual-model runs fail when that readiness criterion is false.
+duplicate intake, draft recipient, dispatch suppression and fake provider invocation
+counters. Meeting offers are now rendered by `booking.render_offer` from validated
+calendar slots, with explicit time-zone and UTC-offset labels; the model does not
+write the offered dates or body. The runner compares the canonical body and stored
+reply-slot metadata with the calendar step and records offered-slot accuracy as an
+automated check.
+
+Every service request now publishes an owner escalation and leaves its task open.
+R04 verifies that the escalation packet is linked to the triggering enquiry and its
+task activity; routing it as a service request alone does not pass. This requests
+owner review of earlier work and applicable terms and promises no warranty remedy.
+Workflow and readiness checks remain separate, and either type of failed check makes
+the run fail in both fixture and actual-model modes.
 The JSON contains fictional workflow text for that review and records model
 latency and tokens where available. Other catalogue cases remain outside this
 first slice. Historical owner-reviewed evaluation uses its separate workflow.

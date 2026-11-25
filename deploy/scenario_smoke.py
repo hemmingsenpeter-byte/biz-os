@@ -20,6 +20,7 @@ from uuid import UUID
 import httpx
 import pgserver
 import yaml
+from biz_cap_booking.rendering import render_offer
 from biz_cap_comms.models import Outbox
 from biz_cap_intake.models import Enquiry
 from biz_kernel import db, migrations
@@ -29,6 +30,7 @@ from biz_kernel.audit.log import AuditEntry
 from biz_kernel.contracts.ports import InboundMessage
 from biz_kernel.evidence.models import EvidenceEvent
 from biz_kernel.packets.bus import Packet
+from biz_kernel.records.models import Task
 from biz_kernel.runtime import build_runtime, capability_routes
 from biz_kernel.tools.shadow import SHADOW_EVIDENCE, ExecutionMode
 from biz_kernel.workflows import runner
@@ -204,11 +206,6 @@ def execute(
         else FakeModel(
             [
                 {"category": category, "summary": "Fictional request", "confidence": 0.95},
-                {
-                    "subject": "Site visit",
-                    "body": "Which of these times suits you?",
-                    "confidence": 0.95,
-                },
             ]
         )
     )
@@ -280,7 +277,11 @@ def execute(
                 if received:
                     triage = complete("triage", received[0], timeout + 20)
                     result["triage"] = triage
-                    check("triage complete", triage["status"] == "done")
+                    check(
+                        "triage reached expected review state",
+                        triage["status"]
+                        == ("escalated" if category == "service_request" else "done"),
+                    )
                     check(
                         "model category",
                         (triage["steps"].get("model") or {}).get("category") == category,
@@ -293,18 +294,40 @@ def execute(
                     == int(category == "service_request"),
                 )
                 if category == "service_request":
-                    result["readiness_checks"]["warranty ambiguity escalated"] = bool(
-                        packet_ids("escalation.raised")
-                    )
+                    with db.session_scope() as session:
+                        escalations = session.scalars(
+                            select(Packet).where(Packet.type == "escalation.raised")
+                        ).all()
+                        task_id = UUID(triage["task_id"])
+                        linked = session.scalars(
+                            select(EvidenceEvent).where(
+                                EvidenceEvent.kind == "packet:escalation.raised",
+                                EvidenceEvent.task_id == task_id,
+                            )
+                        ).all()
+                        result["readiness_checks"]["warranty ambiguity escalated"] = (
+                            len(escalations) == len(linked) == 1
+                            and escalations[0].payload.get("packet_id") == str(received[0])
+                            and linked[0].ref == str(escalations[0].id)
+                            and session.get(Task, task_id).status == "open"
+                        )
                 if opp:
                     rt.tick()
                     offer = complete("book_meeting", opp[0], timeout + 20)
                     result["offer"] = offer
-                    # Suppression does not prove model-written dates match the offered slots.
-                    result["manual_checks"]["offered_slot_accuracy"] = "unverified"
                     check("offer suppressed", offer["status"] == "shadowed")
                     with db.session_scope() as session:
                         drafts = session.scalars(select(Outbox)).all()
+                        slots = offer["steps"]["slots"]["output"]["slots"]
+                        expected = render_offer(slots)
+                        accurate = (
+                            len(drafts) == 1
+                            and drafts[0].body == expected["body"]
+                            and drafts[0].subject == expected["subject"]
+                            and drafts[0].meta.get("offered_slots") == expected["slots"]
+                        )
+                        check("canonical offer uses only calendar slots", accurate)
+                        result["readiness_checks"]["offered_slot_accuracy"] = accurate
                         check(
                             "only original fictional recipient",
                             len(drafts) == 1
@@ -360,7 +383,7 @@ def execute(
     else:
         result["ledger_status"] = "observed after workflow and runtime shutdown"
         check("zero fake external write invocations", not any(ledgers.values()))
-    if not all(checks.values()) or (model_name and not all(result["readiness_checks"].values())):
+    if not all(checks.values()) or not all(result["readiness_checks"].values()):
         result["status"] = "FAIL"
     elif model_name and result["manual_checks"]:
         result["status"] = "REVIEW_REQUIRED"

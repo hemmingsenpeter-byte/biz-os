@@ -23,7 +23,7 @@ import typer
 import yaml
 from biz_kernel.cli.main import doctor_cmd
 from biz_kernel.loader import LoadError, load_composition
-from biz_kernel.tools.shadow import ExecutionMode, mode_problems
+from biz_kernel.tools.shadow import mode_problems
 from biz_port_sign_docuseal import DocuSealSign
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -453,14 +453,16 @@ def public_caddyfile_problems(caddyfile: str) -> list[str]:
 
 
 @contextlib.contextmanager
-def _without_host_mode() -> Any:
-    """Doctor judges the composition alone; the Compose override is checked separately."""
-    saved = os.environ.pop("BIZ_EXECUTION_MODE", None)
+def _without_host_settings() -> Any:
+    """Doctor judges the composition alone; resolved Compose settings are checked separately."""
+    keys = ("BIZ_EXECUTION_MODE", "BIZ_OLLAMA_URL", "BIZ_OLLAMA_MODEL", "BIZ_OLLAMA_EMBED_MODEL")
+    saved = {key: os.environ.pop(key) for key in keys if key in os.environ}
     try:
         yield
     finally:
-        if saved is not None:
-            os.environ["BIZ_EXECUTION_MODE"] = saved
+        for key in keys:
+            os.environ.pop(key, None)
+        os.environ.update(saved)
 
 
 def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = None) -> list[str]:
@@ -485,12 +487,13 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
             override=None,
             ports=manifest.ports,
             policy=manifest.policy,
+            environ={},
         )
         if composition_mode:  # named precisely: these are owner decisions, not typos
             return composition_mode
         # The existing doctor checks port and capability imports, budgets, schedules and policy.
         with (
-            _without_host_mode(),
+            _without_host_settings(),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -521,21 +524,16 @@ def validate(config: dict[str, Any], root: Path, *, compose_dir: Path | None = N
 
     if api.get("BIZ_ORIGIN") != services["biz-web"].get("environment", {}).get("BIZ_ORIGIN"):
         problems.append("BIZ_ORIGIN must also match the owner console")
-    mode, mode_issues = mode_problems(
+    _, mode_issues = mode_problems(
         manifest.execution_mode,
         manifest.supervised_authorization,
         override=api.get("BIZ_EXECUTION_MODE") or None,
         ports=manifest.ports,
         policy=manifest.policy,
+        environ=api,
+        compose=True,
     )
     problems.extend(mode_issues)
-    if mode == ExecutionMode.SHADOW and "model_ollama" in ports:
-        ollama = _http_url(api.get("BIZ_OLLAMA_URL", ""))
-        if not ollama or ollama.hostname != "host.docker.internal":
-            problems.append("Shadow Ollama must use the appliance host.docker.internal endpoint")
-        for key in ("BIZ_OLLAMA_MODEL", "BIZ_OLLAMA_EMBED_MODEL"):
-            if re.search(r"(?:^|[/:_-])cloud(?:$|[/:])", api.get(key, ""), re.I):
-                problems.append(f"{key} cannot use a cloud model in shadow mode")
     if api.get("BIZ_DBOS_SYSTEM_URL") or worker.get("BIZ_DBOS_SYSTEM_URL"):
         problems.append(
             "BIZ_DBOS_SYSTEM_URL must be empty so backups include the workflow database"

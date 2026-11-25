@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any, Literal
 
 import httpx
 from biz_kernel.models import usage as usage_mod
 
-__all__ = ["OllamaModel", "create"]
+from .config import (
+    DEFAULT_EMBED_MODEL,
+    DEFAULT_MODEL,
+    DEFAULT_URL,
+    OllamaSettings,
+    appliance_endpoint,
+)
 
-DEFAULT_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1:8b"
-DEFAULT_EMBED_MODEL = "nomic-embed-text"
+__all__ = ["OllamaModel", "create"]
 
 
 class OllamaModel:
@@ -41,10 +44,11 @@ class OllamaModel:
 
     @classmethod
     def create(cls) -> OllamaModel:
+        settings = OllamaSettings.from_env()
         return cls(
-            base_url=os.environ.get("BIZ_OLLAMA_URL", DEFAULT_URL),
-            model=os.environ.get("BIZ_OLLAMA_MODEL", DEFAULT_MODEL),
-            embed_model=os.environ.get("BIZ_OLLAMA_EMBED_MODEL", DEFAULT_EMBED_MODEL),
+            base_url=settings.base_url,
+            model=settings.model,
+            embed_model=settings.embed_model,
         )
 
     def _sem(self) -> asyncio.Semaphore:
@@ -57,7 +61,10 @@ class OllamaModel:
             if self._client is not None:
                 resp = await self._client.post(self.base_url + path, json=body)
             else:
-                async with httpx.AsyncClient(timeout=self.timeout) as c:
+                # Appliance inference never goes through an inherited HTTP proxy.
+                async with httpx.AsyncClient(
+                    timeout=self.timeout, trust_env=not appliance_endpoint(self.base_url)
+                ) as c:
                     resp = await c.post(self.base_url + path, json=body)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]

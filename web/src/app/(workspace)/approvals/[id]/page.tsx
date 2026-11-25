@@ -683,7 +683,9 @@ export default function ApprovalPage({
                         ? "Approved and waiting for the workflow to continue. Refresh to see its progress."
                         : request.status === "executed"
                           ? "This operation has been carried out. Open the linked task to see its activity."
-                          : `This request is ${request.status}. Return to the queue for pending work.`}
+                          : request.status === "shadowed"
+                            ? "Shadow mode held this approved operation back. It was not carried out and will not run later. Open the linked task to see what policy would have decided."
+                            : `This request is ${request.status}. Return to the queue for pending work.`}
                     </p>
                   )}
                 </section>

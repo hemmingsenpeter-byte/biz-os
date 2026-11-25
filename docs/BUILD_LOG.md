@@ -118,6 +118,22 @@ merge, pytest, ruff, mypy and `biz doctor` for both apps passed on main.
   schemas, not a CLI error.
 - The backup mount check refuses one directory reached by two spellings.
 
+## 2026-11-20 Shadow meeting offers in the owner console
+
+- Task activity returns an additive `shadow` field on `shadow.suppressed`
+  evidence, read from its suppression audit record: tool, effects, the
+  would-be policy verdict, whether it was pre-approved and the staged
+  operation. Message bodies and recipients are not returned.
+- The console labels task-specific suppressions from the recorded effects
+  (“Prepared, not sent” for external, “Prepared, not paid” for money), names
+  the tool and shows the verdict and its reason as text. No role or task kind
+  is named in web/. Shared job evidence keeps its generic label.
+- Task pages compare evidence and approvals with the API's canonical task id,
+  so an uppercase URL still matches. A shadowed staged operation shows as
+  terminal, with no approve, edit or reject actions.
+- Browser acceptance covers the label, verdict, escaped reason, the shadowed
+  approval, an uppercase task URL and the absence of sends.
+
 ## 2026-11-20 Receptionist shadow mode
 
 - HIVE defaults to shadow mode, with the receptionist and on-appliance

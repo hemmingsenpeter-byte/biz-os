@@ -32,8 +32,12 @@ from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.approvals.staged import digest
 from biz_kernel.auth import tokens
 from biz_kernel.auth.users import create_user
+from biz_kernel.evidence import service as evidence
 from biz_kernel.loader import load_composition
+from biz_kernel.policy.types import SideEffect
+from biz_kernel.records.models import Task
 from biz_kernel.runtime import build_runtime
+from biz_kernel.tools.shadow import SHADOW_EVIDENCE, record_suppression
 from biz_kernel.workflows.models import SopRun
 from biz_kernel.workflows.worker import ensure_database
 from biz_port_fakes import FakeMail, FakeModel
@@ -233,6 +237,49 @@ def wait_http(
     raise TimeoutError(f"browser acceptance server not ready: {url}")
 
 
+def seed_shadowed() -> dict[str, str]:
+    """A task whose approved send shadow mode held back, with the would-be verdict."""
+    inputs = {
+        "request_id": str(uuid.uuid4()),
+        "to": "shadow@example.invalid",
+        "body": "Held back text.",
+        "idempotency_key": f"browser-shadow-{uuid.uuid4()}",
+    }
+    checksum = digest(inputs)
+    with db.session_scope() as session:
+        task = Task(title="Shadow-held reply", kind="shadow_acceptance")
+        operation = StagedOperation(
+            actor="shadow_fixture",
+            tool="demo_desk.send_reply",
+            decision_type="shadow_acceptance",
+            inputs=inputs,
+            inputs_sha256=checksum,
+            version=1,
+            approver="owner",
+            status="shadowed",
+            approved_by="owner",
+            approved_version=1,
+            approved_sha256=checksum,
+            reason="Shadow acceptance fixture.",
+        )
+        session.add_all([task, operation])
+        session.flush()
+        suppression = record_suppression(
+            session,
+            operation.actor,
+            operation.tool,
+            {SideEffect.EXTERNAL},
+            inputs,
+            decision_type=operation.decision_type,
+            policy={"decision": "ask", "reason": "<b>First reply</b> needs the owner"},
+            pre_approved=True,
+            staged_op_id=str(operation.id),
+        )
+        operation.result = {"shadowed": {"audit_id": str(suppression.audit_id)}}
+        evidence.note(session, SHADOW_EVIDENCE, str(suppression.audit_id), task_id=task.id)
+        return {"task_id": str(task.id), "op_id": str(operation.id)}
+
+
 def main() -> None:
     stopped = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -293,6 +340,7 @@ def main() -> None:
             )
             owner = json.loads(result.stdout)
             staff, legacy_unknown = seed_staff_and_legacy(origin)
+            shadowed = seed_shadowed()
             runtime_process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--worker"],
                 cwd=ROOT,
@@ -314,6 +362,7 @@ def main() -> None:
                         "owner": owner,
                         "staff": staff,
                         "legacy_unknown": legacy_unknown,
+                        "shadowed": shadowed,
                         "operations": operations,
                         "sends": os.environ["BIZ_BROWSER_SENDS"],
                     }

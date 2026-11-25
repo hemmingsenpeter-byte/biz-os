@@ -6,8 +6,11 @@ import { ArrowLeft, CheckCheck, Clock3, RefreshCw } from "lucide-react";
 import {
   dateTime,
   readable,
+  shadowLabel,
+  verdictLabel,
   type Activity,
   type Approval,
+  type Shadow,
   type Task,
 } from "@/lib/api";
 import { useData } from "@/lib/use-data";
@@ -20,6 +23,30 @@ import {
   PageHeading,
 } from "@/components/ui";
 
+function ShadowDetail({ shadow }: { shadow: Shadow }) {
+  return (
+    <div className="shadow-evidence">
+      <p>
+        Shadow mode held back <code>{shadow.tool}</code>
+        {shadow.effects.length > 0 && <> ({shadow.effects.join(", ")})</>}.
+      </p>
+      <p>
+        <strong>{verdictLabel(shadow.policy)}</strong>
+        {shadow.policy?.reason && (
+          <span className="preserve-text">: {shadow.policy.reason}</span>
+        )}
+      </p>
+      {shadow.staged_op_id && (
+        <DetailLink
+          href={`/approvals/${encodeURIComponent(shadow.staged_op_id)}`}
+        >
+          Approved request, shadowed
+        </DetailLink>
+      )}
+    </div>
+  );
+}
+
 export default function TaskPage({
   params,
 }: {
@@ -31,7 +58,10 @@ export default function TaskPage({
     `/tasks/${encodeURIComponent(id)}/activity`,
   );
   const approvals = useData<Approval[]>("/approvals");
-  const linked = approvals.data?.filter((item) => item.task_id === id) ?? [];
+  // Compare against the canonical id the API returns, not the URL's spelling.
+  const taskId = task.data?.id;
+  const linked =
+    approvals.data?.filter((item) => taskId && item.task_id === taskId) ?? [];
   return (
     <>
       <Link className="back-link" href="/tasks">
@@ -98,11 +128,18 @@ export default function TaskPage({
                         </span>
                         <div>
                           <div className="timeline-title">
-                            <h3>{readable(event.kind)}</h3>
+                            <h3>
+                              {event.shadow && event.task_id === taskId
+                                ? shadowLabel(event.shadow)
+                                : readable(event.kind)}
+                            </h3>
                             <time dateTime={event.at}>
                               {dateTime(event.at)}
                             </time>
                           </div>
+                          {event.shadow && (
+                            <ShadowDetail shadow={event.shadow} />
+                          )}
                           {event.ref && (
                             <p className="event-ref">{event.ref}</p>
                           )}

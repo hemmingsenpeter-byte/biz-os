@@ -18,6 +18,7 @@ type State = {
   owner: { email: string; invite_url: string };
   staff: { email: string; invite_url: string };
   legacy_unknown: { id: string; actor: string; decision_type: string };
+  shadowed: { task_id: string; op_id: string };
   operations: Record<
     "approve" | "reject" | "stale" | "concurrent_edit",
     Operation
@@ -146,6 +147,41 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
       .soft(mobile.document, JSON.stringify(mobile))
       .toBeLessThanOrEqual(mobile.viewport);
     await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+
+  await test.step("shadow preparation appears without a pending approval", async () => {
+    await page.goto(`/tasks/${state.shadowed.task_id}`);
+    await expect(
+      page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("demo_desk.send_reply", { exact: true })).toBeVisible();
+    await expect(page.getByText("Policy would have asked for approval")).toBeVisible();
+    // The recorded reason is shown as text, never as markup.
+    await expect(page.getByText(": <b>First reply</b> needs the owner")).toBeVisible();
+    await expect(page.locator(".shadow-evidence b")).toHaveCount(0);
+    await expect(page.getByText("No pending approvals linked to this task.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Packet Message Sent", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "Approved request, shadowed" }).click();
+    await expect(page).toHaveURL(new RegExp(`/approvals/${state.shadowed.op_id}$`));
+    await expect(page.getByText("Shadowed", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Shadow mode held this approved operation back/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Approve version/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Edit proposal" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reject request" })).toHaveCount(0);
+    expect(sends()).toHaveLength(0);
+  });
+
+  await test.step("an uppercase task URL still matches its evidence and approvals", async () => {
+    await page.goto(`/tasks/${state.shadowed.task_id.toUpperCase()}`);
+    await expect(
+      page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
+    ).toBeVisible();
+    const operation = state.operations.approve;
+    await page.goto(`/tasks/${operation.task_id.toUpperCase()}`);
+    await expect(page.locator(`a[href="/approvals/${operation.id}"]`)).toBeVisible();
+    await expect(page.getByText("No pending approvals linked to this task.")).toHaveCount(0);
   });
 
   await test.step("UI approval completes once with linked evidence", async () => {

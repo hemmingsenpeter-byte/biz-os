@@ -1,5 +1,58 @@
 # Build log
 
+## 2026-11-25 Correction training and receptionist pilot sprint
+
+The next sprint builds on PR #15 without merging it. HIVE remains shadow-only;
+M7–M9 and live activation remain gated by PLAN.md.
+
+### Implemented
+
+- Successful model drafts now capture immutable prompt, schema, untrusted source,
+  observed output and available model metadata in the same transaction as the
+  step ledger. Unknown revisions remain null; old drafts are not reconstructed.
+- The owner can create one immutable rule/case proposal per approval correction,
+  explicitly choose its source draft and supply schema-valid expected output.
+  Duplicate requests are idempotent; changed requests conflict. Review accepts
+  testing only, rejection is available while paused, and no deployed instruction,
+  permission, autonomy level or external action changes.
+- Training APIs and console are owner-only. Legacy incomplete proposals stay
+  ineligible. Snapshot/candidate hashes bind their contents, identities and times;
+  candidate hashes also bind correction and creator. Source selection checks the
+  actual workflow/actor and requires a draft captured before the correction.
+- Review proved and fixed three boundaries: relinked candidate provenance could
+  retain its old hash; an unresolved conditional schema reference could escape
+  validation; and a standalone private case could lose privacy in the evaluator.
+  Integrity checks now reject altered evidence, schema resolution failures are
+  sanitized, and per-case privacy can tighten but never loosen dataset privacy.
+  Missing private integrity evidence prevents inference even with cloud consent.
+- Service requests now publish linked owner escalation and leave an open task.
+  The canonical booking renderer takes validated slots and an explicit timezone;
+  meeting times no longer come from model-written text. Both apps and all four
+  scenario fixtures verify the owner handoff, exact offer and zero shadow writes.
+- Review exposed incompatible old draft/tool ledgers after the SOP change. New
+  workflows pin SOP data, prompt content, tool allow-lists and escalation rules.
+  API/worker startup and resume refuse unknown or changed unfinished definitions.
+  Completed legacy work returns its recorded outcome without executing new steps.
+
+### Upgrade and verification
+
+Migration `0024` adds the three append-only training tables and workflow pins.
+Before any schema change it refuses unfinished legacy work, leaving revision
+`0023` usable by the original release so the owner can drain it. Populated training
+history or workflow pins cannot be discarded by a normal downgrade. Follow
+`deploy/README.md` before upgrading; no global DBOS version was blindly bumped.
+
+Independent reviews cleared the fixes. Local verification passed: **1138 Python
+tests in 326.29 seconds**, Ruff lint/format, mypy (321 source files), both composition
+doctors, frontend lint/typecheck/build and real-backend Chromium acceptance
+(32.5 seconds). Desktop and mobile training screenshots were inspected.
+Packaged Docker and encrypted recovery are required CI checks on the stacked PR.
+
+The first training slice is proposal and review, not a completed learning loop.
+Candidate versioning, actual regression comparison, activation/rollback, production
+outcome capture and operator notifications remain future work. Real model, mailbox,
+appliance and owner baseline evidence are still needed for the live pilot.
+
 ## 2026-11-25 Receptionist shadow pilot coding sprint
 
 The owner approved the sprint in `docs/SPRINT_2026-11-25.md`. This branch adapts

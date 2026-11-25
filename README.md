@@ -17,6 +17,8 @@ For the packaged API and worker, follow the [local Docker demo smoke check](depl
 It verifies approval, worker recovery, completed-workflow replay and PDF rendering with fake ports.
 The [owner console guide](docs/OWNER_CONSOLE.md) covers passkey setup, browser approvals,
 task activity and the seeded browser acceptance test.
+The [correction training guide](docs/TRAINING.md) covers source-backed rule/case
+proposals and owner review for testing only.
 
 Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. They never use the live network: every port has a fake in `ports/fakes`.
 

@@ -83,6 +83,37 @@ for the dependency download step when building behind a TLS-inspecting proxy.
 This verifies the packaged demo using disposable credentials and fake providers.
 HIVE's live integrations and deployment on the Mac mini have separate acceptance gates.
 
+## Upgrading SOP definitions
+
+Before this release, finish or reject all unfinished workflows using the original
+release and worker. Inspect the private application database:
+
+```sql
+SELECT id, role, sop, status, waiting_op_id
+FROM sop_runs
+WHERE finished_at IS NULL
+  AND status IN ('running', 'waiting', 'paused', 'budget_stopped');
+```
+
+Settle the associated approvals on the original release, including queued meeting
+offers. Verify completion evidence, take the existing encrypted backup and stop
+the old API and workers before upgrading both services together. Migration `0024`
+refuses legacy unfinished work before making schema changes; the original release
+can therefore still start and drain it. Do not stamp past the refusal or invent
+definition hashes for old work.
+
+New workflows pin the SOP, draft-prompt content, allowed tools and escalation
+conditions. API/worker startup and recovery refuse unfinished work whose definition
+is missing or differs from the running release. Return to its matching release to
+settle it. Completed legacy work retains its recorded outcome and does not execute
+new steps on replay. Keep the existing DBOS application-version policy; changing
+`BIZ_WORKFLOW_VERSION` does not override the definition check.
+
+Back up before migration. A downgrade that would discard training history or
+workflow pins requires the existing explicit data-loss option; normal recovery is
+from a verified backup. This release changes receptionist triage and meeting-offer
+step data, so draining is required even when the global workflow version is the same.
+
 ## 1. macOS setup (once)
 
 - **Never sleep:** System Settings > Energy > Prevent automatic sleeping; or

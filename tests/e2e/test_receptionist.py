@@ -343,7 +343,26 @@ def test_shadow_service_request_keeps_owner_work_open_without_dispatch(
     _assert_service_request_needs_owner(shadow_live, monkeypatch)
 
 
-def test_triage_confidence_escalation_is_preserved(live: Live) -> None:
+def _assert_confidence_escalation_is_visible_once(
+    live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from biz_kernel.auth import tokens
+    from biz_kernel.auth.users import create_user
+
+    monkeypatch.setenv("BIZ_SECRET_KEY", "synthetic-confidence-owner-session-key")
+    providers = []
+    for slot, methods in {
+        "mail": ("send",),
+        "telephony": ("send_sms",),
+        "calendar": ("book",),
+        "accounting": ("upsert_contact", "create_invoice", "create_bill"),
+        "sign": ("request_signature",),
+    }.items():
+        for method in methods:
+            port = live.rt.ports[slot]
+            spy = AsyncMock(wraps=getattr(port, method))
+            monkeypatch.setattr(port, method, spy)
+            providers.append(spy)
     live.rt.router.cloud = None
     live.model.script({"category": "service_request", "summary": "Unclear", "confidence": 0.4})
     live.mail.inject_inbound(
@@ -361,8 +380,43 @@ def test_triage_confidence_escalation_is_preserved(live: Live) -> None:
     run = live.run_for("triage", trigger.id)
     assert live.finish(run)["status"] == "escalated"
     assert live.packets("service_request.received") == []
+    (escalation,) = live.packets("escalation.raised")
+    assert "confidence" in escalation.payload["reason"]
+    assert "0.4" in escalation.payload["reason"]
+    with db.session_scope() as session:
+        assert session.get(Task, run.task_id).status == "open"
+        owner = create_user(session, "confidence-owner@example.invalid", "owner", "Pilot Owner")
+        cookie = tokens.issue_session(owner.id)
+    live.client.cookies.set("biz_session", cookie)
+    response = live.client.get(f"/v1/tasks/{run.task_id}/activity")
+    assert response.status_code == 200, response.text
+    (event,) = response.json()
+    assert event["kind"] == "packet:escalation.raised"
+    assert event["ref"] == str(escalation.id)
+    assert event["subject"] == escalation.payload["subject"]
+    assert event["reason"] == escalation.payload["reason"]
+
+    runner.start_for_packet("receptionist", trigger.id, "enquiry.received")
+    assert live.finish(run)["status"] == "escalated"
+    live.rt.tick()
     assert len(live.packets("escalation.raised")) == 1
-    assert live.mail.sent == [] and live.cal.events == {}
+    assert live.client.get(f"/v1/tasks/{run.task_id}/activity").json() == [event]
+    assert live.packets("message.sent") == [] and live.packets("meeting.booked") == []
+    assert len(live.model.calls) == 1
+    for provider in providers:
+        provider.assert_not_called()
+
+
+def test_triage_confidence_escalation_is_preserved(
+    live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_confidence_escalation_is_visible_once(live, monkeypatch)
+
+
+def test_shadow_confidence_escalation_is_visible_without_provider_writes(
+    shadow_live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_confidence_escalation_is_visible_once(shadow_live, monkeypatch)
 
 
 def test_spam_and_opt_out_never_reach_the_model(live: Live) -> None:

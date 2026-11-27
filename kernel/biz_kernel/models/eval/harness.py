@@ -222,7 +222,7 @@ def load_cases(cases: Path | str) -> list[Case]:
             schema = _read(f.parent / d["schema_file"])
         if not isinstance(schema, dict):
             raise ValueError(f"case {f.name} needs a JSON schema")
-        jsonschema.Draft202012Validator.check_schema(schema)
+        jsonschema.validators.validator_for(schema).check_schema(schema)
         messages = d.get("messages")
         if messages is None:
             messages = (

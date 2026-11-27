@@ -23,6 +23,7 @@ type State = {
   staff: { email: string; invite_url: string };
   legacy_unknown: { id: string; actor: string; decision_type: string };
   shadow_task_id: string;
+  shadow_money_task_id: string;
   related_task_id: string;
   training_legacy_correction_id: string;
   training_protected_files: string[];
@@ -161,10 +162,20 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
   });
 
   await test.step("shadow preparation appears without a pending approval", async () => {
-    await page.goto(`/tasks/${state.shadow_task_id}`);
+    await page.goto(`/tasks/${state.shadow_task_id.toUpperCase()}`);
     await expect(
       page.getByRole("heading", { name: "Prepared, not sent", exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByText("demo_desk.send_reply", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Policy would have asked for approval", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(": <b>First reply</b> needs the owner", { exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("main b")).toHaveCount(0);
     await expect(
       page.getByText("No pending approvals linked to this task."),
     ).toBeVisible();
@@ -224,6 +235,37 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
     await expect(
       page.getByRole("heading", { name: "Shadow Suppressed", exact: true }),
     ).toHaveCount(1);
+    expect(sends()).toHaveLength(0);
+  });
+
+  await test.step("canonical task identifiers retain linked approvals", async () => {
+    const operation = state.operations.approve;
+    await page.goto(`/tasks/${operation.task_id.toUpperCase()}`);
+    await expect(
+      page.locator(".detail-sidebar").getByRole("link", {
+        name: "Demo Desk Send Reply",
+        exact: true,
+      }),
+    ).toHaveAttribute("href", `/approvals/${operation.id}`);
+  });
+
+  await test.step("money suppression shows its actual verdict without claiming a payment", async () => {
+    await page.goto(`/tasks/${state.shadow_money_task_id}`);
+    await expect(
+      page.getByRole("heading", {
+        name: "Money action held back",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("payables.bank_change_confirm", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Policy would have blocked it", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(": Supplier callback is not verified", { exact: true }),
+    ).toBeVisible();
     expect(sends()).toHaveLength(0);
   });
 
@@ -705,10 +747,10 @@ test("owner enrols a passkey, reviews exact approvals and sees evidence-bound co
       for (const key of Object.keys(totals) as (keyof typeof totals)[])
         totals[key] += row[key];
     expect(totals).toEqual({
-      proposals: 4,
+      proposals: 5,
       approved_unchanged: 1,
       approved_with_errors: 1,
-      rejected: 1,
+      rejected: 2,
     });
     const table = page.getByRole("region", {
       name: "Results by role and type of decision",

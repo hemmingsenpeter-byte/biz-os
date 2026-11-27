@@ -1110,6 +1110,14 @@ tbody tr:hover {
   overflow-wrap: anywhere;
   font-family: Consolas, monospace;
 }
+.shadow-evidence {
+  font-size: 11px;
+  color: #5f726b;
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
 .event-scope {
   font-size: 9px;
   background: #f1f5f3;
@@ -2311,6 +2319,17 @@ textarea::placeholder {
 .training-form textarea,
 .training-form select {
   width: 100%;
+}
+.training-form input[type="checkbox"] {
+  width: auto;
+  margin-right: 8px;
+}
+.training-form fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  margin: 18px 0;
+  overflow-wrap: anywhere;
 }
 .training-form select {
   padding: 11px 12px;

@@ -38,7 +38,8 @@ from biz_kernel.loader import load_composition
 from biz_kernel.policy.types import Action, SideEffect
 from biz_kernel.records.models import Job, Task
 from biz_kernel.runtime import build_runtime
-from biz_kernel.tools.shadow import SHADOW_EVIDENCE
+from biz_kernel.tools.shadow import SHADOW_EVIDENCE, record_suppression
+from biz_kernel.training import service as training
 from biz_kernel.workflows.models import SopRun
 from biz_kernel.workflows.worker import ensure_database
 from biz_port_fakes import FakeMail, FakeModel
@@ -46,7 +47,7 @@ from dbos import DBOS
 from sqlalchemy import make_url, select
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = ("approve", "reject", "stale", "concurrent_edit")
+CASES = ("approve", "reject", "stale", "concurrent_edit", "training")
 REPLY = {
     "subject": "Owner console acceptance",
     "body": "Exact approved text: <img src=x onerror=alert(1)> & thank you.",
@@ -205,6 +206,38 @@ def seed() -> dict[str, Any]:
                     "inputs": op.inputs,
                 }
         if len(operations) == len(CASES):
+            with db.session_scope() as session:
+                operation = session.get(StagedOperation, uuid.UUID(operations["training"]["id"]))
+                assert operation is not None
+                staged.edit(
+                    session,
+                    operation.id,
+                    {**operation.inputs, "body": "Corrected training fixture reply."},
+                    by=staged.OWNER,
+                    reason="Use the confirmed training fixture wording.",
+                    severity="factual",
+                    version=operation.version,
+                )
+                staged.reject(session, operation.id, staged.OWNER, "Training fixture: never send")
+                correction = session.scalar(
+                    select(Correction).where(Correction.op_id == operation.id)
+                )
+                assert correction is not None
+                snapshots = training.eligible_snapshots(session, correction)
+                assert snapshots
+                candidate = training.create_candidate(
+                    session,
+                    correction.id,
+                    rule="Use the confirmed wording for the synthetic training request.",
+                    by=staged.OWNER,
+                    snapshot_id=snapshots[0].id,
+                    expected_output={
+                        **snapshots[0].output,
+                        "body": "Corrected training fixture reply.",
+                    },
+                )
+                operations["training"]["correction_id"] = str(correction.id)
+                operations["training"]["candidate_id"] = str(candidate.id)
             return operations
         time.sleep(0.1)
     raise TimeoutError("browser demo did not stage its four approval requests")
@@ -326,25 +359,61 @@ def main() -> None:
             )
             owner = json.loads(result.stdout)
             staff, legacy_unknown = seed_staff_and_legacy(origin)
+            with db.session_scope() as session:
+                training_user = create_user(
+                    session, "training-owner@example.invalid", "owner", "Training Browser Owner"
+                )
+                training_owner = {
+                    "email": training_user.email,
+                    "invite_url": f"{origin}/auth/register?"
+                    + urlencode({"invite": tokens.issue_invite(training_user.id)}),
+                }
             training_legacy_correction_id = seed_training_legacy()
             with db.session_scope() as session:
                 shadow_job = Job(kind="browser_acceptance", stage="open")
                 session.add(shadow_job)
                 session.flush()
                 shadow_task = Task(
-                    title="Shadow meeting offer", kind="book_meeting", job_id=shadow_job.id
+                    title="Shadow meeting offer", kind="shadow_acceptance", job_id=shadow_job.id
                 )
                 related_task = Task(
                     title="Related meeting task", kind="book_meeting", job_id=shadow_job.id
                 )
                 session.add_all([shadow_task, related_task])
                 session.flush()
+                suppression = record_suppression(
+                    session,
+                    "shadow_fixture",
+                    "demo_desk.send_reply",
+                    {SideEffect.EXTERNAL},
+                    {"to": "shadow@example.invalid"},
+                    policy={"decision": "ask", "reason": "<b>First reply</b> needs the owner"},
+                )
                 evidence.note(
-                    session, SHADOW_EVIDENCE, job_id=shadow_job.id, task_id=shadow_task.id
+                    session,
+                    SHADOW_EVIDENCE,
+                    str(suppression.audit_id),
+                    job_id=shadow_job.id,
+                    task_id=shadow_task.id,
                 )
                 evidence.note(session, SHADOW_EVIDENCE, job_id=shadow_job.id)
                 shadow_task_id = str(shadow_task.id)
                 related_task_id = str(related_task.id)
+                money_task = Task(title="Shadow bank change", kind="bank_change")
+                session.add(money_task)
+                session.flush()
+                money_suppression = record_suppression(
+                    session,
+                    "shadow_fixture",
+                    "payables.bank_change_confirm",
+                    {SideEffect.MONEY},
+                    {},
+                    policy={"decision": "deny", "reason": "Supplier callback is not verified"},
+                )
+                evidence.note(
+                    session, SHADOW_EVIDENCE, str(money_suppression.audit_id), task_id=money_task.id
+                )
+                shadow_money_task_id = str(money_task.id)
             runtime_process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--worker"],
                 cwd=ROOT,
@@ -364,9 +433,13 @@ def main() -> None:
                 json.dumps(
                     {
                         "owner": owner,
+                        "training_owner": training_owner,
+                        "training_correction_id": operations["training"]["correction_id"],
+                        "training_candidate_id": operations["training"]["candidate_id"],
                         "staff": staff,
                         "legacy_unknown": legacy_unknown,
                         "shadow_task_id": shadow_task_id,
+                        "shadow_money_task_id": shadow_money_task_id,
                         "related_task_id": related_task_id,
                         "training_legacy_correction_id": training_legacy_correction_id,
                         "training_protected_files": [

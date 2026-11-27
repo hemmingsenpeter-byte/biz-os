@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from dbos import DBOS, SetWorkflowID
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from biz_kernel import db
@@ -23,6 +24,7 @@ from biz_kernel.audit.log import record
 from biz_kernel.budgets.service import BudgetBook, BudgetExceeded
 from biz_kernel.control import service as control
 from biz_kernel.control.service import Paused
+from biz_kernel.evidence.models import EvidenceEvent
 from biz_kernel.health.service import raise_alert
 from biz_kernel.heartbeats.service import BUDGET_RESUME  # wake-up reason: resume a stopped run
 from biz_kernel.models.router import Router
@@ -731,9 +733,9 @@ def _escalate(run_id: str, role: str, state: dict[str, Any], why: str) -> dict[s
 def _raise_escalation(run_id: str, role: str, packet: dict[str, Any], why: str) -> None:
     c = ctx()
     with db.session_scope() as s:
-        run = s.get(SopRun, run_id)
+        run = s.get(SopRun, run_id, with_for_update=True)
         assert run is not None
-        c.bus.publish(
+        escalation = c.bus.publish(
             s,
             type="escalation.raised",
             payload={
@@ -749,7 +751,20 @@ def _raise_escalation(run_id: str, role: str, packet: dict[str, Any], why: str) 
             goal_key=run.goal_key,
             idempotency_key=f"{run_id}:escalate_when",
         )
-        record(s, role, "sop.escalate_when", run.sop, run_id=run_id, reason=why)
+        # The run lock also serializes an uncheckpointed retry of this step. The bus
+        # deduplicates its packet; the task must receive the same single piece of evidence.
+        kind, ref = "packet:escalation.raised", str(escalation.id)
+        linked = s.scalar(
+            select(EvidenceEvent.id).where(
+                EvidenceEvent.kind == kind,
+                EvidenceEvent.ref == ref,
+                EvidenceEvent.task_id == run.task_id,
+                EvidenceEvent.job_id == run.job_id,
+            )
+        )
+        if linked is None:
+            c.evidence.note(s, kind, ref, task_id=run.task_id, job_id=run.job_id)
+            record(s, role, "sop.escalate_when", run.sop, run_id=run_id, reason=why)
 
 
 @DBOS.step(name="biz.sop.end")

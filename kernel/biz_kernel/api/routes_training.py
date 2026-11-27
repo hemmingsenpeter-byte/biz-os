@@ -15,7 +15,7 @@ from biz_kernel.api.routes_approvals import CorrectionOut
 from biz_kernel.approvals.models import Correction
 from biz_kernel.auth.deps import DbSession, OwnerUser
 from biz_kernel.training import service
-from biz_kernel.training.models import DraftSnapshot, TrainingCandidate
+from biz_kernel.training.models import DraftSnapshot, TrainingCandidate, TrainingVersion
 
 
 class SnapshotOut(BaseModel):
@@ -86,6 +86,83 @@ class CandidateIn(BaseModel):
 class ReviewIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(default="", max_length=2000)
+
+
+class VersionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    parent_id: uuid.UUID | None
+    rule: str = Field(min_length=1, max_length=8000)
+    system: str = Field(min_length=1, max_length=200000)
+    expected_output: dict[str, Any] | None = None
+    snapshot_id: uuid.UUID | None = None
+    checks: list[dict[str, Any]] | None = None
+
+
+class VersionReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    at: datetime
+    version_id: uuid.UUID
+    version_sha256: str
+    decision: Literal["accepted_for_testing", "rejected"]
+    by: str
+    reason: str
+    payload_sha256: str
+
+
+class VersionOut(BaseModel):
+    id: uuid.UUID
+    at: datetime
+    candidate_id: uuid.UUID
+    number: int
+    parent_id: uuid.UUID | None
+    snapshot_id: uuid.UUID | None
+    rule: str
+    system: str
+    expected_output: dict[str, Any] | None
+    checks: list[dict[str, Any]]
+    created_by: str
+    payload_sha256: str
+    task: str | None
+    output_schema: dict[str, Any] | None = Field(alias="schema")
+    baseline_system: str | None
+    status: Literal["proposed", "accepted_for_testing", "rejected"]
+    eligible_for_testing: bool
+    incomplete_reasons: list[str]
+    review: VersionReviewOut | None
+    readiness_established: Literal[False] = False
+
+
+def version_out(session: Session, version: TrainingVersion) -> VersionOut:
+    snapshot = service.validate_version(session, version)
+    review = service.version_review_for(session, version)
+    reasons = service.version_incomplete_reasons(version, snapshot)
+    return VersionOut(
+        **{
+            name: getattr(version, name)
+            for name in (
+                "id",
+                "at",
+                "candidate_id",
+                "number",
+                "parent_id",
+                "snapshot_id",
+                "rule",
+                "system",
+                "expected_output",
+                "checks",
+                "created_by",
+                "payload_sha256",
+            )
+        },
+        task=snapshot.task if snapshot else None,
+        schema=snapshot.output_schema if snapshot else None,
+        baseline_system=snapshot.system if snapshot else None,
+        status=review.decision if review else "proposed",
+        eligible_for_testing=not reasons,
+        incomplete_reasons=reasons,
+        review=VersionReviewOut.model_validate(review) if review else None,
+    )
 
 
 def candidate_out(session: Session, candidate: TrainingCandidate) -> CandidateOut:
@@ -231,5 +308,64 @@ def router() -> APIRouter:
         candidate_id: uuid.UUID, body: ReviewIn, owner: OwnerUser, session: DbSession
     ) -> CandidateOut:
         return decide(candidate_id, body, owner, session, "rejected")
+
+    @r.get("/candidates/{candidate_id}/versions", response_model=list[VersionOut])
+    def versions(candidate_id: uuid.UUID, _: OwnerUser, session: DbSession) -> list[VersionOut]:
+        try:
+            service.validate_candidate(session, service.get_candidate(session, candidate_id))
+            rows = session.scalars(
+                select(TrainingVersion)
+                .where(TrainingVersion.candidate_id == candidate_id)
+                .order_by(TrainingVersion.number.desc())
+            )
+            return [version_out(session, row) for row in rows]
+        except service.TrainingError as exc:
+            raise _error(exc) from exc
+
+    @r.post("/candidates/{candidate_id}/versions", response_model=VersionOut)
+    def new_version(
+        candidate_id: uuid.UUID, body: VersionIn, owner: OwnerUser, session: DbSession
+    ) -> VersionOut:
+        try:
+            row = service.create_version(
+                session, candidate_id, by=str(owner.id), **body.model_dump()
+            )
+            return version_out(session, row)
+        except service.TrainingError as exc:
+            raise _error(exc) from exc
+
+    @r.get("/versions/{version_id}", response_model=VersionOut)
+    def one_version(version_id: uuid.UUID, _: OwnerUser, session: DbSession) -> VersionOut:
+        try:
+            return version_out(session, service.get_version(session, version_id))
+        except service.TrainingError as exc:
+            raise _error(exc) from exc
+
+    def version_decision(
+        version_id: uuid.UUID,
+        body: ReviewIn,
+        owner: Any,
+        session: Session,
+        decision: service.Decision,
+    ) -> VersionOut:
+        try:
+            service.decide_version(
+                session, version_id, decision=decision, by=str(owner.id), reason=body.reason
+            )
+            return version_out(session, service.get_version(session, version_id))
+        except service.TrainingError as exc:
+            raise _error(exc) from exc
+
+    @r.post("/versions/{version_id}/review", response_model=VersionOut)
+    def review_version(
+        version_id: uuid.UUID, body: ReviewIn, owner: OwnerUser, session: DbSession
+    ) -> VersionOut:
+        return version_decision(version_id, body, owner, session, "accepted_for_testing")
+
+    @r.post("/versions/{version_id}/reject", response_model=VersionOut)
+    def reject_version(
+        version_id: uuid.UUID, body: ReviewIn, owner: OwnerUser, session: DbSession
+    ) -> VersionOut:
+        return version_decision(version_id, body, owner, session, "rejected")
 
     return r

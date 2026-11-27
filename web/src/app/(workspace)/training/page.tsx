@@ -39,6 +39,11 @@ function OwnerTraining() {
         case.
       </PageHeading>
       <TrainingBoundary />
+      <p>
+        <Link className="button button-secondary" href="/training/comparisons">
+          Frozen cohorts and comparison history
+        </Link>
+      </p>
       {(corrections.error || candidates.error) && (
         <ErrorNotice
           retry={() => {

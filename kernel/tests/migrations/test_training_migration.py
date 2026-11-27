@@ -8,7 +8,17 @@ from biz_kernel.db import Base
 from biz_kernel.models_registry import import_all_models
 from sqlalchemy import UniqueConstraint, create_engine, inspect, text
 
-TABLES = ("training_draft_snapshots", "training_candidates", "training_reviews")
+TABLES = (
+    "training_draft_snapshots",
+    "training_candidates",
+    "training_reviews",
+    "training_versions",
+    "training_version_reviews",
+    "training_cohorts",
+    "training_cohort_reviews",
+    "training_comparisons",
+    "training_comparison_events",
+)
 
 
 def test_legacy_work_must_drain_before_any_upgrade_changes(fresh_db: str) -> None:
@@ -118,7 +128,7 @@ def test_populated_training_downgrade_requires_explicit_data_loss(fresh_db: str)
         with pytest.raises(RuntimeError, match="drops training records"):
             migrations.downgrade(fresh_db, "0023")
         with engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0024"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0025"
             assert connection.scalar(text("SELECT count(*) FROM training_draft_snapshots")) == 1
         migrations.downgrade(fresh_db, "0023", allow_data_loss=True)
         assert set(TABLES).isdisjoint(inspect(engine).get_table_names())

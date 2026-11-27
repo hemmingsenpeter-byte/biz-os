@@ -29,6 +29,7 @@ from biz_kernel.approvals.models import StagedOperation
 from biz_kernel.audit.log import AuditEntry
 from biz_kernel.contracts.ports import InboundMessage
 from biz_kernel.evidence.models import EvidenceEvent
+from biz_kernel.models.local_ollama import verify_local_ollama
 from biz_kernel.packets.bus import Packet
 from biz_kernel.records.models import Task
 from biz_kernel.runtime import build_runtime, capability_routes
@@ -450,22 +451,8 @@ def main() -> int:
     write_report(output, data)
     if not args.fixture_only:
         try:
-            with httpx.Client(trust_env=False, timeout=5) as client:
-                tags = client.get(ENDPOINT + "/api/tags")
-                tags.raise_for_status()
-                installed = {row["name"]: row for row in tags.json()["models"]}
-                entry = installed.get(args.model)
-                if not entry or entry["digest"] != args.digest:
-                    raise ValueError("model digest does not match the local installation")
-                if (
-                    entry.get("remote_host")
-                    or entry.get("remote_model")
-                    or "cloud" in args.model.lower()
-                ):
-                    raise ValueError("remote model routes are not supported")
-                version = client.get(ENDPOINT + "/api/version")
-                version.raise_for_status()
-                data["ollama"] = version.json()["version"]
+            identity = verify_local_ollama(base_url=ENDPOINT, model=args.model, digest=args.digest)
+            data["ollama"] = identity["ollama_version"]
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             data["results"] = [
                 {"case": case, "status": "BLOCKED", "reason": str(exc)} for case in selected

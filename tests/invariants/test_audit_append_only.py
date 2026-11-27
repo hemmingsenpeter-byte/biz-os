@@ -106,6 +106,98 @@ def _row(session, table: str):
         session.add(review)
         session.flush()
         return review.id
+    if table in {
+        "training_versions",
+        "training_version_reviews",
+        "training_cohorts",
+        "training_cohort_reviews",
+        "training_comparisons",
+        "training_comparison_events",
+    }:
+        from biz_kernel.training import models as training
+
+        # These deliberately minimal rows exercise database mutation guards, not
+        # the source/review validation performed by the training service.
+        candidate_id = _row(session, "training_candidates")
+        version = training.TrainingVersion(
+            candidate_id=candidate_id,
+            candidate_sha256="0" * 64,
+            number=1,
+            parent_id=None,
+            parent_sha256=None,
+            snapshot_id=None,
+            source_sha256=None,
+            rule="Fixture rule",
+            system="Fixture prompt",
+            expected_output=None,
+            checks=[{"type": "json_schema"}],
+            created_by="tester",
+            payload_sha256="0" * 64,
+        )
+        session.add(version)
+        session.flush()
+        if table == "training_versions":
+            return version.id
+        version_review = training.TrainingVersionReview(
+            version_id=version.id,
+            version_sha256="0" * 64,
+            decision="rejected",
+            by="tester",
+            reason="Fixture",
+            payload_sha256="0" * 64,
+        )
+        session.add(version_review)
+        session.flush()
+        if table == "training_version_reviews":
+            return version_review.id
+        cohort = training.TrainingCohort(
+            name="Fixture cohort",
+            task="fixture",
+            schema_sha256="0" * 64,
+            members=[],
+            created_by="tester",
+            payload_sha256="0" * 64,
+        )
+        session.add(cohort)
+        session.flush()
+        if table == "training_cohorts":
+            return cohort.id
+        cohort_review = training.TrainingCohortReview(
+            cohort_id=cohort.id,
+            cohort_sha256="0" * 64,
+            by="tester",
+            reason="Fixture",
+            payload_sha256="0" * 64,
+        )
+        session.add(cohort_review)
+        session.flush()
+        if table == "training_cohort_reviews":
+            return cohort_review.id
+        job = training.ComparisonJob(
+            version_id=version.id,
+            cohort_id=cohort.id,
+            version_review_id=version_review.id,
+            cohort_review_id=cohort_review.id,
+            created_by="tester",
+            idempotency_key="fixture",
+            contract={},
+            request_sha256="0" * 64,
+            payload_sha256="0" * 64,
+        )
+        session.add(job)
+        session.flush()
+        if table == "training_comparisons":
+            return job.id
+        event = training.ComparisonEvent(
+            job_id=job.id,
+            kind="started",
+            event_key="fixture",
+            payload={},
+            payload_sha256="0" * 64,
+        )
+        session.add(event)
+        session.flush()
+        return event.id
     return session.execute(text(f"SELECT id FROM {table} LIMIT 1")).scalar()
 
 

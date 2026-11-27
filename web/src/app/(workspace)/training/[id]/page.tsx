@@ -116,6 +116,14 @@ function OwnerCandidate({ id }: { id: string }) {
               {who(candidate.created_by)}.
             </PageHeading>
             <TrainingBoundary />
+            <p>
+              <Link
+                className="button button-secondary"
+                href={`/training/${candidate.id}/versions`}
+              >
+                Candidate versions and local comparisons
+              </Link>
+            </p>
             {(problem || notice) && (
               <div className="training-feedback">
                 {problem && <ErrorNotice>{problem}</ErrorNotice>}

@@ -20,7 +20,7 @@ def test_digest_mismatch_blocks_before_inference(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["scenario-smoke", "--model", "local:1", "--digest", "expected", "--out", str(output)],
+        ["scenario-smoke", "--model", "local:1", "--digest", "b" * 64, "--out", str(output)],
     )
 
     def unexpected_attempt(*args: object, **kwargs: object) -> None:
@@ -30,7 +30,7 @@ def test_digest_mismatch_blocks_before_inference(
     with respx.mock(assert_all_called=True, assert_all_mocked=True) as mock:
         mock.get(smoke.ENDPOINT + "/api/tags").mock(
             return_value=httpx.Response(
-                200, json={"models": [{"name": "local:1", "digest": "different"}]}
+                200, json={"models": [{"name": "local:1", "digest": "a" * 64}]}
             )
         )
         assert smoke.main() == 2
@@ -163,7 +163,7 @@ def test_unverified_model_offer_requires_review(
             "--model",
             "local:1",
             "--digest",
-            "expected",
+            "b" * 64,
             "--case",
             "R01",
             "--repetitions",
@@ -187,7 +187,7 @@ def test_unverified_model_offer_requires_review(
     with respx.mock(assert_all_called=True, assert_all_mocked=True) as mock:
         mock.get(smoke.ENDPOINT + "/api/tags").mock(
             return_value=httpx.Response(
-                200, json={"models": [{"name": "local:1", "digest": "expected"}]}
+                200, json={"models": [{"name": "local:1", "digest": "b" * 64}]}
             )
         )
         mock.get(smoke.ENDPOINT + "/api/version").mock(

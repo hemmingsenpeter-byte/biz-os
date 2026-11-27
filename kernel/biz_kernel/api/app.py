@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 
 from biz_kernel.api import (
     routes_approvals,
+    routes_comparisons,
     routes_control,
     routes_metrics,
     routes_status,
@@ -100,6 +101,7 @@ def _v1() -> APIRouter:
     router.include_router(routes_metrics.router())
     router.include_router(routes_suggestions.router())
     router.include_router(routes_training.router())
+    router.include_router(routes_comparisons.router())
     router.include_router(routes_status.router())
     return router
 

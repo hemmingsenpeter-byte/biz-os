@@ -137,6 +137,12 @@ loopback. A case marked public counts as private when its directory holds a priv
 dataset, and its content must then match that dataset. The harness connects to a
 `localhost` Ollama URL through 127.0.0.1 directly.
 
+An individual case file may also declare `private: true`; an explicit flag must
+be a boolean. This tightens the directory's privacy setting, and `private: false`
+cannot make a private dataset public. Private training previews saved as standalone
+case files are refused before inference when they lack the existing owner receipt
+and cohort-integrity evidence. Testing review does not substitute for that evidence.
+
 These gates guard against mistakes, not against hostile code in the same process.
 Code that runs in-process is trusted. Deliberately forged provenance, such as a
 private case relabelled public with a fixture directory, is out of scope. So is a
@@ -172,8 +178,27 @@ attempts. Cases without returned usage are counted separately. The report includ
 those cases in the score and duration totals.
 
 The technical gate requires at least 95% fully correct classifications over at
-least 50 held-out cases with outcome checks. Triage scores also check the existing
-0.6 confidence threshold. The evaluation deployment flag also
+least 50 held-out cases with outcome checks. New historical triage datasets apply
+the 0.6 confidence threshold to actionable labels; an exactly correct `other`
+classification may pass below that threshold, matching intake routing. The output
+schema still validates confidence and a wrong category still fails.
+
+The role template expresses this through a check's optional
+`unless_expected: { category: other }` condition. Confirmation resolves the condition
+against the owner's expected label and saves ordinary frozen checks for each case.
+It does not change runtime check semantics or rewrite already-confirmed cohorts.
+
+New owner receipts bind the task metadata (including the comparison threshold),
+output schema and declared checks in a scoring-contract hash. Both the confirmed
+prompt and scoring contract must match the deployed versions for readiness.
+Reports expose this
+under `scoring_contract`, alongside the frozen/deployed prompt comparison. A legacy
+receipt without that contract, or a contract that differs from the current role
+template, remains scoreable for historical comparison but cannot establish deployment
+readiness. Prepare and confirm a new dataset version to use changed scoring rules;
+never alter a sealed cohort or its receipt.
+
+The evaluation deployment flag also
 requires owner-confirmed historical evidence and a configured real adapter and
 recorded model revision. A local-versus-cloud recommendation requires a valid
 comparison with a real cloud adapter and recorded cloud model revision. The model

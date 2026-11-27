@@ -156,17 +156,9 @@ class Router:
                 return False
             return True
 
-        async def call(tier: Tier) -> dict[str, Any]:
-            port = self.cloud if tier == "cloud" and self.cloud else self.local
-            usage_mod.take()
-            try:
-                out = await port.structured(system, messages, schema, tier)
-            except Exception as exc:
-                # Keep the exception's type (a transient error stays retryable) and attach
-                # what earlier attempts already spent; see spent_before().
-                if result.attempts:
-                    exc.biz_routed_result = result  # type: ignore[attr-defined]
-                raise
+        def account_attempt(tier: Tier) -> None:
+            # Adapters may report paid usage before parsing the response raises. Collect
+            # it on both paths, once per dispatched attempt, including unreported failures.
             reported = usage_mod.take()
             if reported is None:
                 result.unmetered_calls += 1
@@ -176,10 +168,24 @@ class Router:
             result.usage = result.usage + used
             result.attempts += 1
             if metered and used.cost_usd > 0:  # free (local) calls leave no ledger row
-                # The call has returned, so its cost is real: always record it.
+                # Reported provider spend is real even when the adapter could not return.
                 book.charge(session, role, used.cost_usd, "model", task, now, incurred=True)  # type: ignore[arg-type]
                 if not book.can_spend(session, role, now):  # type: ignore[arg-type]
                     result.flagged = True
+
+        async def call(tier: Tier) -> dict[str, Any]:
+            port = self.cloud if tier == "cloud" and self.cloud else self.local
+            result.tier = tier
+            usage_mod.take()
+            try:
+                out = await port.structured(system, messages, schema, tier)
+            except BaseException as exc:
+                account_attempt(tier)
+                # Preserve retryable exception types and include the failed attempt even
+                # when it was the first one or the provider could not report its usage.
+                exc.biz_routed_result = result  # type: ignore[attr-defined]
+                raise
+            account_attempt(tier)
             return out
 
         def problem(out: dict[str, Any]) -> str | None:

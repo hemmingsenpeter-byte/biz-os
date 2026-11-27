@@ -22,6 +22,10 @@ jobs:
       - run: uv run mypy .
       - run: uv run pytest -p no:cacheprovider
       - run: uv run biz doctor apps/demo && uv run biz doctor apps/hive
+      - name: Receptionist smoke fixture assurance
+        run: |
+          uv run python -m deploy.scenario_smoke --fixture-only --repetitions 1 \
+            --out "$RUNNER_TEMP/biz-fixture-smoke.json"
 
   docker-smoke:
     runs-on: ubuntu-24.04
@@ -109,6 +113,53 @@ jobs:
       - name: Remove disposable containers and volumes
         if: always()
         run: docker compose --profile public down --volumes --remove-orphans
+
+  upgrade-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Retain the pinned original release after branch cleanup or squash
+        run: git fetch --no-tags origin bdf10e6d8f60c0087ee499e4c647ef25d5642468
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Drain the populated original release, upgrade and recover
+        run: uv run python -m deploy.upgrade_drill --out "$RUNNER_TEMP/upgrade-drill.json"
+      - name: Upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-drill
+          path: ${{ runner.temp }}/upgrade-drill.json
+          if-no-files-found: ignore
+
+  restore-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Install restic
+        working-directory: ${{ runner.temp }}
+        run: |
+          asset=restic_0.18.1_linux_amd64.bz2
+          release=https://github.com/restic/restic/releases/download/v0.18.1
+          curl --fail --silent --show-error --location --remote-name "$release/$asset"
+          curl --fail --silent --show-error --location --remote-name "$release/SHA256SUMS"
+          sha256sum --ignore-missing --strict --check SHA256SUMS
+          mkdir -p "$RUNNER_TEMP/biz-tools"
+          bunzip2 -c "$asset" > "$RUNNER_TEMP/biz-tools/restic"
+          chmod +x "$RUNNER_TEMP/biz-tools/restic"
+          echo "$RUNNER_TEMP/biz-tools" >> "$GITHUB_PATH"
+      - name: Restore the disposable appliance from encrypted backup
+        run: uv run python -m deploy.restore_drill
 
   web:
     runs-on: ubuntu-24.04

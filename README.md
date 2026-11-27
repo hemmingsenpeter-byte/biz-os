@@ -17,10 +17,19 @@ For the packaged API and worker, follow the [local Docker demo smoke check](depl
 It verifies approval, worker recovery, completed-workflow replay and PDF rendering with fake ports.
 The [owner console guide](docs/OWNER_CONSOLE.md) covers passkey setup, browser approvals,
 task activity and the seeded browser acceptance test.
+The [correction training guide](docs/TRAINING.md) covers source-backed rule/case
+proposals and owner review for testing only.
 
 Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. They never use the live network: every port has a fake in `ports/fakes`.
 
 ## Status
+
+The active build order is [docs/PLAN.md](docs/PLAN.md). HIVE is configured for a
+receptionist-only shadow pilot: it can prepare internal drafts while dispatch is
+suppressed. Real-model evaluation, owner baseline measurements and live pilot
+evidence remain acceptance gates. M7–M9 stay frozen until Stage 2 passes. The
+milestones below describe built capabilities, including roles that are inactive
+at HIVE.
 
 | Milestone | State |
 | --- | --- |

@@ -17,10 +17,11 @@ from biz_kernel.models_registry import import_all_models
 from biz_kernel.packets.bus import Packet
 from biz_kernel.records.models import Task
 from biz_kernel.runtime import build_runtime
+from biz_kernel.training.models import DraftSnapshot
 from biz_kernel.workflows.gate import decide
 from biz_kernel.workflows.models import SopRun
 from biz_port_fakes import FakeMail, FakeModel
-from dbos import DBOS
+from dbos import DBOS, SetWorkflowID
 from sqlalchemy import create_engine, func, make_url, select
 
 ROOT = Path(__file__).parents[2]
@@ -64,7 +65,7 @@ def live(fresh_db: str, request):  # type: ignore[no-untyped-def]
     DBOS(config={"name": "biz-e2e", "system_database_url": sys_url, "application_version": "test"})
     DBOS.launch()
     yield rt, mail, model, approver
-    DBOS.destroy(destroy_registry=False)
+    DBOS.destroy(destroy_registry=False, workflow_completion_timeout_sec=10)
     eng.dispose()
 
 
@@ -106,6 +107,14 @@ def test_demo_clerk_end_to_end(live) -> None:  # type: ignore[no-untyped-def]
     assert "<untrusted>" in prompt and "ignore rules</untrusted>" not in prompt
     assert mail.sent == []
     with db.session_scope() as s:
+        snapshot = s.scalars(select(DraftSnapshot).where(DraftSnapshot.run_id == run.id)).one()
+        snapshot_id = snapshot.id
+        assert snapshot.actor == "demo_clerk" and snapshot.step_id == "draft"
+        assert snapshot.system == (ROOT / "roles/demo_clerk/prompts/handle_request.md").read_text()
+        assert snapshot.output["body"] == "We are closed on public holidays."
+        assert "When are you open?" in snapshot.untrusted_text
+        assert snapshot.backend.endswith(".FakeModel") and snapshot.tier == "local"
+        assert snapshot.configured_model is None and snapshot.model_revision is None
         assert s.get(Task, run.task_id).status == "open"
         op = s.get(StagedOperation, uuid.UUID(run.waiting_op_id))
         assert op.status == "pending" and op.tool == "demo_desk.send_reply"
@@ -129,6 +138,24 @@ def test_demo_clerk_end_to_end(live) -> None:  # type: ignore[no-untyped-def]
         out = s.scalars(select(Packet).where(Packet.type == "message.sent")).all()
         assert len(out) == 1 and out[0].payload["to"] == "asker@example.com"
         assert s.get(StagedOperation, op.id).status == "executed"
+        assert (
+            s.scalars(select(DraftSnapshot).where(DraftSnapshot.run_id == run.id)).one().id
+            == snapshot_id
+        )
+
+    from biz_kernel.workflows import runner
+
+    with SetWorkflowID(run.id):
+        replay = DBOS.start_workflow(
+            runner.sop_workflow, "demo_clerk", "handle_request", str(packet_id)
+        )
+    assert replay.get_result()["status"] == "done"
+    assert len(model.calls) == 1
+    with db.session_scope() as s:
+        assert (
+            s.scalars(select(DraftSnapshot).where(DraftSnapshot.run_id == run.id)).one().id
+            == snapshot_id
+        )
 
 
 def test_stale_approval_is_never_acted_on(live) -> None:  # type: ignore[no-untyped-def]

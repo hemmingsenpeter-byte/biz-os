@@ -1,5 +1,113 @@
 # Build log
 
+## 2026-11-25 Correction training and receptionist pilot sprint
+
+The next sprint builds on PR #15 without merging it. HIVE remains shadow-only;
+M7–M9 and live activation remain gated by PLAN.md.
+
+### Implemented
+
+- Successful model drafts now capture immutable prompt, schema, untrusted source,
+  observed output and available model metadata in the same transaction as the
+  step ledger. Unknown revisions remain null; old drafts are not reconstructed.
+- The owner can create one immutable rule/case proposal per approval correction,
+  explicitly choose its source draft and supply schema-valid expected output.
+  Duplicate requests are idempotent; changed requests conflict. Review accepts
+  testing only, rejection is available while paused, and no deployed instruction,
+  permission, autonomy level or external action changes.
+- Training APIs and console are owner-only. Legacy incomplete proposals stay
+  ineligible. Snapshot/candidate hashes bind their contents, identities and times;
+  candidate hashes also bind correction and creator. Source selection checks the
+  actual workflow/actor and requires a draft captured before the correction.
+- Review proved and fixed three boundaries: relinked candidate provenance could
+  retain its old hash; an unresolved conditional schema reference could escape
+  validation; and a standalone private case could lose privacy in the evaluator.
+  Integrity checks now reject altered evidence, schema resolution failures are
+  sanitized, and per-case privacy can tighten but never loosen dataset privacy.
+  Missing private integrity evidence prevents inference even with cloud consent.
+- Service requests now publish linked owner escalation and leave an open task.
+  The canonical booking renderer takes validated slots and an explicit timezone;
+  meeting times no longer come from model-written text. Both apps and all four
+  scenario fixtures verify the owner handoff, exact offer and zero shadow writes.
+- Review exposed incompatible old draft/tool ledgers after the SOP change. New
+  workflows pin SOP data, prompt content, tool allow-lists and escalation rules.
+  API/worker startup and resume refuse unknown or changed unfinished definitions.
+  Completed legacy work returns its recorded outcome without executing new steps.
+
+### Upgrade and verification
+
+Migration `0024` adds the three append-only training tables and workflow pins.
+Before any schema change it refuses unfinished legacy work, leaving revision
+`0023` usable by the original release so the owner can drain it. Populated training
+history or workflow pins cannot be discarded by a normal downgrade. Follow
+`deploy/README.md` before upgrading; no global DBOS version was blindly bumped.
+
+Independent reviews cleared the fixes. Local verification passed: **1138 Python
+tests in 326.29 seconds**, Ruff lint/format, mypy (321 source files), both composition
+doctors, frontend lint/typecheck/build and real-backend Chromium acceptance
+(32.5 seconds). Desktop and mobile training screenshots were inspected.
+Packaged Docker and encrypted recovery are required CI checks on the stacked PR.
+
+The first training slice is proposal and review, not a completed learning loop.
+Candidate versioning, actual regression comparison, activation/rollback, production
+outcome capture and operator notifications remain future work. Real model, mailbox,
+appliance and owner baseline evidence are still needed for the live pilot.
+
+## 2026-11-25 Receptionist shadow pilot coding sprint
+
+The owner approved the sprint in `docs/SPRINT_2026-11-25.md`. This branch adapts
+the useful scope of drafts #10, #12, #13 and #14 to current main and closes the
+Ollama locality gap. M7–M9 remain frozen.
+
+### Changes and review decisions
+
+- Migration `0023` adds statement-level TRUNCATE guards to all seven append-only
+  tables. Fresh metadata gets the same guards. Real database tests attempt the
+  forbidden operations and check that rows survive; downgrade retains the row
+  guards. Independent review found no blocker.
+- Runtime, doctor and Compose preflight share resolved Ollama URL, generation
+  model and embedding model checks. Runtime also checks concrete model overrides
+  before embedding setup, including a cloud adapter supplied in a local slot.
+  Compose retains its stricter appliance restriction; existing cloud permission
+  semantics remain unchanged. Appliance HTTP calls bypass inherited proxies.
+- Historical triage scoring now follows role data: a correct `other` label may
+  pass below 0.6; actionable categories retain the threshold. Confirmation resolves
+  generic template conditions into frozen checks. New receipts bind schema,
+  checks, task metadata and gate settings to the current template. Review exposed
+  two older readiness gaps: an outdated deployed prompt and newly tightened gate
+  settings could still produce a ready flag. Both now invalidate readiness and
+  have regression tests. Legacy cohorts remain scoreable without being rewritten.
+- Task-specific shadow meeting offers show **Prepared, not sent**. Shared job
+  evidence retains its generic label. Browser acceptance checks no pending
+  dispatch, no sent evidence, zero fake provider sends and mobile layout.
+- The scenario runner exercises R01/R04/R12/R15 through isolated PostgreSQL/DBOS
+  workflows, forced shadow mode and fake business providers. Fixture inference
+  proves workflow wiring only. Missing R04 warranty escalation is explicitly false
+  in readiness checks; offered-slot accuracy stays unverified. Actual-model runs
+  fail unmet readiness checks or require manual review. Review found and fixed
+  first-attempt interruption losing its report: the initial plan is persisted,
+  interrupted counters stay provisional and the CLI exits 130 after cleanup.
+- CI now runs fixture scenario assurance and the existing encrypted restore drill.
+  Guides describe current activation, scoring receipts and shadow evidence.
+
+### Verification and remaining acceptance
+
+Ruff lint/format, mypy (307 source files), both composition doctors, frontend
+lint/typecheck/build and the combined real-backend browser acceptance passed.
+The disposable restore drill recovered three databases, both file stores, the
+audit head and pending workflow; replay made one fake mail invocation total.
+Its measured fixture RPO was 6.29 seconds and RTO 25.17 seconds.
+
+The local packaged Docker build exceeded this computer's 8 GB filesystem under
+Docker's VFS storage driver. Its generated layers and images were cleaned up;
+packaged acceptance remains enforced by the PR's Docker smoke job before merge.
+The clean full Python suite passed: **1042 tests in 276.04 seconds**.
+
+No live provider or real model was exercised, and no HIVE cloud or supervised
+authorization was added. Owner-labelled history, the timed baseline, actual model
+and mailbox setup, appliance acceptance and two weeks of shadow evidence remain
+the live pilot gates. The Stage 2 correction-to-rule training loop is future work.
+
 ## 2026-11-21 Owner decisions on the #7 to #9 open items
 
 The owner asked for the best call on each open item, approved in advance.

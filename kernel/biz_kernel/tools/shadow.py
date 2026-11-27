@@ -79,18 +79,51 @@ def authorization_problems(authorization: Any, today: date | None = None) -> lis
     return problems
 
 
+def _adapter_instance(port: Any, module: str, name: str) -> bool:
+    return any(cls.__module__ == module and cls.__name__ == name for cls in type(port).__mro__)
+
+
 def cloud_model_slots(ports: Mapping[str, Any]) -> list[str]:
     """Port slots that would send model prompts to a cloud provider."""
     return sorted(
         slot
         for slot, port in ports.items()
-        if slot == CLOUD_MODEL_SLOT or (isinstance(port, str) and port in CLOUD_MODEL_PORTS)
+        if slot == CLOUD_MODEL_SLOT
+        or (isinstance(port, str) and port in CLOUD_MODEL_PORTS)
+        or _adapter_instance(port, "biz_port_model_claude", "ClaudeModel")
     )
 
 
 def allows_cloud_in_shadow(policy: Mapping[str, Any]) -> bool:
     section = policy.get("shadow")
     return isinstance(section, Mapping) and section.get("allow_cloud_model") is True
+
+
+def _ollama_problems(
+    ports: Mapping[str, Any], environ: Mapping[str, str], *, compose: bool
+) -> list[str]:
+    """Check configured settings and actual Ollama override objects without any requests."""
+    # Inspect the concrete adapter, including subclasses, rather than unrelated objects
+    # with similarly named attributes. No provider is constructed for this check.
+    candidates = [
+        port
+        for port in ports.values()
+        if (isinstance(port, str) and port == "model_ollama")
+        or _adapter_instance(port, "biz_port_model_ollama", "OllamaModel")
+    ]
+    if not candidates:
+        return []
+    from biz_port_model_ollama.config import OllamaSettings
+
+    problems = []
+    for port in candidates:
+        settings = (
+            OllamaSettings.from_env(environ)
+            if isinstance(port, str)
+            else OllamaSettings(port.base_url, port.model, port.embed_model)
+        )
+        problems.extend(settings.locality_problems(compose=compose))
+    return list(dict.fromkeys(problems))
 
 
 def mode_problems(
@@ -101,6 +134,8 @@ def mode_problems(
     ports: Mapping[str, Any],
     policy: Mapping[str, Any],
     today: date | None = None,
+    environ: Mapping[str, str] | None = None,
+    compose: bool = False,
 ) -> tuple[ExecutionMode | None, list[str]]:
     """(effective mode, problems). Any problem means the composition must not start.
 
@@ -132,6 +167,10 @@ def mode_problems(
             f"port {slot} is a cloud model; shadow mode needs policy shadow.allow_cloud_model: true"
             for slot in cloud_model_slots(ports)
         ]
+    if effective == ExecutionMode.SHADOW and (compose or not allows_cloud_in_shadow(policy)):
+        problems += _ollama_problems(
+            ports, os.environ if environ is None else environ, compose=compose
+        )
     return effective, problems
 
 
@@ -151,6 +190,7 @@ def resolve_mode(
         override=env.get("BIZ_EXECUTION_MODE") or None,
         ports=ports,
         policy=policy,
+        environ=env,
     )
     if problems or mode is None:
         raise ExecutionModeError("; ".join(problems))

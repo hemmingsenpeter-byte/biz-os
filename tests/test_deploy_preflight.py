@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -163,6 +164,22 @@ def test_shadow_preflight_requires_the_appliance_model(
         "Shadow Ollama must use the appliance host.docker.internal endpoint",
         "BIZ_OLLAMA_MODEL cannot use a cloud model in shadow mode",
     ]
+
+
+@pytest.mark.parametrize("key", ["BIZ_OLLAMA_MODEL", "BIZ_OLLAMA_EMBED_MODEL"])
+def test_shadow_preflight_checks_both_models_from_compose_not_host(
+    compose_config, monkeypatch, key
+):
+    config = compose_config("hive")
+    monkeypatch.setenv("BIZ_OLLAMA_URL", "https://host-secret.example.invalid")
+    monkeypatch.setenv("BIZ_OLLAMA_MODEL", "host:cloud")
+    assert preflight.validate(config, preflight.ROOT) == []
+    for name in ("biz-api", "biz-worker"):
+        config["services"][name]["environment"][key] = "fixture:120b-cloud"
+    assert preflight.validate(config, preflight.ROOT) == [
+        f"{key} cannot use a cloud model in shadow mode"
+    ]
+    assert "host-secret" in os.environ["BIZ_OLLAMA_URL"]
 
 
 def test_preflight_requires_the_database_and_local_path_captured_by_backups(

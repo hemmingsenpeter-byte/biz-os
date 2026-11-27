@@ -40,6 +40,11 @@ printing the invitation, and records the administration action without its token
 
 ## Review work
 
+A shadow-mode meeting-offer task shows **Prepared, not sent** when its own activity
+records dispatch suppression. The task stays open for review. This label describes
+an internal draft; it does not mean that a customer received a message or that a
+meeting was booked. Shared job activity retains its original event label.
+
 - Open **Approvals** to see pending requests. Each detail page displays the
   exact inputs, revision, requesting role, reason and linked task.
 - **Approve version N** sends that revision to the existing approval API.
@@ -81,6 +86,11 @@ printing the invitation, and records the administration action without its token
   as text.
 
 ## Scorecard
+
+The owner can also open **Training** to turn an approval correction into a proposed
+rule and source-backed regression case. Acceptance means **accepted for testing**;
+it does not deploy instructions. Legacy corrections without captured draft evidence
+stay incomplete. See the [training guide](TRAINING.md) for the full workflow.
 
 - Open **Scorecard** for the last 28 days: tasks completed, serious errors, cost,
   cost per task and time saved.

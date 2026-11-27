@@ -83,6 +83,67 @@ for the dependency download step when building behind a TLS-inspecting proxy.
 This verifies the packaged demo using disposable credentials and fake providers.
 HIVE's live integrations and deployment on the Mac mini have separate acceptance gates.
 
+## Upgrading SOP definitions
+
+Before this release, finish or reject all unfinished workflows using the original
+release and worker. Inspect the private application database:
+
+```sql
+SELECT id, role, sop, status, waiting_op_id
+FROM sop_runs
+WHERE finished_at IS NULL
+  AND status IN ('running', 'waiting', 'paused', 'budget_stopped');
+```
+
+Settle the associated approvals on the original release, including queued meeting
+offers. Verify completion evidence, take the existing encrypted backup and stop
+the old API and workers before upgrading both services together. Migration `0024`
+refuses legacy unfinished work before making schema changes; the original release
+can therefore still start and drain it. Do not stamp past the refusal or invent
+definition hashes for old work.
+
+New workflows pin the SOP, draft-prompt content, allowed tools and escalation
+conditions. API/worker startup and recovery refuse unfinished work whose definition
+is missing or differs from the running release. Return to its matching release to
+settle it. Completed legacy work retains its recorded outcome and does not execute
+new steps on replay. Keep the existing DBOS application-version policy; changing
+`BIZ_WORKFLOW_VERSION` does not override the definition check.
+
+Back up before migration. Migration `0025` adds append-only version, cohort and
+comparison records without changing existing `0024` history. Its downgrade refuses
+whenever any new table contains records, including with `allow_data_loss`; recover
+the matching release from a verified backup. The earlier `0024` downgrade retains
+its existing explicit data-loss option for training history and workflow pins.
+This release changes receptionist triage and meeting-offer
+step data, so draining is required even when the global workflow version is the same.
+
+### Disposable populated-release upgrade drill
+
+Run `uv run python -m deploy.upgrade_drill --out /tmp/biz-upgrade-drill.json` from a
+full Git checkout containing the pinned original release
+`bdf10e6d8f60c0087ee499e4c647ef25d5642468`. Fetch that commit explicitly if it is
+missing after a squash merge or branch cleanup. CI's `upgrade-drill` job fetches
+the pinned commit and runs the same command. The drill needs the normal locked Python
+dependencies; it uses the local `pgserver` wheel and needs no Docker or live credentials.
+
+The command exports the original source into a temporary directory and verifies that
+the worker imports that release. All business ports are fake and TCP connections are
+blocked. It creates real application/workflow databases at `0023`, kills an original
+worker waiting on approval, and proves that the new migration refuses without changing
+the old schema or recorded history. It then resumes, approves and replays on the original
+code, with exactly one fake send. After upgrading to the current migration head it
+checks startup compatibility, replays the completed legacy work, and runs a second
+current-release workflow through kill/recovery/replay. There must be two fake sends
+total, one per approved request, and one new captured draft with a pinned definition.
+Completed legacy work keeps its unknown definition and is not backfilled.
+
+The JSON records the final schema, a digest of the current source tree, history
+preservation and invocation counts. A source change during execution invalidates the
+attempt. Failed or interrupted attempts retain `UNVERIFIED` evidence, replacing any
+earlier success at the requested output path. The disposable databases, archived source
+and worker logs are removed on exit. This proves the software upgrade path with fakes;
+the appliance backup/restore and live pilot gates still apply.
+
 ## 1. macOS setup (once)
 
 - **Never sleep:** System Settings > Energy > Prevent automatic sleeping; or
@@ -419,7 +480,13 @@ passkey to access the console.
 
 External provider credentials are provisioned separately at the approved access
 and pilot gates. Preflight requires on-appliance Ollama for shadow Compose
-deployments. Verify the approved model is installed on the Mac mini before
+deployments. Runtime startup and `biz doctor` also validate the resolved Ollama
+endpoint and both generation and embedding model names before inference. Host runs
+accept loopback or the appliance Docker host; Compose preflight continues to require
+`host.docker.internal` and noncloud models. The existing cloud policy permission does
+not relax Compose's appliance restrictions. Appliance inference bypasses inherited
+HTTP proxies. These offline checks do not replace verifying the trusted Ollama server
+and the installed model's actual routing. Verify the approved model is installed on the Mac mini before
 connecting a mailbox. Before replacing an older release, settle in-flight work
 for the inactive roles and stop the old API and workers. Update and restart
 both application services together. The supervised transition requires pilot

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from unittest.mock import Mock
 
 import anthropic
 import httpx
@@ -86,3 +87,15 @@ def test_claude_contract_cache_and_cost():
     u = m.last_usage
     assert (u.input_tokens, u.cache_read_tokens) == (1000, 2000)
     assert float(u.cost_usd) > 0
+
+
+@respx.mock
+def test_appliance_ollama_does_not_use_inherited_proxy(monkeypatch):
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.invalid:3128")
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": '{"label":"a","score":1}'}})
+    )
+    factory = Mock(wraps=httpx.AsyncClient)
+    monkeypatch.setattr("biz_port_model_ollama.httpx.AsyncClient", factory)
+    asyncio.run(OllamaModel().structured("test", [], S))
+    assert factory.call_args.kwargs["trust_env"] is False

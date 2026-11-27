@@ -250,6 +250,9 @@ def build_runtime(
         slot: resolve_port(name) for slot, name in manifest.ports.items() if slot not in overrides
     }
     resolved.update(overrides)
+    # A caller may supply an already configured model rather than the env-built adapter.
+    # Validate its actual URL and both model names before embeddings or capability setup.
+    execution_mode(manifest, resolved)
 
     registry = ToolRegistry(execution_mode=mode)
     embedder = _embedder(resolved.get("model_local"))

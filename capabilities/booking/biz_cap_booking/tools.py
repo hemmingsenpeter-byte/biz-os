@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from biz_cap_booking.models import Meeting
+from biz_cap_booking.rendering import render_offer as render_offer_text
 
 CAP = "booking"
 _STR: dict[str, Any] = {"type": "string"}
@@ -125,6 +126,11 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             "external_id": ref.id,
         }
 
+    def render_offer(
+        session: Session, slots: list[dict[str, str]], timezone: str = "UTC"
+    ) -> dict[str, Any]:
+        return render_offer_text(slots, timezone)
+
     def obj(props: dict[str, Any], required: list[str]) -> dict[str, Any]:
         return {
             "type": "object",
@@ -149,6 +155,27 @@ def register(registry: ToolRegistry, ports: dict[str, Any]) -> None:
             ),
             offer_slots,
             "Offer free calendar slots",
+        )
+    )
+    registry.register(
+        Tool(
+            f"{CAP}.render_offer",
+            CAP,
+            SideEffect.READ,
+            obj(
+                {
+                    "slots": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                        "items": obj({"start": _STR, "end": _STR}, ["start", "end"]),
+                    },
+                    "timezone": _STR,
+                },
+                ["slots"],
+            ),
+            render_offer,
+            "Render exact meeting times from validated calendar slots",
         )
     )
     registry.register(

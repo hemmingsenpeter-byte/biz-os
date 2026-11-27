@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 import typer
 
 from biz_kernel.loader import LoadError, Manifest, load_composition, parse_cadence
+from biz_kernel.training.cli import app as _training_app
 
 RepoRoot = Annotated[Path | None, typer.Option("--repo-root")]
 
@@ -393,6 +394,9 @@ try:
         )
 except ImportError:  # eval harness not installed yet
     pass
+
+
+app.add_typer(_training_app, name="training")
 
 
 if __name__ == "__main__":

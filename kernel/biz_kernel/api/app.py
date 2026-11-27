@@ -14,10 +14,12 @@ from starlette.responses import JSONResponse, Response
 
 from biz_kernel.api import (
     routes_approvals,
+    routes_comparisons,
     routes_control,
     routes_metrics,
     routes_status,
     routes_suggestions,
+    routes_training,
 )
 from biz_kernel.audit.log import AuditEntry
 from biz_kernel.auth import config
@@ -98,6 +100,8 @@ def _v1() -> APIRouter:
     router.include_router(routes_control.router())
     router.include_router(routes_metrics.router())
     router.include_router(routes_suggestions.router())
+    router.include_router(routes_training.router())
+    router.include_router(routes_comparisons.router())
     router.include_router(routes_status.router())
     return router
 

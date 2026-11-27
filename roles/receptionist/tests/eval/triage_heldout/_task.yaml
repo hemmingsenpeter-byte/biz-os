@@ -16,4 +16,8 @@ historical:
   label_field: category
   payload_key: enquiry
   checks:
-    - { type: numeric_min, field: confidence, min: 0.6 }
+    # Intake accepts an explicit other classification without applying this threshold.
+    - type: numeric_min
+      field: confidence
+      min: 0.6
+      unless_expected: { category: other }

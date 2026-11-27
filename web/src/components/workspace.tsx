@@ -13,6 +13,7 @@ import {
 } from "react";
 import {
   ArrowUpRight,
+  BookOpen,
   ChartColumn,
   CheckCheck,
   CircleHelp,
@@ -36,6 +37,7 @@ const NAV = [
   { href: "/approvals", label: "Approvals", icon: Inbox },
   { href: "/tasks", label: "Tasks", icon: CheckCheck },
   { href: "/scorecard", label: "Scorecard", icon: ChartColumn },
+  { href: "/training", label: "Training", icon: BookOpen },
 ];
 
 const Session = createContext<User | null>(null);
@@ -159,7 +161,9 @@ export function Workspace({ children }: { children: ReactNode }) {
             </div>
             <p className="nav-label">WORKSPACE</p>
             <nav aria-label="Main navigation">
-              {NAV.map((item) => (
+              {NAV.filter(
+                (item) => item.href !== "/training" || user.role === "owner",
+              ).map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}

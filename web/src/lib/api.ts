@@ -80,6 +80,14 @@ export type Task = {
   assignee: string | null;
   status: string;
 };
+export type Verdict = { decision: string; reason: string };
+export type Shadow = {
+  tool: string;
+  effects: string[];
+  policy: Verdict | null;
+  pre_approved: boolean;
+  staged_op_id: string | null;
+};
 export type Activity = {
   id: string;
   kind: string;
@@ -87,7 +95,29 @@ export type Activity = {
   task_id: string | null;
   job_id: string | null;
   at: string;
+  shadow?: Shadow | null;
+  subject?: string | null;
+  reason?: string | null;
 };
+
+export function shadowLabel(shadow: Shadow): string {
+  if (shadow.effects.includes("money")) return "Money action held back";
+  if (shadow.effects.includes("external")) return "Prepared, not sent";
+  return "Held back by shadow mode";
+}
+
+export function verdictLabel(verdict: Verdict | null): string {
+  switch (verdict?.decision) {
+    case "allow":
+      return "Policy would have allowed it";
+    case "ask":
+      return "Policy would have asked for approval";
+    case "deny":
+      return "Policy would have blocked it";
+    default:
+      return "Policy verdict not recorded";
+  }
+}
 
 export type ControlState = {
   paused: boolean;

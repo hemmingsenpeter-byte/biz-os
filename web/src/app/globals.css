@@ -1110,6 +1110,14 @@ tbody tr:hover {
   overflow-wrap: anywhere;
   font-family: Consolas, monospace;
 }
+.shadow-evidence {
+  font-size: 11px;
+  color: #5f726b;
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
 .event-scope {
   font-size: 9px;
   background: #f1f5f3;
@@ -2226,6 +2234,181 @@ textarea::placeholder {
 }
 .edit-actions + .field-hint {
   text-align: right;
+}
+
+/* Owner corrections and proposed training cases. */
+.training-boundary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid #d6e8e4;
+  border-radius: 9px;
+  background: #f2faf7;
+  color: #456b61;
+  padding: 16px 18px;
+  margin: 0 0 24px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.training-boundary > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.training-boundary strong {
+  color: #2d5d50;
+}
+.training-section + .training-section {
+  margin-top: 24px;
+}
+.training-stack {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+  min-width: 0;
+}
+.training-feedback {
+  margin: 0 0 20px;
+}
+.training-content {
+  padding: 22px 24px;
+  min-width: 0;
+}
+.training-content h3 {
+  font-size: 12px;
+  margin: 16px 0 9px;
+}
+.training-content h3:first-child {
+  margin-top: 0;
+}
+.training-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: #f7fafb;
+  border: 1px solid #e4ecee;
+  border-radius: 7px;
+  padding: 14px;
+  color: #415a63;
+  font-size: 11px;
+  line-height: 1.8;
+  max-height: 360px;
+  overflow: auto;
+}
+.training-reason {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #536970;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.training-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.training-comparison > div {
+  min-width: 0;
+}
+.training-form .field-label {
+  display: block;
+  margin: 18px 0 8px;
+}
+.training-form .field-label:first-child {
+  margin-top: 0;
+}
+.training-form textarea,
+.training-form select {
+  width: 100%;
+}
+.training-form input[type="checkbox"] {
+  width: auto;
+  margin-right: 8px;
+}
+.training-form fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  margin: 18px 0;
+  overflow-wrap: anywhere;
+}
+.training-form select {
+  padding: 11px 12px;
+  border: 1px solid #d7e2e5;
+  border-radius: 7px;
+  color: #415a63;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+}
+.training-form select:focus-visible {
+  outline: 3px solid #32b6a6;
+  outline-offset: 2px;
+}
+.training-form .field-hint {
+  margin-top: 9px;
+  line-height: 1.7;
+}
+.training-form .notice {
+  margin-top: 18px;
+}
+.training-json-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.training-incomplete {
+  padding: 13px 14px;
+  margin-top: 16px;
+  border-radius: 7px;
+  border: 1px solid #eadcbf;
+  background: #fcf8ee;
+  color: #79603b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.training-incomplete p {
+  margin: 5px 0 0;
+  color: inherit;
+}
+.training-incomplete ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.training-source {
+  margin-top: 18px;
+  font-size: 11px;
+}
+.training-source summary {
+  cursor: pointer;
+  color: #526f76;
+  padding: 8px 0;
+}
+.training-metadata {
+  padding: 0 0 12px;
+}
+.training-rule-link {
+  max-width: 580px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.badge-accepted_for_testing {
+  background: #e5f4ed;
+  border-color: #cce3d5;
+  color: #3e745a;
+}
+@media (max-width: 680px) {
+  .training-content {
+    padding: 18px;
+  }
+  .training-comparison {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .training-boundary {
+    padding: 13px 14px;
+  }
+  .training-form .edit-actions {
+    flex-wrap: wrap;
+  }
 }
 
 /* Scorecard. */

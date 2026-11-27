@@ -114,6 +114,29 @@ jobs:
         if: always()
         run: docker compose --profile public down --volumes --remove-orphans
 
+  upgrade-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Retain the pinned original release after branch cleanup or squash
+        run: git fetch --no-tags origin bdf10e6d8f60c0087ee499e4c647ef25d5642468
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Drain the populated original release, upgrade and recover
+        run: uv run python -m deploy.upgrade_drill --out "$RUNNER_TEMP/upgrade-drill.json"
+      - name: Upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-drill
+          path: ${{ runner.temp }}/upgrade-drill.json
+          if-no-files-found: ignore
+
   restore-drill:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -1,4 +1,4 @@
-# Correction training proposals
+# Correction training and local comparisons
 
 Training starts with an owner's correction to an approval. The Training workspace
 lets the owner propose a rule, select the original model draft and supply the
@@ -26,6 +26,76 @@ Legacy corrections without a captured draft remain visibly incomplete. They can
 be documented and rejected, but cannot be accepted as source-backed test cases.
 The system never reconstructs missing historical prompts or model revisions.
 
+## Revise a candidate
+
+The original proposal and its review remain immutable. Create a successor version
+with the full proposed system prompt, rule, expected model output and checks. A
+version records its parent, source snapshot and content hashes. Concurrent edits
+against an older parent conflict; the console preserves the unsaved text so the
+owner can reconcile it against the latest version.
+
+Each version needs its own acceptance for testing. Acceptance of a root proposal
+or an earlier version never authorizes a new version. Rejected versions remain
+visible in history and can have a successor. A successor still needs genuine
+captured source evidence; supplying new text cannot repair missing provenance.
+
+## Freeze a private tuning cohort
+
+Select accepted versions for one task and output schema. Freeze the exact source
+inputs, expected outputs/checks and baseline prompts into a cohort, then review its
+training-purpose attestation. This is private tuning authorization, separate from
+the historical-data and held-out readiness attestations. No held-out dataset is
+automatically imported, relabelled or made available for tuning.
+
+The comparison applies the target's captured baseline prompt and its proposed
+prompt freshly to every cohort case. The frozen setup identifies both prompts;
+the captured baseline is not assumed to be the current deployed prompt. It reports the
+target correction and each older case separately. A baseline pass becoming a
+candidate failure is a regression even if the average score improves. The historical
+captured output is reference evidence; both baseline and candidate are inferred
+fresh for the actual comparison.
+
+## Run and inspect a comparison
+
+The owner freezes the local model name, installed digest, Ollama and adapter
+versions, generation settings, seed, timeout and repetition count with the request.
+The API queues a durable job and returns promptly; the console polls progress and
+results. A host-side comparison executor processes queued jobs against literal
+loopback Ollama. Arbitrary private-network endpoints, cloud-backed models and
+inherited HTTP proxies are refused. Execution inside Compose is outside this slice.
+
+Run the executor on the appliance host with the installation's application and
+DBOS database URLs configured. Migrate the release first; the comparison worker
+does not start the business runtime or migrate its schema:
+
+```sh
+uv run biz training comparison-worker
+# Or run/resume one job whose UUID is shown in the console:
+uv run biz training run-comparison <job-uuid>
+```
+
+Use the same frozen release and locked dependencies for the API and host worker.
+Drain queued comparisons before changing the Python environment or dependencies.
+
+Use the installed `/api/tags` digest and `/api/version` from loopback Ollama for
+the queue form. The adapter version is the installed `biz-port-model-ollama`
+package version. A mismatch is refused before private inference; the executor
+also checks the pinned implementations and model metadata after inference.
+
+Each case/side is checkpointed, including a durable start before inference. Completed
+work is reused on duplicate requests and replay. An interrupted attempt whose result
+was not saved remains unknown; it cannot become a clean success through a silent
+retry. Model drift, missing results and inference failures invalidate a comparison.
+Review per-case output, checks, latency and metering evidence. Local API cost is
+reported separately from hardware and electricity, which are not measured.
+
+A valid measurement can still have a regression verdict. That verdict blocks
+acceptance of the proposed change regardless of any aggregate score improvement.
+
+Comparison results establish no deployment readiness or time savings. They change
+no prompt file, SOP, policy, permission or autonomy level and provide no activation
+action. Production activation and rollback remain a separate release workflow.
+
 ## Evidence and privacy
 
 New successful draft steps store their snapshot in the same transaction as the
@@ -47,12 +117,12 @@ authorization and confirmation workflow still governs model evaluation.
 
 ## Current scope
 
-This slice captures provenance and creates a reviewable rule/case proposal. It
-does not run a candidate comparison, publish a prompt/SOP version or activate a
-rule. Those require a separate versioned comparison and activation workflow,
-with no older-case regression and the owner's explicit approval. The live HIVE
-pilot gates in [PLAN.md](PLAN.md) remain in force.
+The comparison sprint covers one task kind and schema, a frozen tuning cohort,
+one pinned local backend and a minimal owner results view. It does not publish a
+prompt/SOP version or activate a rule. The live HIVE pilot gates in
+[PLAN.md](PLAN.md) remain in force.
 
-Migration `0024` adds these records and pins SOP definitions for recovery. Follow
+Migration `0024` adds source proposals and pins SOP definitions for recovery;
+`0025` adds versioned comparison records. Follow
 the [upgrade and drain procedure](../deploy/README.md#upgrading-sop-definitions)
 before changing a running installation.

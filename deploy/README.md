@@ -109,10 +109,40 @@ settle it. Completed legacy work retains its recorded outcome and does not execu
 new steps on replay. Keep the existing DBOS application-version policy; changing
 `BIZ_WORKFLOW_VERSION` does not override the definition check.
 
-Back up before migration. A downgrade that would discard training history or
-workflow pins requires the existing explicit data-loss option; normal recovery is
-from a verified backup. This release changes receptionist triage and meeting-offer
+Back up before migration. Migration `0025` adds append-only version, cohort and
+comparison records without changing existing `0024` history. Its downgrade refuses
+whenever any new table contains records, including with `allow_data_loss`; recover
+the matching release from a verified backup. The earlier `0024` downgrade retains
+its existing explicit data-loss option for training history and workflow pins.
+This release changes receptionist triage and meeting-offer
 step data, so draining is required even when the global workflow version is the same.
+
+### Disposable populated-release upgrade drill
+
+Run `uv run python -m deploy.upgrade_drill --out /tmp/biz-upgrade-drill.json` from a
+full Git checkout containing the pinned original release
+`bdf10e6d8f60c0087ee499e4c647ef25d5642468`. Fetch that commit explicitly if it is
+missing after a squash merge or branch cleanup. CI's `upgrade-drill` job fetches
+the pinned commit and runs the same command. The drill needs the normal locked Python
+dependencies; it uses the local `pgserver` wheel and needs no Docker or live credentials.
+
+The command exports the original source into a temporary directory and verifies that
+the worker imports that release. All business ports are fake and TCP connections are
+blocked. It creates real application/workflow databases at `0023`, kills an original
+worker waiting on approval, and proves that the new migration refuses without changing
+the old schema or recorded history. It then resumes, approves and replays on the original
+code, with exactly one fake send. After upgrading to the current migration head it
+checks startup compatibility, replays the completed legacy work, and runs a second
+current-release workflow through kill/recovery/replay. There must be two fake sends
+total, one per approved request, and one new captured draft with a pinned definition.
+Completed legacy work keeps its unknown definition and is not backfilled.
+
+The JSON records the final schema, a digest of the current source tree, history
+preservation and invocation counts. A source change during execution invalidates the
+attempt. Failed or interrupted attempts retain `UNVERIFIED` evidence, replacing any
+earlier success at the requested output path. The disposable databases, archived source
+and worker logs are removed on exit. This proves the software upgrade path with fakes;
+the appliance backup/restore and live pilot gates still apply.
 
 ## 1. macOS setup (once)
 

@@ -10,3 +10,6 @@ node_modules/
 .next/
 /var/
 .claude/worktrees/
+/vm/
+*.qcow2
+*.qcow2.partial

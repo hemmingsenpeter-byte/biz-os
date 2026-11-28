@@ -19,6 +19,8 @@ The [owner console guide](docs/OWNER_CONSOLE.md) covers passkey setup, browser a
 task activity and the seeded browser acceptance test.
 The [correction training guide](docs/TRAINING.md) covers source-backed rule/case
 proposals and owner review for testing only.
+The [virtual appliance guide](docs/VIRTUAL_APPLIANCE.md) covers a bootable Linux
+test image for exercising the stack before Mac mini hardware is available.
 
 Tests start a throwaway Postgres 16 with pgvector through the `pgserver` wheel. They never use the live network: every port has a fake in `ports/fakes`.
 

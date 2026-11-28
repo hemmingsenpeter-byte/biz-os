@@ -1,0 +1,23 @@
+[Unit]
+Description=BIZ OS virtual test appliance workflow worker
+Requires=biz-postgres.service
+After=biz-postgres.service network.target
+
+[Service]
+Type=simple
+User=biz
+Group=biz
+WorkingDirectory=/opt/biz-os
+EnvironmentFile=/etc/biz-os/virtual.env
+ExecStart=/opt/biz-os/.venv/bin/python -m biz_kernel.workflows.worker
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/biz-os/objects
+
+[Install]
+WantedBy=multi-user.target

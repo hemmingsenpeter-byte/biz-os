@@ -1,0 +1,23 @@
+[Unit]
+Description=BIZ OS virtual test appliance local comparison worker
+Requires=biz-postgres.service biz-worker.service
+After=biz-postgres.service biz-worker.service network.target
+
+[Service]
+Type=simple
+User=biz
+Group=biz
+WorkingDirectory=/opt/biz-os
+EnvironmentFile=/etc/biz-os/virtual.env
+ExecStart=/opt/biz-os/.venv/bin/python -m biz_kernel.cli.main training comparison-worker --poll-seconds 5
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/biz-os/objects
+
+[Install]
+WantedBy=multi-user.target

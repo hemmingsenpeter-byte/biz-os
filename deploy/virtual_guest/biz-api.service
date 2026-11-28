@@ -1,0 +1,23 @@
+[Unit]
+Description=BIZ OS virtual test appliance API
+Requires=biz-postgres.service
+After=biz-postgres.service network.target
+
+[Service]
+Type=simple
+User=biz
+Group=biz
+WorkingDirectory=/opt/biz-os
+EnvironmentFile=/etc/biz-os/virtual.env
+ExecStart=/opt/biz-os/.venv/bin/python -m uvicorn biz_kernel.api.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/biz-os/objects
+
+[Install]
+WantedBy=multi-user.target
